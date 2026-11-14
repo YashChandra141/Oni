@@ -750,7 +750,7 @@ interface JournalStore {
 - `MemoryJournalStore` (`memory.ts`) keeps arrays, assigns `seq` from one counter, ignores duplicate `record_id`s, and accepts a fault-injection hook (fail the next n calls, or commit and then throw). Unit tests, router tests, and P26 use it, so `bun run check` passes on Windows and macOS with no database (41.7). It is also the store when `DATABASE_URL` is unset outside production (16.6).
 - The same contract property (P27) runs against both stores, the Prisma one through `@prisma/adapter-pg`, so the fake can't drift from Postgres.
 
-**Decision J7: Deploy.** In `render.yaml`, `haunted-terminal-server` drops `JOURNAL_PATH` and declares both `DATABASE_URL` and `DIRECT_URL` with `sync: false` (38.4). `DB_ADAPTER` is left unset, so `pickAdapter` chooses the Neon adapter from the host. There is no `preDeployCommand`, because the Start_Script runs the Migrations. The `buildFilter` includes `server/prisma/**`, so a schema or Migration change triggers a deploy. The user creates a Neon project, copies the **pooled** connection string as `DATABASE_URL` and the **direct** connection string as `DIRECT_URL`, and pastes both into the Render dashboard. Neither URL is ever committed. Both are required in production: the image sets `NODE_ENV=production`, so the Start_Script exits with code 1 if either is unset (16.5).
+**Decision J7: Deploy.** In `render.yaml`, `oni-server` drops `JOURNAL_PATH` and declares both `DATABASE_URL` and `DIRECT_URL` with `sync: false` (38.4). `DB_ADAPTER` is left unset, so `pickAdapter` chooses the Neon adapter from the host. There is no `preDeployCommand`, because the Start_Script runs the Migrations. The `buildFilter` includes `server/prisma/**`, so a schema or Migration change triggers a deploy. The user creates a Neon project, copies the **pooled** connection string as `DATABASE_URL` and the **direct** connection string as `DIRECT_URL`, and pastes both into the Render dashboard. Neither URL is ever committed. Both are required in production: the image sets `NODE_ENV=production`, so the Start_Script exits with code 1 if either is unset (16.5).
 
 **Endpoints:**
 
@@ -835,7 +835,7 @@ sequenceDiagram
 <domain> wants you to sign in with your Solana account:
 <address>
 
-Sign in to Haunted Terminal paper trading. This signature does not authorize any transaction.
+Sign in to Oni paper trading. This signature does not authorize any transaction.
 
 URI: <origin>
 Version: 1
@@ -966,7 +966,7 @@ tui/src/
   - Overlays (EMA, VWAP, Bollinger) use a braille `Canvas` layer drawn over the same price scale (34.1, 34.2).
   - The visible window `(offset, width)` supports zoom and pan.
 - **HitMap:** a `Vec<(Rect, HitTarget)>` rebuilt every frame during draw. `resolve(x, y)` returns the last-registered rectangle containing the point, so children win over parents. Each target is a panel plus an optional item (book level i, order id, watchlist symbol, timeframe button) (35.1–35.3).
-- **Default server URL:** `wss://haunted-terminal-server.onrender.com/ws` (36.1). The REST base URL for pairing and logout is derived from it (`wss://host/ws` → `https://host`).
+- **Default server URL:** `wss://oni-server.onrender.com/ws` (36.1). The REST base URL for pairing and logout is derived from it (`wss://host/ws` → `https://host`).
 - **Sign-in by pairing (Req 48, Decision A4, A13).**
   - Token_Store: `dirs::config_dir()/haunted-terminal/session.json` holding `{ server, token, address, exp }` (on Windows `%APPDATA%\haunted-terminal\`, on macOS `~/Library/Application Support/haunted-terminal/`). On macOS (and any Unix) the file is created with mode `0600` through `OpenOptionsExt::mode` and written atomically (temp file + rename). On Windows the file inherits the per-user profile ACL. A token is used only for the server it was issued by.
   - Startup: without `--guest`, an unexpired stored token for this server is sent as `Authenticate` after each connect (48.12). `--guest` skips the token and leaves the file alone (48.13). `--logout` posts the token to `/auth/logout`, deletes the file, and exits 0 without entering the full-screen UI (48.14).
@@ -983,7 +983,7 @@ tui/src/
   - Sets `ENV NODE_ENV=production`, so a missing `DATABASE_URL` or `DIRECT_URL` stops the server (16.5).
   - Runs as `USER bun` (39.3).
   - `CMD` runs the Start_Script, `bun server/scripts/start.ts`, which applies pending Migrations with `prisma migrate deploy` over `DIRECT_URL` and then starts the server in the same process (20.15, 20.16, Decision J5).
-- **`render.yaml`:** as in the agreed plan (Req 38). The web build installs Bun 1.4.4 and runs `bun run --cwd web build`, which publishes `web/out`. `haunted-terminal-server` has no `JOURNAL_PATH` and declares `DATABASE_URL` and `DIRECT_URL`, both with `sync: false`, so Render prompts for them in the dashboard and the values never enter the Repository (38.4). `DB_ADAPTER` is not declared, so the Neon adapter is chosen from the host. There is no `preDeployCommand`. The `buildFilter` includes `server/prisma/**` (Decision J7). `SESSION_SECRET` is declared with `generateValue: true` (38.5, Decision A12). `LIVE_VENUE` is declared as `backpack` and `DATA_MODE` stays `replay`. `WEB_URL` is set to the static site's URL, which is also in `ALLOWED_ORIGINS`.
+- **`render.yaml`:** as in the agreed plan (Req 38). The web build installs Bun 1.4.4 and runs `bun run --cwd web build`, which publishes `web/out`. `oni-server` has no `JOURNAL_PATH` and declares `DATABASE_URL` and `DIRECT_URL`, both with `sync: false`, so Render prompts for them in the dashboard and the values never enter the Repository (38.4). `DB_ADAPTER` is not declared, so the Neon adapter is chosen from the host. There is no `preDeployCommand`. The `buildFilter` includes `server/prisma/**` (Decision J7). `SESSION_SECRET` is declared with `generateValue: true` (38.5, Decision A12). `LIVE_VENUE` is declared as `backpack` and `DATA_MODE` stays `replay`. `WEB_URL` is set to the static site's URL, which is also in `ALLOWED_ORIGINS`.
 - **`ci.yml`:**
   - `check` job: matrix of `windows-latest` and `macos-latest` running `bun run check`. `TEST_DATABASE_URL` is unset there, so the Postgres tests are skipped (41.7).
   - `journal-pg` job on `ubuntu-latest`: a `postgres:17` service container (GitHub service containers only run on Linux runners) with `POSTGRES_PASSWORD=postgres`, a `pg_isready` health check, and port 5432. Steps: `bun install`, `bun run db:generate`, then `bunx prisma migrate deploy` in `server/` with `DIRECT_URL=postgres://postgres:postgres@localhost:5432/postgres`, then the journal contract tests (`bun test server`) with `TEST_DATABASE_URL` set to the same URL and `DB_ADAPTER=pg` (41.5). This throwaway URL is not a secret.

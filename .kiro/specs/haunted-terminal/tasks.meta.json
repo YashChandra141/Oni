@@ -1055,6 +1055,16 @@
         "executionId": "5fe84e28-46b5-41b1-979e-a439019f842e",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1794652590598
+      },
+      {
+        "executionId": "89cfff8d-ca84-4d77-accf-413eb292d366",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794653426803
+      },
+      {
+        "executionId": "89cfff8d-ca84-4d77-accf-413eb292d366",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794653684797
       }
     ],
     "21.3 TUI auth tests": [
@@ -1074,6 +1084,13 @@
         "executionId": "82e59cdb-c167-400f-894a-89362c624af5",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1794652840914
+      }
+    ],
+    "11. Risk engine, order router, and journal": [
+      {
+        "executionId": "89cfff8d-ca84-4d77-accf-413eb292d366",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794653688097
       }
     ]
   }

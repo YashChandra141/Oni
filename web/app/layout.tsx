@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Haunted Terminal",
+  title: "Oni",
   description: "Crypto paper-trading terminal. Paper only: no real orders, no real funds.",
 };
 

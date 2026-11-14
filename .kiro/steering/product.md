@@ -1,6 +1,6 @@
-# Product: Haunted Terminal
+# Product: Oni
 
-Haunted Terminal is a crypto **paper-trading** terminal for fast order entry, built for the Kiroween 2026 hackathon (Frankenstein category). Deadline: Dec 4, 2026, 2:00 PM PT. Internal target: Dec 3.
+Oni is a crypto **paper-trading** terminal for fast order entry, built for the Kiroween 2026 hackathon (Frankenstein category). Deadline: Dec 4, 2026, 2:00 PM PT. Internal target: Dec 3.
 
 ## What it is
 - Two clients with the same panels and actions: a Next.js web UI and a Ratatui terminal UI (TUI) for Windows and macOS.

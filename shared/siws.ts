@@ -32,7 +32,7 @@ import { tryDecodeBase58 } from "./base58.ts";
 
 /** The only statement the server issues and accepts (Req 45.1, 45.5). */
 export const SIGN_IN_STATEMENT =
-  "Sign in to Haunted Terminal paper trading. This signature does not authorize any transaction.";
+  "Sign in to Oni paper trading. This signature does not authorize any transaction.";
 /** SIWS version the server accepts (Req 45.5). */
 export const SIWS_VERSION = "1";
 /** Chain ID the server issues. An identity claim only; no RPC is ever contacted (Req 49.3). */

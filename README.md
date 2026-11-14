@@ -1,4 +1,4 @@
-# Haunted Terminal
+# Oni
 
 A keyboard-and-mouse crypto **paper-trading** terminal with a web UI and a terminal UI, built for the Kiroween 2026 hackathon (Frankenstein category).
 

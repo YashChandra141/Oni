@@ -2,12 +2,12 @@
 import { describe, expect, test } from "bun:test";
 import { checkOrigin, normalizeOrigin } from "./origin.ts";
 
-const ALLOWED = ["http://localhost:3000", "https://haunted-terminal-web.onrender.com"];
+const ALLOWED = ["http://localhost:3000", "https://oni-web.onrender.com"];
 
 describe("checkOrigin", () => {
   test("allows a listed origin", () => {
     expect(checkOrigin("http://localhost:3000", ALLOWED)).toBe("allow");
-    expect(checkOrigin("https://haunted-terminal-web.onrender.com", ALLOWED)).toBe("allow");
+    expect(checkOrigin("https://oni-web.onrender.com", ALLOWED)).toBe("allow");
   });
 
   test("denies an origin that is not listed (Req 17.2)", () => {

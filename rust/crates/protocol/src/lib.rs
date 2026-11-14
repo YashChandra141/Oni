@@ -1,4 +1,4 @@
-//! Shared Command and Event message types for Haunted Terminal.
+//! Shared Command and Event message types for Oni.
 //!
 //! Prices, quantities, and money are exact `i64` newtypes (Req 1.4). Floats appear only in
 //! indicator values (Req 1.5). The instrument table defines tick and lot sizes (Req 4.1).

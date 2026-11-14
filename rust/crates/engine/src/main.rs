@@ -1,4 +1,4 @@
-//! Haunted Terminal engine: a sidecar process that reads Commands as JSON lines on stdin and
+//! Oni engine: a sidecar process that reads Commands as JSON lines on stdin and
 //! writes Events as JSON lines on stdout (Req 3.1, 3.2). Logs go to stderr only (Req 3.3).
 
 mod account;
@@ -26,7 +26,7 @@ use feed::fixture::{FixtureError, FixtureLine, read_fixture, write_fixture};
 use feed::synth::{self, SynthConfig, SynthSymbol};
 
 #[derive(Debug, Parser)]
-#[command(name = "engine", version, about = "Haunted Terminal engine sidecar")]
+#[command(name = "engine", version, about = "Oni engine sidecar")]
 struct Cli {
     #[command(subcommand)]
     command: CliCommand,

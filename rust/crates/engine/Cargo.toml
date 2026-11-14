@@ -1,6 +1,6 @@
 [package]
 name = "engine"
-description = "Haunted Terminal engine sidecar: market data, order book, candles, indicators, paper matcher"
+description = "Oni engine sidecar: market data, order book, candles, indicators, paper matcher"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

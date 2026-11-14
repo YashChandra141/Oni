@@ -1,4 +1,4 @@
-//! Minimal HTTP/1.1 client for the Haunted Terminal server's REST routes (Task 21).
+//! Minimal HTTP/1.1 client for the Oni server's REST routes (Task 21).
 //!
 //! The TUI talks only to the server it was pointed at with `--server`. Requests use one
 //! connection with `Connection: close`: `https://` goes through rustls (the `ring` provider and
@@ -28,7 +28,7 @@ pub const MAX_RESPONSE_BYTES: usize = 256 * 1024;
 /// Time allowed for connect, TLS, request, and response together.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// Sent as `User-Agent`.
-pub const USER_AGENT: &str = "haunted-terminal-tui/0.1";
+pub const USER_AGENT: &str = "oni-tui/0.1";
 
 /// Why a request failed.
 #[derive(Debug, Clone, PartialEq, Eq)]

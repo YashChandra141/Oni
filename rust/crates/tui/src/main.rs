@@ -1,4 +1,4 @@
-//! Haunted Terminal TUI (Ratatui + crossterm).
+//! Oni TUI (Ratatui + crossterm).
 //!
 //! Task 6.1: CLI, terminal guard, panic hook. Task 6.2: WebSocket connection with reconnect
 //! and the "waking server" status (Req 33.1–33.3).

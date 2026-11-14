@@ -153,7 +153,7 @@ Scope change (approved after 4.3): per-wallet paper accounts plus a shared guest
     - Unit tests: `account_limit` with a small cap; ResetAccount of A leaves B unchanged; unknown-account Cancel → OrderRejected
     - _Requirements: 14.1, 14.3, 14.5, 14.6, 14.7, 14.8, 14.9_
 
-- [ ] 11. Risk engine, order router, and journal
+- [x] 11. Risk engine, order router, and journal
   - [x] 11.1 `risk.ts` pure check with default limits and kill switch; property tests P18, P19
     - `positions` and `openOrderCount` come from the order's account; the rate window stays keyed by connection id; P18's generator covers several accounts and two connections on one wallet
     - _Requirements: 19.1–19.9_
@@ -193,7 +193,7 @@ Scope change (approved after 4.3): per-wallet paper accounts plus a shared guest
     - Unit tests: `pickAdapter` cases; `classifyPrismaError` cases; Start_Script with a failing then succeeding deploy (status `down`, records held, then `up`); deploy output redaction; `/health` never calls the store; `/orders` and `/journal` return 200, 400 (bad `session`, bad `limit`), and 503 as specified, and honour the default and maximum `limit`; redaction keeps `DATABASE_URL`, `DIRECT_URL`, and their passwords out of logs and responses
     - Integration: order → fill → journal record (memory store, and Postgres when `TEST_DATABASE_URL` is set); oversized order rejected with reason; orders still fill while the store is failing
     - _Requirements: 16.4, 17.8, 19.7, 20.1, 20.2, 20.3, 20.9, 20.12, 20.13, 20.14, 20.15, 20.16, 20.17, 20.21, 20.22, 20.23, 20.24, 20.25, 20.26, 20.28, 20.29, 20.30, 20.31, 41.7_
-  - [ ] 11.6 Property test P35 (router account derivation)
+  - [x] 11.6 Property test P35 (router account derivation)
     - **Property 35: router account derivation** — generate Connection_Sessions and Client_Message JSON (some with extra `account_id`/`accountId` keys), parse with the Zod schemas, submit through the Router with a fake engine sender, and check every sent Command's `account_id` equals the session's
     - _Requirements: 18.5, 18.6_
 
@@ -235,7 +235,7 @@ Scope change (approved after 4.3): per-wallet paper accounts plus a shared guest
     - Sets `ENV NODE_ENV=production`; `CMD` runs the Start_Script (`bun server/scripts/start.ts`), which applies Migrations with `prisma migrate deploy` before starting the server
     - _Requirements: 16.5, 20.15, 39.1, 39.2, 39.3_
   - [ ] 15.2 `render.yaml` as agreed
-    - `haunted-terminal-server`: no `JOURNAL_PATH`; `DATABASE_URL` (Neon pooled URL) and `DIRECT_URL` (Neon direct URL, used only by Prisma Migrate) both with `sync: false`, values set only in the Render dashboard; `DB_ADAPTER` left unset so the Neon adapter is chosen from the host; no `preDeployCommand` (migrations run in the Start_Script); `buildFilter` includes `server/prisma/**`
+    - `oni-server`: no `JOURNAL_PATH`; `DATABASE_URL` (Neon pooled URL) and `DIRECT_URL` (Neon direct URL, used only by Prisma Migrate) both with `sync: false`, values set only in the Render dashboard; `DB_ADAPTER` left unset so the Neon adapter is chosen from the host; no `preDeployCommand` (migrations run in the Start_Script); `buildFilter` includes `server/prisma/**`
     - `SESSION_SECRET` with `generateValue: true` (design Decision A12); `LIVE_VENUE: backpack`; `DATA_MODE: replay`; `WEB_URL` set to the static site URL, which is also listed in `ALLOWED_ORIGINS`
     - _Requirements: 16.1, 16.7, 16.9, 20.16, 38.1, 38.2, 38.4, 38.5_
   - [ ] 15.3 CI: Docker smoke test, Postgres journal job, and render.yaml schema validation

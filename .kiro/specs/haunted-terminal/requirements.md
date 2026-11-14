@@ -62,7 +62,7 @@ Scope change (approved): each user who signs in with a Solana wallet (Phantom or
 - **Wallet**: A Solana browser wallet that implements Wallet Standard. The supported Wallets are Phantom and Backpack.
 - **Wallet_Address**: The base58 encoding of a Wallet's 32-byte Ed25519 public key.
 - **SIWS_Message**: A Sign In With Solana message text with the fields domain, address, statement, URI, version, chain ID, nonce, issued-at time, and expiration time, in the line format of the Sign In With Solana specification.
-- **Sign_In_Statement**: The fixed SIWS_Message statement `Sign in to Haunted Terminal paper trading. This signature does not authorize any transaction.`
+- **Sign_In_Statement**: The fixed SIWS_Message statement `Sign in to Oni paper trading. This signature does not authorize any transaction.`
 - **SIWS_Parser**: The Server component that parses SIWS_Message text into its fields.
 - **SIWS_Formatter**: The Server component that formats SIWS_Message fields into SIWS_Message text.
 - **Nonce**: A single-use random value that the Auth_Service issues for one sign-in attempt and that expires 5 minutes after issue.
@@ -602,7 +602,7 @@ Scope change (approved): each user who signs in with a Solana wallet (Phantom or
 
 #### Acceptance Criteria
 
-1. THE TUI SHALL connect to `wss://haunted-terminal-server.onrender.com/ws` by default.
+1. THE TUI SHALL connect to `wss://oni-server.onrender.com/ws` by default.
 2. WHERE the `--server` argument is given, THE TUI SHALL connect to the URL given in the argument.
 3. WHEN the TUI exits, THE TUI SHALL restore the terminal to its original mode.
 4. IF the TUI panics, THEN THE TUI SHALL restore the terminal to its original mode before printing the panic message.
@@ -625,11 +625,11 @@ Scope change (approved): each user who signs in with a Solana wallet (Phantom or
 
 #### Acceptance Criteria
 
-1. THE Render_Blueprint SHALL define a service named haunted-terminal-server with runtime docker, plan free, healthCheckPath `/health`, autoDeployTrigger checksPass, and a buildFilter.
-2. THE Render_Blueprint SHALL define a service named haunted-terminal-web with runtime static that publishes `./web/out` and whose build command installs Bun 1.4.4.
+1. THE Render_Blueprint SHALL define a service named oni-server with runtime docker, plan free, healthCheckPath `/health`, autoDeployTrigger checksPass, and a buildFilter.
+2. THE Render_Blueprint SHALL define a service named oni-web with runtime static that publishes `./web/out` and whose build command installs Bun 1.4.4.
 3. THE Render_Blueprint SHALL pass validation against Render's Blueprint schema.
-4. THE Render_Blueprint SHALL declare the DATABASE_URL and DIRECT_URL environment variables for haunted-terminal-server with `sync: false`.
-5. THE Render_Blueprint SHALL declare the SESSION_SECRET environment variable for haunted-terminal-server with `generateValue: true`.
+4. THE Render_Blueprint SHALL declare the DATABASE_URL and DIRECT_URL environment variables for oni-server with `sync: false`.
+5. THE Render_Blueprint SHALL declare the SESSION_SECRET environment variable for oni-server with `generateValue: true`.
 
 ### Requirement 39: Server Image
 

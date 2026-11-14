@@ -14,8 +14,8 @@ describe("resolveWsUrl", () => {
   });
 
   test("uses a valid configured URL", () => {
-    expect(resolveWsUrl("wss://haunted-terminal-server.onrender.com/ws")).toBe(
-      "wss://haunted-terminal-server.onrender.com/ws",
+    expect(resolveWsUrl("wss://oni-server.onrender.com/ws")).toBe(
+      "wss://oni-server.onrender.com/ws",
     );
     expect(resolveWsUrl(" ws://127.0.0.1:9000/ws ")).toBe("ws://127.0.0.1:9000/ws");
   });

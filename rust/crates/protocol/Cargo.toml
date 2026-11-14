@@ -1,6 +1,6 @@
 [package]
 name = "protocol"
-description = "Shared Command and Event message types for Haunted Terminal"
+description = "Shared Command and Event message types for Oni"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

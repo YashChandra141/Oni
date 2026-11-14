@@ -8,16 +8,16 @@ use crate::auth::TokenStore;
 use crate::http::{self, HttpError, Method, Target};
 
 /// The hosted server the TUI connects to when `--server` is not given (Req 36.1).
-pub const DEFAULT_SERVER_URL: &str = "wss://haunted-terminal-server.onrender.com/ws";
+pub const DEFAULT_SERVER_URL: &str = "wss://oni-server.onrender.com/ws";
 
 #[derive(Debug, Parser)]
 #[command(
     name = "tui",
     version,
-    about = "Haunted Terminal: paper-trading terminal client"
+    about = "Oni: paper-trading terminal client"
 )]
 pub struct Cli {
-    /// WebSocket URL of the Haunted Terminal server (ws:// or wss://).
+    /// WebSocket URL of the Oni server (ws:// or wss://).
     #[arg(
         long,
         value_name = "URL",
@@ -132,7 +132,7 @@ mod tests {
     fn server_defaults_to_hosted_url() {
         let cli = Cli::try_parse_from(["tui"]).unwrap();
         assert_eq!(cli.server, DEFAULT_SERVER_URL);
-        assert_eq!(cli.server, "wss://haunted-terminal-server.onrender.com/ws");
+        assert_eq!(cli.server, "wss://oni-server.onrender.com/ws");
     }
 
     // Req 36.2

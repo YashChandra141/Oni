@@ -151,7 +151,7 @@ describe("checkSiws chain ID, version, and statement", () => {
   });
 
   test("a changed statement is rejected", () => {
-    expect(withField({ statement: "Sign in to Haunted Terminal paper trading." })).toBe("statement_mismatch");
+    expect(withField({ statement: "Sign in to Oni paper trading." })).toBe("statement_mismatch");
   });
 
   test("a message without the statement is rejected", () => {

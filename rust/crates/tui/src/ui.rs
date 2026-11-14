@@ -22,7 +22,7 @@ use crate::tape_widget::TapeWidget;
 use crate::watchlist_model::{Direction, WatchQuote, strip_segment, venue_label};
 use crate::watchlist_widget::{WatchlistWidget, direction_color, selected_style};
 
-pub const TITLE: &str = "HAUNTED TERMINAL";
+pub const TITLE: &str = "ONI";
 
 /// The chart screen shows the watchlist, book, and tape column from this terminal width. The
 /// chart tests use widths up to 60, so they stay on the narrow layout (watchlist strip on row

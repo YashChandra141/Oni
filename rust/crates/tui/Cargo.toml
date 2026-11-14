@@ -1,6 +1,6 @@
 [package]
 name = "tui"
-description = "Haunted Terminal terminal client (Ratatui)"
+description = "Oni terminal client (Ratatui)"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

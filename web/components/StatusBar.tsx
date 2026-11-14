@@ -21,7 +21,7 @@ export function StatusBar() {
       aria-label="Status bar"
       className="crt-panel col-span-3 flex items-center gap-4 px-2 py-1 text-xs"
     >
-      <span className="font-bold tracking-widest">HAUNTED TERMINAL</span>
+      <span className="font-bold tracking-widest">ONI</span>
       {connected ? (
         <>
           {hello !== null && (
