@@ -80,9 +80,11 @@ pub fn config_dir_for(platform: Platform, env: &dyn Fn(&str) -> Option<String>) 
         Platform::MacOs => {
             get("HOME").map(|h| PathBuf::from(h).join("Library").join("Application Support"))
         }
+        // Unix rule for "absolute" (a leading `/`), not the host's `Path::is_absolute`, so the
+        // result depends only on `platform` (on a Windows host `/xdg` is not absolute).
         Platform::Other => get("XDG_CONFIG_HOME")
+            .filter(|v| v.starts_with('/'))
             .map(PathBuf::from)
-            .filter(|p| p.is_absolute())
             .or_else(|| get("HOME").map(|h| PathBuf::from(h).join(".config"))),
     }
 }

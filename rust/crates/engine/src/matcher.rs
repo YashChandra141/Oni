@@ -720,7 +720,7 @@ mod tests {
     fn fee_rounds_toward_zero_per_fill() {
         // notional 3 * 1000 = 3000, fee 3000 * 5 / 10000 = 1 (1.5 truncated).
         let mut m = Matcher::default();
-        let b = book(&[], &[(3, 400), (3, 0), (4, 600)]);
+        let b = book(&[], &[(3, 400), (4, 600)]);
         let out = m.place(
             req("guest", "o-1", Side::Buy, 1_000, OrderKind::Market),
             &b,

@@ -730,7 +730,8 @@ mod tests {
     #[test]
     fn the_visible_window_keeps_the_cursor_in_view() {
         assert_eq!(visible_window("abc", 3, 10), ("abc".to_owned(), 0));
-        assert_eq!(visible_window("abcdefghij", 10, 5), ("fghij".to_owned(), 6));
+        // Cursor at the end needs its own cell: 4 characters from index 6, cursor in column 4.
+        assert_eq!(visible_window("abcdefghij", 10, 5), ("ghij".to_owned(), 6));
         assert_eq!(visible_window("abcdefghij", 3, 5), ("abcde".to_owned(), 0));
         assert_eq!(visible_window("abc", 1, 0), (String::new(), 0));
     }

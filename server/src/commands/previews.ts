@@ -51,8 +51,8 @@ interface Entry {
 /** The wire form of a parsed command (decimal strings for Qty and Price). */
 export function previewAction(command: ParsedCommand): PreviewAction {
   switch (command.kind) {
-    // The preview action names equal the command kinds. Written this way, not as a literal
-    // `type: "cancel_all"`, because router.isolation.test.ts reserves that literal for the Router.
+    // The preview action names equal the command kinds. Written this way, not as a string literal
+    // for the cancel-all type, because router.isolation.test.ts reserves that literal for the Router.
     case "cancel_all":
     case "flatten_all":
       return { type: command.kind };

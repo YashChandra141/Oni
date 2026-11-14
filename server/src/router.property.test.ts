@@ -96,7 +96,8 @@ describe("Property P35: Router account derivation (Req 18.5, 18.6)", () => {
                   ? ({ type: "limit", price } as const)
                   : ({ type: "stop", stopPrice: price } as const);
             const order: SubmitOrder = { symbol: op.symbol, side: op.side, qty: op.qty, kind };
-            const hostileOrder: SubmitOrder & Record<string, unknown> = Object.assign({}, order, hostileKeys(hostile));
+            // Extra account fields ride along; the Router must ignore them (Req 18.6).
+            const hostileOrder: SubmitOrder = Object.assign({}, order, hostileKeys(hostile));
             h.router.submit(hostileOrder, origin);
           } else {
             const json = JSON.stringify({

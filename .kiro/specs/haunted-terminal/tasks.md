@@ -27,7 +27,7 @@ Scope change (approved after 4.3): per-wallet paper accounts plus a shared guest
   - [x] 1.5 CI workflow
     - `.github/workflows/ci.yml` matrix on `windows-latest` and `macos-latest`, running `bun run check`
     - _Requirements: 41.1_
-  - [-] 1.6 Verify: install dev dependencies, run `bun run check` locally
+  - [x] 1.6 Verify: install dev dependencies, run `bun run check` locally
     - _Requirements: 41.2_
 
 - [x] 2. Protocol crate and engine echo loop
@@ -253,7 +253,7 @@ Scope change (approved after 4.3): per-wallet paper accounts plus a shared guest
     - Optional: a Neon dev branch's direct URL as `TEST_DATABASE_URL` for local Postgres tests (apply the Migrations to that branch first)
     - Neon free-plan notes: scale to zero after 5 min idle, first query wakes it in a few hundred ms
     - _Requirements: 42.6, 42.8_
-  - [ ] 15.7 README: accounts, wallet sign-in, pairing, venues
+  - [x] 15.7 README: accounts, wallet sign-in, pairing, venues
     - Guest mode (shared account, no wallet needed) vs. wallet accounts; every account resets on engine restart
     - Sign in with Phantom or Backpack: the wallet signs one SIWS message and never a transaction; tokens last 24 h; sign-out is best effort because the denylist is lost on a server restart
     - TUI pairing: press `P`, open the URL, sign in, confirm the code; token file location per OS; `--guest` and `--logout`

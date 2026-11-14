@@ -4,7 +4,7 @@
 //! and the "waking server" status (Req 33.1–33.3).
 //!
 //! Event loop: a tokio current-thread runtime selects over terminal input, network events,
-//! and a 33 ms tick. A frame is drawn on a tick only when state changed, so there are at most
+//! and a 34 ms tick. A frame is drawn on a tick only when state changed, so there are at most
 //! 30 redraws per second (Req 34.3).
 //!
 //! Input: a dedicated std thread calls the blocking `crossterm::event::read` in a loop and
@@ -44,7 +44,6 @@ mod watchlist_widget;
 use std::io::{self, IsTerminal};
 use std::process::ExitCode;
 use std::thread;
-use std::time::Duration;
 
 use clap::Parser;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -59,7 +58,8 @@ use crate::app::App;
 use crate::auth::TokenStore;
 use crate::book_model::BookCursor;
 use crate::cli::Cli;
-use crate::frame_limiter::FrameLimiter;
+// The same interval drives the redraw tick and the limiter, so every tick may draw.
+use crate::frame_limiter::{FRAME_INTERVAL, FrameLimiter};
 use crate::hitmap::HitMap;
 use crate::indicator_model::Indicator;
 use crate::keymap::{Action, Context, Keymap, chord_from_crossterm, resolve};
@@ -72,8 +72,6 @@ use crate::watchlist_model::{
     DEFAULT_WATCHLIST, WATCH_TIMEFRAME, is_watch_key, next_symbol, prev_symbol,
 };
 
-/// Interval between redraw checks: about 30 frames per second at most.
-const FRAME_INTERVAL: Duration = Duration::from_millis(33);
 /// Capacity of the terminal input channel.
 const INPUT_CHANNEL_CAPACITY: usize = 64;
 /// Capacity of the pairing driver's channel.
@@ -327,7 +325,7 @@ async fn run_async(server: &str, keymap: &Keymap, guest: bool) -> io::Result<()>
             },
             scheduled = tick.tick() => {
                 // The scheduled tick time, not the time after drawing, so consecutive
-                // checks are never closer than the interval and 33 ms ticks are not skipped.
+                // checks are never closer than the interval and ticks are not skipped.
                 let now = scheduled.into_std();
                 // A preview countdown second, an expired preview, or the end of the rejection
                 // line needs a redraw even though no event arrived.

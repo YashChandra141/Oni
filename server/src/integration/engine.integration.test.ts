@@ -26,8 +26,10 @@ import { memoryLogger } from "../gateway/testing.ts";
 import { REPO_ROOT, type RunningServer, startServer } from "../main.ts";
 import type { Event, ServerMessage } from "../protocol.ts";
 
-const ENGINE_PATH = resolve(REPO_ROOT, "rust", "target", "debug", process.platform === "win32" ? "engine.exe" : "engine");
-const HAVE_ENGINE = await Bun.file(ENGINE_PATH).exists();
+import { ENGINE_PATH, ENGINE_READY, warnIfSkipped } from "./engineBinary.ts";
+
+const HAVE_ENGINE = ENGINE_READY;
+warnIfSkipped("engine.integration.test.ts");
 
 /** Upper bound for any single wait (task 3.6). */
 const WAIT_MS = 10_000;
@@ -135,7 +137,7 @@ async function connect(base: string): Promise<{ ws: WebSocket; inbox: Inbox }> {
 const ms = (from: number, to: number): number => Math.round(to - from);
 
 if (!HAVE_ENGINE) {
-  test.skip(`engine integration: no engine binary at ${ENGINE_PATH}; run \`cargo build --manifest-path rust/Cargo.toml -p engine\` first`, () => {});
+  test.skip(`engine integration: no current engine binary at ${ENGINE_PATH}; run \`cargo build --manifest-path rust/Cargo.toml -p engine\` first`, () => {});
 } else {
   describe("engine integration (real engine binary)", () => {
     /** Every engine process the supervisor started, oldest first. */

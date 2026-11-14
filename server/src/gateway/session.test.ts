@@ -227,7 +227,11 @@ describe("account routing through the gateway", () => {
     const before = [guest, w1, w2].map((s) => s.sent.length);
 
     supervisor.emitEvent(ack(`w_${ADDRESS}`));
-    expect([guest, w1, w2].map((s) => s.sent.length)).toEqual([before[0], (before[1] ?? 0) + 1, before[2]]);
+    expect<(number | undefined)[]>([guest, w1, w2].map((s) => s.sent.length)).toEqual([
+      before[0],
+      (before[1] ?? 0) + 1,
+      before[2],
+    ]);
     supervisor.emitEvent(ack("guest"));
     expect(guest.sent.length).toBe((before[0] ?? 0) + 1);
     expect(w1.sent.length).toBe((before[1] ?? 0) + 1);

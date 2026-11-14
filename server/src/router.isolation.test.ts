@@ -88,7 +88,7 @@ describe("single order path (Req 18.1, 18.3)", () => {
     expect(ws).not.toMatch(SENDER_PATTERN);
     expect(ws).not.toMatch(ORDER_COMMAND_PATTERN);
     // It may only call sendControl for subscriptions.
-    const calls = [...ws.matchAll(/sendControl\(\{\s*type:\s*"([a-z_]+)"/g)].map((m) => m[1]);
+    const calls = [...ws.matchAll(/sendControl\(\{\s*type:\s*"([a-z_]+)"/g)].map((m) => m[1] ?? "");
     for (const type of calls) expect(["subscribe", "unsubscribe"]).toContain(type);
   });
 

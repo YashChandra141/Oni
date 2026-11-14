@@ -92,7 +92,9 @@ export class TokenDenylist {
     }
   }
 
+  /** Live entries only: expired ones are pruned first, so the count never includes them. */
   get size(): number {
+    this.prune();
     return this.entries.size;
   }
 }
@@ -178,7 +180,12 @@ export class TokenService {
     const accountId = isSolanaAddress(sub) ? accountIdForAddress(sub) : null;
     if (accountId === null) return { ok: false, reason: "bad_payload" };
 
-    if (exp <= Math.floor(this.now() / 1000)) return { ok: false, reason: "expired" };
+    if (exp <= Math.floor(this.now() / 1000)) {
+      // An expired token needs no denylist entry any more; drop such entries now rather than
+      // waiting for the next deny or lookup (Req 45.14).
+      this.denylist.prune();
+      return { ok: false, reason: "expired" };
+    }
     if (this.denylist.has(jti)) return { ok: false, reason: "denied" };
     return { ok: true, claims: { address: sub, accountId, jti, iat, exp } };
   }

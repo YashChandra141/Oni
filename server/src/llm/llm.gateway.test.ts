@@ -220,7 +220,8 @@ describe("account change and busy guard", () => {
     ask(ws, "r1", "? first");
     ask(ws, "r2", "? second");
     expect(ws.last()).toMatchObject({ type: "parse_error", request_id: "r2" });
-    expect(texts).toEqual([" first"]);
+    // LlmOrderParser trims the text after the `?` before calling the provider.
+    expect(texts).toEqual(["first"]);
     expect(pending).toHaveLength(1);
 
     pending[0]?.resolve(BUY_BTC);

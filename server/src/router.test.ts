@@ -5,7 +5,7 @@
 import { describe, expect, test } from "bun:test";
 import { OrderIdSchema } from "./protocol.ts";
 import { resolveLimits } from "./risk/limits.ts";
-import { type SubmitOrder, createOrderIdGenerator, marketPrices } from "./router.ts";
+import { type RouterRejectReason, type SubmitOrder, createOrderIdGenerator, marketPrices } from "./router.ts";
 import { GUEST, START_MS, harness, limitBuy, originOf, walletSession } from "./router.testing.ts";
 import type { RouterSession } from "./router.ts";
 import { MarketState } from "./state/market.ts";
@@ -79,7 +79,12 @@ describe("submit: approval", () => {
 });
 
 describe("submit: risk reasons (Req 18.2, 19.7)", () => {
-  function expectRejected(h: ReturnType<typeof harness>, order: SubmitOrder, reason: string, origin = conn("c1")): void {
+  function expectRejected(
+    h: ReturnType<typeof harness>,
+    order: SubmitOrder,
+    reason: RouterRejectReason,
+    origin = conn("c1"),
+  ): void {
     const result = h.router.submit(order, origin);
     expect(result.ok).toBe(false);
     if (result.ok) return;

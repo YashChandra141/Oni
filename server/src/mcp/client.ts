@@ -253,11 +253,20 @@ export function normalizeBaseUrl(baseUrl: string): URL {
   return url;
 }
 
+/**
+ * The path prefix of a normalized base URL, without a trailing slash: "" for the root. An http(s)
+ * URL's pathname is never empty (setting it to "" leaves "/"), so the root must be special-cased
+ * or every route would start with "//".
+ */
+function basePath(url: URL): string {
+  return url.pathname.replace(/\/+$/, "");
+}
+
 /** `http://h/p` → `ws://h/p/ws`, `https://…` → `wss://…/ws`. */
 export function wsUrlFor(baseUrl: string): string {
   const url = normalizeBaseUrl(baseUrl);
   const scheme = url.protocol === "https:" ? "wss:" : "ws:";
-  return `${scheme}//${url.host}${url.pathname}/ws`;
+  return `${scheme}//${url.host}${basePath(url)}/ws`;
 }
 
 const ErrorBodySchema = z.object({ error: z.string().regex(/^[a-z_]{1,40}$/) });
@@ -281,7 +290,7 @@ export class TerminalClient implements TerminalApi {
 
   constructor(options: TerminalClientOptions) {
     const url = normalizeBaseUrl(options.baseUrl);
-    this.#base = `${url.protocol}//${url.host}${url.pathname}`;
+    this.#base = `${url.protocol}//${url.host}${basePath(url)}`;
     this.#origin = url.origin;
     this.#wsUrl = wsUrlFor(options.baseUrl);
     this.#fetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init));

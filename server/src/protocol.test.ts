@@ -570,9 +570,9 @@ describe("protocol v2 schemas", () => {
       "auth_failed",
       "session_expired",
       "signed_out",
-    ];
+    ] as const;
     for (const kind of kinds) {
-      const message = { type: "notice", kind, message: "m" };
+      const message = { type: "notice", kind, message: "m" } as const;
       expect(ServerMessageSchema.parse(message)).toEqual(message);
     }
     for (const kind of ["AuthFailed", "auth-failed", "signed_in", "", null, 1]) {

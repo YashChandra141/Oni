@@ -23,11 +23,13 @@ import { resolve } from "node:path";
 import { loadConfig } from "../config.ts";
 import { type EngineProcess, EngineSupervisor, spawnEngineProcess } from "../engine/supervisor.ts";
 import { memoryLogger } from "../gateway/testing.ts";
-import { REPO_ROOT, type RunningServer, resolveFromRoot, startServer } from "../main.ts";
+import { type RunningServer, resolveFromRoot, startServer } from "../main.ts";
 import type { Bar, Event, ServerMessage } from "../protocol.ts";
 
-const ENGINE_PATH = resolve(REPO_ROOT, "rust", "target", "debug", process.platform === "win32" ? "engine.exe" : "engine");
-const HAVE_ENGINE = await Bun.file(ENGINE_PATH).exists();
+import { ENGINE_PATH, ENGINE_READY, warnIfSkipped } from "./engineBinary.ts";
+
+const HAVE_ENGINE = ENGINE_READY;
+warnIfSkipped("replay.integration.test.ts");
 
 const WAIT_MS = 10_000;
 const TEST_TIMEOUT_MS = 30_000;
@@ -107,7 +109,7 @@ function expectValidBar(bar: Bar): void {
 const ms = (from: number, to: number): number => Math.round(to - from);
 
 if (!HAVE_ENGINE) {
-  test.skip(`replay demo: no engine binary at ${ENGINE_PATH}; run \`cargo build --manifest-path rust/Cargo.toml -p engine\` first`, () => {});
+  test.skip(`replay demo: no current engine binary at ${ENGINE_PATH}; run \`cargo build --manifest-path rust/Cargo.toml -p engine\` first`, () => {});
 } else {
   describe("replay demo (real engine binary)", () => {
     const procs: EngineProcess[] = [];

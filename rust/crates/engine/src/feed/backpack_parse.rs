@@ -911,7 +911,9 @@ mod tests {
             symbol: SYM.into(),
             first_id,
             last_id,
-            bids: vec![(Price(100), Qty(first_id.try_into().unwrap()))],
+            // Ids above i64::MAX (the u64::MAX edge tests) saturate; those tests do not read
+            // the quantity back.
+            bids: vec![(Price(100), Qty(i64::try_from(first_id).unwrap_or(i64::MAX)))],
             asks: vec![(Price(101), Qty(0))],
             ts: 10,
         }

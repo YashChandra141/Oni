@@ -232,23 +232,12 @@ describe("notices, errors, and ignored messages", () => {
     expect(state.lastError).toBe("server error unknown_symbol: no such symbol");
   });
 
-  test("heartbeat, pong, and not-yet-handled messages leave the state alone", () => {
+  // Book events used to be listed here; the book panel now stores them (store.book.test.ts).
+  test("heartbeat, pong, and a parse error for another request leave the state alone", () => {
     const state = applyServerMessage(initialState(), HELLO);
     const ignored: ServerMessage[] = [
       { type: "event", event: { type: "heartbeat", ts: 1 } },
       { type: "event", event: { type: "pong", id: 1 } },
-      {
-        type: "event",
-        event: {
-          type: "book",
-          symbol: "BTC-USD",
-          bids: [],
-          asks: [],
-          spread: null,
-          imbalance_bps: 0,
-          ts: 1,
-        },
-      },
       { type: "pong", id: 1 },
       { type: "parse_error", request_id: "r", message: "bad", position: 0 },
     ];

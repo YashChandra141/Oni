@@ -275,9 +275,9 @@ describe("P34 end-to-end account routing model", () => {
                   expect(got).toHaveLength(expected);
                   for (const x of got) {
                     // Never another account's event.
-                    expect(x.type === "event" && "account_id" in x.event ? x.event.account_id : accountId).toBe(
-                      mm?.account,
-                    );
+                    expect<string | undefined>(
+                      x.type === "event" && "account_id" in x.event ? x.event.account_id : accountId,
+                    ).toBe(mm?.account);
                   }
                 });
                 break;

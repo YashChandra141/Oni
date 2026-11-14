@@ -1,9 +1,13 @@
 //! Redraw throttle (Req 34.3, 34.4): draw only when state changed, and at most once per
-//! `min_interval` (33 ms, so at most 30 frames per second).
+//! `min_interval` ([`FRAME_INTERVAL`], so at most 30 frames per second).
 //!
 //! Pure: the caller passes "now", so tests need no sleeping.
 
 use std::time::{Duration, Instant};
+
+/// The shortest gap between two frames. 34 ms, not 33: draws 33 ms apart land at 0, 33, ...,
+/// 990 ms, which is 31 frames inside one second. With 34 ms the 31st frame is at 1020 ms.
+pub const FRAME_INTERVAL: Duration = Duration::from_millis(34);
 
 /// Decides when the event loop may draw.
 #[derive(Debug, Clone)]
@@ -51,7 +55,7 @@ impl FrameLimiter {
 mod tests {
     use super::*;
 
-    const INTERVAL: Duration = Duration::from_millis(33);
+    const INTERVAL: Duration = FRAME_INTERVAL;
 
     fn at(base: Instant, ms: u64) -> Instant {
         base + Duration::from_millis(ms)
@@ -81,10 +85,10 @@ mod tests {
         limiter.drew(base);
         limiter.mark_dirty();
         assert!(!limiter.should_draw(at(base, 10)));
-        assert!(!limiter.should_draw(at(base, 32)));
-        assert!(limiter.should_draw(at(base, 33)));
-        limiter.drew(at(base, 33));
-        assert!(!limiter.should_draw(at(base, 66)));
+        assert!(!limiter.should_draw(at(base, 33)));
+        assert!(limiter.should_draw(at(base, 34)));
+        limiter.drew(at(base, 34));
+        assert!(!limiter.should_draw(at(base, 67)));
     }
 
     #[test]
