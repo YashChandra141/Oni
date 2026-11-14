@@ -89,13 +89,7 @@ impl Widget for BookWidget<'_> {
                     let shown = text.chars().count().min(width);
                     let pad = (width - shown) / 2;
                     let x = inner.x + u16::try_from(pad).unwrap_or(0);
-                    buf.set_stringn(
-                        x,
-                        y,
-                        text,
-                        width - pad,
-                        Style::default().fg(SPREAD_COLOR),
-                    );
+                    buf.set_stringn(x, y, text, width - pad, Style::default().fg(SPREAD_COLOR));
                 }
                 BookRow::Level {
                     side,
@@ -104,8 +98,9 @@ impl Widget for BookWidget<'_> {
                     qty,
                     permille,
                 } => {
-                    let selected =
-                        self.cursor.is_some_and(|c| c.side == side && c.index == index);
+                    let selected = self
+                        .cursor
+                        .is_some_and(|c| c.side == side && c.index == index);
                     let base = if selected {
                         Style::default().add_modifier(Modifier::REVERSED)
                     } else {
@@ -158,12 +153,7 @@ mod tests {
         }
     }
 
-    fn render(
-        book: Option<&BookState>,
-        cursor: Option<BookCursor>,
-        w: u16,
-        h: u16,
-    ) -> Buffer {
+    fn render(book: Option<&BookState>, cursor: Option<BookCursor>, w: u16, h: u16) -> Buffer {
         let area = Rect::new(0, 0, w, h);
         let mut buf = Buffer::empty(area);
         BookWidget::new("BTC-USD", book, cursor).render(area, &mut buf);
@@ -179,7 +169,10 @@ mod tests {
     }
 
     fn reversed(buf: &Buffer, x: u16, y: u16) -> bool {
-        buf[(x, y)].style().add_modifier.contains(Modifier::REVERSED)
+        buf[(x, y)]
+            .style()
+            .add_modifier
+            .contains(Modifier::REVERSED)
     }
 
     fn row_text(buf: &Buffer, y: u16, w: u16) -> String {

@@ -120,7 +120,13 @@ impl Window {
             return None;
         }
         let skip = (self.closes.len() + 1).saturating_sub(self.period);
-        Some(self.closes.iter().copied().skip(skip).chain(iter::once(close)))
+        Some(
+            self.closes
+                .iter()
+                .copied()
+                .skip(skip)
+                .chain(iter::once(close)),
+        )
     }
 
     /// Mean and population standard deviation of the window with `close` appended.
@@ -539,9 +545,10 @@ mod tests {
         sma.commit(3.0);
         approx(sma.peek(4.0), 3.0);
         sma.commit(4.0);
-        assert_eq!(sma.window().closes().iter().copied().collect::<Vec<_>>(), [
-            2.0, 3.0, 4.0
-        ]);
+        assert_eq!(
+            sma.window().closes().iter().copied().collect::<Vec<_>>(),
+            [2.0, 3.0, 4.0]
+        );
         approx(sma.peek(5.0), 4.0);
     }
 
@@ -658,7 +665,10 @@ mod tests {
         vwap.commit(&b2);
         approx(vwap.peek(&next_day), 10.0);
         vwap.commit(&next_day);
-        approx(vwap.peek(&ohlcv(DAY_MS + 60_000, 20.0, 20.0, 20.0, 1.0)), 15.0);
+        approx(
+            vwap.peek(&ohlcv(DAY_MS + 60_000, 20.0, 20.0, 20.0, 1.0)),
+            15.0,
+        );
         // Typical price is (h + l + c) / 3.
         approx(Vwap::new().peek(&ohlcv(0, 6.0, 3.0, 3.0, 1.0)), 4.0);
     }
@@ -668,7 +678,9 @@ mod tests {
         let mut ind = SymbolIndicators::default();
         for i in 0..40_i64 {
             let price = if i % 2 == 0 { 1 } else { i64::MAX };
-            let values = ind.update(&bar(i * 60_000, price, 1, price, i64::MAX)).unwrap();
+            let values = ind
+                .update(&bar(i * 60_000, price, 1, price, i64::MAX))
+                .unwrap();
             for v in [
                 values.ema,
                 values.sma,
@@ -700,7 +712,10 @@ mod tests {
         }
         // 14 bars: EMA and VWAP exist, SMA/Bollinger (20) and RSI/ATR (15 closes) do not.
         assert!(last.ema.is_some() && last.vwap.is_some());
-        assert_eq!((last.sma, last.bb_upper, last.rsi, last.atr), (None, None, None, None));
+        assert_eq!(
+            (last.sma, last.bb_upper, last.rsi, last.atr),
+            (None, None, None, None)
+        );
         last = ind.update(&bar(14 * 60_000, 110, 90, 114, 5)).unwrap();
         assert!(last.rsi.is_some() && last.atr.is_some() && last.sma.is_none());
         for i in 15..20_i64 {

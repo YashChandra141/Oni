@@ -44,7 +44,10 @@ pub enum HitTarget {
     IndicatorToggle(Indicator),
     /// A watchlist row (wide layout) or strip segment (narrow layout), by symbol (Req 27.4).
     WatchlistSymbol(String),
-    BookLevel { side: BookSide, index: usize },
+    BookLevel {
+        side: BookSide,
+        index: usize,
+    },
     /// The ✕ cell of an open order row: a click cancels the order (Req 30.3).
     OpenOrder(String),
     /// An open order row, by order id: a click selects it (Req 30.3).
@@ -75,10 +78,7 @@ fn is_empty_rect(rect: Rect) -> bool {
 fn contains(rect: Rect, x: u16, y: u16) -> bool {
     let (x, y) = (u32::from(x), u32::from(y));
     let (rx, ry) = (u32::from(rect.x), u32::from(rect.y));
-    x >= rx
-        && x < rx + u32::from(rect.width)
-        && y >= ry
-        && y < ry + u32::from(rect.height)
+    x >= rx && x < rx + u32::from(rect.width) && y >= ry && y < ry + u32::from(rect.height)
 }
 
 impl HitMap {
@@ -134,7 +134,10 @@ mod tests {
     fn child_registered_later_wins_over_parent() {
         let mut map = HitMap::new();
         map.register(Rect::new(0, 0, 40, 20), panel(PanelId::Chart));
-        map.register(Rect::new(5, 5, 10, 1), HitTarget::TimeframeButton(Timeframe::M5));
+        map.register(
+            Rect::new(5, 5, 10, 1),
+            HitTarget::TimeframeButton(Timeframe::M5),
+        );
         assert_eq!(
             map.resolve(6, 5),
             Some(&HitTarget::TimeframeButton(Timeframe::M5))
@@ -192,9 +195,8 @@ mod tests {
     }
 
     fn arb_rect() -> impl Strategy<Value = Rect> {
-        (0u16..200, 0u16..60, 0u16..=200, 0u16..=60).prop_map(|(x, y, w, h)| {
-            Rect::new(x, y, w.min(200 - x), h.min(60 - y))
-        })
+        (0u16..200, 0u16..60, 0u16..=200, 0u16..=60)
+            .prop_map(|(x, y, w, h)| Rect::new(x, y, w.min(200 - x), h.min(60 - y)))
     }
 
     proptest! {

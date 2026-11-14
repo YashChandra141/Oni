@@ -13,7 +13,10 @@ pub enum MouseAction {
     /// Left click on a watchlist row or strip segment: switch every panel to it (Req 27.4).
     SelectSymbol(String),
     /// Left click on a book price: select the level and prefill a limit ticket (Req 30.1).
-    PrefillBookLevel { side: BookSide, index: usize },
+    PrefillBookLevel {
+        side: BookSide,
+        index: usize,
+    },
     /// Wheel up over the book: move the cursor one row up.
     BookCursorUp,
     /// Wheel down over the book: move the cursor one row down.
@@ -62,7 +65,10 @@ pub fn mouse_action(map: &HitMap, drag: &mut DragState, ev: MouseEvent) -> Optio
     let in_chart = matches!(hit, Some((_, HitTarget::Chart)));
     let in_book = matches!(
         hit,
-        Some((_, HitTarget::BookLevel { .. } | HitTarget::Panel(PanelId::Book)))
+        Some((
+            _,
+            HitTarget::BookLevel { .. } | HitTarget::Panel(PanelId::Book)
+        ))
     );
     match ev.kind {
         MouseEventKind::ScrollUp if in_chart => Some(MouseAction::ZoomIn),
@@ -78,7 +84,9 @@ pub fn mouse_action(map: &HitMap, drag: &mut DragState, ev: MouseEvent) -> Optio
                         index: *index,
                     })
                 }
-                Some((_, HitTarget::TimeframeButton(tf))) => Some(MouseAction::SelectTimeframe(*tf)),
+                Some((_, HitTarget::TimeframeButton(tf))) => {
+                    Some(MouseAction::SelectTimeframe(*tf))
+                }
                 Some((_, HitTarget::IndicatorToggle(ind))) => {
                     Some(MouseAction::ToggleIndicator(*ind))
                 }
@@ -164,8 +172,14 @@ mod tests {
     #[test]
     fn wheel_over_the_chart_zooms() {
         let mut d = DragState::default();
-        assert_eq!(run(&mut d, MouseEventKind::ScrollUp, 10, 5), Some(MouseAction::ZoomIn));
-        assert_eq!(run(&mut d, MouseEventKind::ScrollDown, 10, 5), Some(MouseAction::ZoomOut));
+        assert_eq!(
+            run(&mut d, MouseEventKind::ScrollUp, 10, 5),
+            Some(MouseAction::ZoomIn)
+        );
+        assert_eq!(
+            run(&mut d, MouseEventKind::ScrollDown, 10, 5),
+            Some(MouseAction::ZoomOut)
+        );
         // Outside the chart the wheel does nothing.
         assert_eq!(run(&mut d, MouseEventKind::ScrollUp, 10, 40), None);
     }
@@ -228,11 +242,19 @@ mod tests {
         );
         // It starts no pan, and a right click does nothing.
         assert_eq!(
-            mouse_action(&map, &mut d, ev(MouseEventKind::Drag(MouseButton::Left), 40, 5)),
+            mouse_action(
+                &map,
+                &mut d,
+                ev(MouseEventKind::Drag(MouseButton::Left), 40, 5)
+            ),
             None
         );
         assert_eq!(
-            mouse_action(&map, &mut d, ev(MouseEventKind::Down(MouseButton::Right), 32, 0)),
+            mouse_action(
+                &map,
+                &mut d,
+                ev(MouseEventKind::Down(MouseButton::Right), 32, 0)
+            ),
             None
         );
     }
@@ -246,7 +268,10 @@ mod tests {
         assert_eq!(run(&mut d, MouseEventKind::Down(left), 10, 5), None);
         assert_eq!(run(&mut d, MouseEventKind::Down(left), 100, 30), None);
         // Right clicks do nothing.
-        assert_eq!(run(&mut d, MouseEventKind::Down(MouseButton::Right), 1, 0), None);
+        assert_eq!(
+            run(&mut d, MouseEventKind::Down(MouseButton::Right), 1, 0),
+            None
+        );
     }
 
     /// The chart map plus a book panel at x 70..110 with two level rows.
@@ -297,7 +322,11 @@ mod tests {
         assert_eq!(click(&mut d, 70, 1), None);
         // A click on a level starts no chart pan.
         assert_eq!(
-            mouse_action(&map, &mut d, ev(MouseEventKind::Drag(MouseButton::Left), 90, 1)),
+            mouse_action(
+                &map,
+                &mut d,
+                ev(MouseEventKind::Drag(MouseButton::Left), 90, 1)
+            ),
             None
         );
     }
@@ -327,7 +356,10 @@ mod tests {
     #[test]
     fn clicking_a_watchlist_symbol_selects_it() {
         let mut map = map();
-        map.register(Rect::new(70, 0, 30, 5), HitTarget::Panel(PanelId::Watchlist));
+        map.register(
+            Rect::new(70, 0, 30, 5),
+            HitTarget::Panel(PanelId::Watchlist),
+        );
         for (y, symbol) in [(1, "BTC-USD"), (2, "ETH-USD"), (3, "SOL-USD")] {
             map.register(
                 Rect::new(71, y, 28, 1),
@@ -347,13 +379,24 @@ mod tests {
         // The border, a right click, and the wheel do nothing; the click starts no pan.
         assert_eq!(mouse_action(&map, &mut d, ev(left, 80, 0)), None);
         assert_eq!(
-            mouse_action(&map, &mut d, ev(MouseEventKind::Down(MouseButton::Right), 80, 1)),
+            mouse_action(
+                &map,
+                &mut d,
+                ev(MouseEventKind::Down(MouseButton::Right), 80, 1)
+            ),
             None
         );
-        assert_eq!(mouse_action(&map, &mut d, ev(MouseEventKind::ScrollUp, 80, 1)), None);
+        assert_eq!(
+            mouse_action(&map, &mut d, ev(MouseEventKind::ScrollUp, 80, 1)),
+            None
+        );
         mouse_action(&map, &mut d, ev(left, 80, 1));
         assert_eq!(
-            mouse_action(&map, &mut d, ev(MouseEventKind::Drag(MouseButton::Left), 90, 5)),
+            mouse_action(
+                &map,
+                &mut d,
+                ev(MouseEventKind::Drag(MouseButton::Left), 90, 5)
+            ),
             None
         );
     }
@@ -398,7 +441,10 @@ mod order_click_tests {
         map.register(Rect::new(0, 0, 40, 6), HitTarget::Panel(PanelId::Orders));
         map.register(Rect::new(1, 2, 38, 1), HitTarget::OrderRow("o-1".into()));
         map.register(Rect::new(1, 2, 3, 1), HitTarget::OpenOrder("o-1".into()));
-        map.register(Rect::new(0, 20, 60, 1), HitTarget::Panel(PanelId::CommandBar));
+        map.register(
+            Rect::new(0, 20, 60, 1),
+            HitTarget::Panel(PanelId::CommandBar),
+        );
         map.register(Rect::new(50, 8, 5, 1), HitTarget::TicketBuy);
         map.register(Rect::new(56, 8, 6, 1), HitTarget::TicketSell);
         map.register(Rect::new(40, 8, 8, 1), HitTarget::TicketQty);
@@ -411,8 +457,14 @@ mod order_click_tests {
     #[test]
     fn the_cross_cancels_and_the_rest_of_the_row_selects() {
         let map = orders_map();
-        assert_eq!(click(&map, 2, 2), Some(MouseAction::CancelOrder("o-1".into())));
-        assert_eq!(click(&map, 20, 2), Some(MouseAction::SelectOrder("o-1".into())));
+        assert_eq!(
+            click(&map, 2, 2),
+            Some(MouseAction::CancelOrder("o-1".into()))
+        );
+        assert_eq!(
+            click(&map, 20, 2),
+            Some(MouseAction::SelectOrder("o-1".into()))
+        );
         // The panel border and the empty rows focus the panel.
         assert_eq!(click(&map, 20, 4), Some(MouseAction::FocusOrders));
         assert_eq!(click(&map, 0, 2), Some(MouseAction::FocusOrders));

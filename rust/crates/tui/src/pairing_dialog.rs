@@ -21,9 +21,7 @@ const MAX_FAILURE_CHARS: usize = 120;
 
 /// The dialog text for `state`, or `None` when no dialog is shown.
 pub fn dialog_lines(state: &PairingState) -> Option<Vec<Line<'static>>> {
-    let code_style = Style::new()
-        .fg(Color::Yellow)
-        .add_modifier(Modifier::BOLD);
+    let code_style = Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD);
     let link_style = Style::new().fg(Color::Cyan);
     match state {
         PairingState::Idle | PairingState::Done { .. } => None,
@@ -134,7 +132,10 @@ mod tests {
     fn the_dialog_shows_code_link_countdown_and_hint() {
         let text = render(80, 24, &showing(272)).join("\n");
         assert!(text.contains("ABCD-2345"), "{text}");
-        assert!(text.contains("https://app.example.com/pair/?code=ABCD2345"), "{text}");
+        assert!(
+            text.contains("https://app.example.com/pair/?code=ABCD2345"),
+            "{text}"
+        );
         assert!(text.contains("Expires in 4:32"), "{text}");
         assert!(text.contains(HINT), "{text}");
         assert!(text.contains("Esc to cancel"), "{text}");
@@ -143,25 +144,47 @@ mod tests {
 
     #[test]
     fn the_countdown_updates_with_the_state() {
-        assert!(render(80, 24, &showing(59)).join("\n").contains("Expires in 0:59"));
-        assert!(render(80, 24, &showing(300)).join("\n").contains("Expires in 5:00"));
+        assert!(
+            render(80, 24, &showing(59))
+                .join("\n")
+                .contains("Expires in 0:59")
+        );
+        assert!(
+            render(80, 24, &showing(300))
+                .join("\n")
+                .contains("Expires in 5:00")
+        );
     }
 
     // Req 48.3
     #[test]
     fn expired_and_failed_dialogs_say_how_to_retry() {
         let expired = render(80, 24, &PairingState::Expired).join("\n");
-        assert!(expired.contains("Pairing expired, press P to retry"), "{expired}");
+        assert!(
+            expired.contains("Pairing expired, press P to retry"),
+            "{expired}"
+        );
         let failed = render(80, 24, &PairingState::Failed("server unreachable".into())).join("\n");
-        assert!(failed.contains("Pairing failed: server unreachable"), "{failed}");
+        assert!(
+            failed.contains("Pairing failed: server unreachable"),
+            "{failed}"
+        );
         assert!(failed.contains("Press P to retry"), "{failed}");
         let requesting = render(80, 24, &PairingState::Requesting).join("\n");
-        assert!(requesting.contains("Requesting a pairing code"), "{requesting}");
+        assert!(
+            requesting.contains("Requesting a pairing code"),
+            "{requesting}"
+        );
     }
 
     #[test]
     fn nothing_is_drawn_without_a_dialog() {
-        for state in [PairingState::Idle, PairingState::Done { address: "A".into() }] {
+        for state in [
+            PairingState::Idle,
+            PairingState::Done {
+                address: "A".into(),
+            },
+        ] {
             assert!(dialog_lines(&state).is_none());
             let rows = render(80, 24, &state);
             assert!(rows.iter().all(|row| row.trim().is_empty()), "{rows:?}");

@@ -66,9 +66,7 @@ fn apply(book: &mut OrderBook, op: &Op) -> bool {
             book.apply_snapshot(&to_levels(b), &to_levels(a));
             false
         }
-        Op::Delta(buy, p, q) => book
-            .apply_delta(side_of(*buy), Price(*p), Qty(*q))
-            .is_err(),
+        Op::Delta(buy, p, q) => book.apply_delta(side_of(*buy), Price(*p), Qty(*q)).is_err(),
     }
 }
 

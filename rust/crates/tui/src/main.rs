@@ -505,11 +505,7 @@ fn watchlist_subscriptions() -> Vec<Subscription> {
 /// key: unsubscribe the old key unless the watchlist keeps it open, then subscribe the new key.
 /// The subscribe is sent even when the watchlist already holds the new key, because the server
 /// answers it with the candle snapshot the chart needs after it was cleared.
-fn chart_key_messages(
-    app: &App,
-    old_symbol: &str,
-    old_timeframe: Timeframe,
-) -> Vec<ClientMessage> {
+fn chart_key_messages(app: &App, old_symbol: &str, old_timeframe: Timeframe) -> Vec<ClientMessage> {
     let mut messages = Vec::with_capacity(2);
     if !is_watch_key(old_symbol, old_timeframe) {
         messages.push(ClientMessage::Unsubscribe {
@@ -672,14 +668,26 @@ mod tests {
     #[test]
     fn q_quits_through_the_keymap() {
         let keymap = keymap();
-        assert!(is_quit(&keymap, &press(KeyCode::Char('q'), KeyModifiers::NONE)));
-        assert!(is_quit(&keymap, &press(KeyCode::Char('Q'), KeyModifiers::SHIFT)));
+        assert!(is_quit(
+            &keymap,
+            &press(KeyCode::Char('q'), KeyModifiers::NONE)
+        ));
+        assert!(is_quit(
+            &keymap,
+            &press(KeyCode::Char('Q'), KeyModifiers::SHIFT)
+        ));
     }
 
     #[test]
     fn ctrl_c_is_a_hard_exit_regardless_of_the_keymap() {
-        assert!(is_hard_exit(&press(KeyCode::Char('c'), KeyModifiers::CONTROL)));
-        assert!(!is_hard_exit(&press(KeyCode::Char('c'), KeyModifiers::NONE)));
+        assert!(is_hard_exit(&press(
+            KeyCode::Char('c'),
+            KeyModifiers::CONTROL
+        )));
+        assert!(!is_hard_exit(&press(
+            KeyCode::Char('c'),
+            KeyModifiers::NONE
+        )));
         assert!(!is_hard_exit(&key(
             KeyCode::Char('c'),
             KeyModifiers::CONTROL,
@@ -695,14 +703,30 @@ mod tests {
     #[test]
     fn other_keys_and_releases_do_not_quit() {
         let keymap = keymap();
-        assert!(!is_quit(&keymap, &press(KeyCode::Char('c'), KeyModifiers::NONE)));
-        assert!(!is_quit(&keymap, &press(KeyCode::Char('q'), KeyModifiers::CONTROL)));
-        assert!(!is_quit(&keymap, &press(KeyCode::Char('x'), KeyModifiers::NONE)));
-        assert!(!is_quit(&keymap, &press(KeyCode::Enter, KeyModifiers::NONE)));
+        assert!(!is_quit(
+            &keymap,
+            &press(KeyCode::Char('c'), KeyModifiers::NONE)
+        ));
+        assert!(!is_quit(
+            &keymap,
+            &press(KeyCode::Char('q'), KeyModifiers::CONTROL)
+        ));
+        assert!(!is_quit(
+            &keymap,
+            &press(KeyCode::Char('x'), KeyModifiers::NONE)
+        ));
+        assert!(!is_quit(
+            &keymap,
+            &press(KeyCode::Enter, KeyModifiers::NONE)
+        ));
         assert!(!is_quit(&keymap, &press(KeyCode::Esc, KeyModifiers::NONE)));
         assert!(!is_quit(
             &keymap,
-            &key(KeyCode::Char('q'), KeyModifiers::NONE, KeyEventKind::Release)
+            &key(
+                KeyCode::Char('q'),
+                KeyModifiers::NONE,
+                KeyEventKind::Release
+            )
         ));
     }
 
@@ -736,7 +760,10 @@ mod tests {
         assert!(changed);
         assert_eq!(
             messages,
-            vec![unsub("BTC-USD", Timeframe::M5), sub("BTC-USD", Timeframe::H1)]
+            vec![
+                unsub("BTC-USD", Timeframe::M5),
+                sub("BTC-USD", Timeframe::H1)
+            ]
         );
     }
 
@@ -788,7 +815,10 @@ mod tests {
         assert_eq!(app.symbol, "ETH-USD");
         assert_eq!(
             messages,
-            vec![unsub("SOL-USD", Timeframe::M15), sub("ETH-USD", Timeframe::M15)]
+            vec![
+                unsub("SOL-USD", Timeframe::M15),
+                sub("ETH-USD", Timeframe::M15)
+            ]
         );
         // Other actions do nothing.
         let (changed, messages) = apply_symbol_action(&mut app, Action::ChartZoomIn);
@@ -854,7 +884,10 @@ mod tests {
                 set.observe(message);
             }
         }
-        assert_eq!((app.symbol.as_str(), app.timeframe), ("SOL-USD", Timeframe::M1));
+        assert_eq!(
+            (app.symbol.as_str(), app.timeframe),
+            ("SOL-USD", Timeframe::M1)
+        );
         assert_eq!(
             set.messages(),
             [
@@ -1034,7 +1067,13 @@ mod tests {
         let after = app.toggles;
         assert_eq!(
             (after.ema, after.vwap, after.bollinger, after.rsi, after.atr),
-            (!before.ema, !before.vwap, !before.bollinger, !before.rsi, !before.atr)
+            (
+                !before.ema,
+                !before.vwap,
+                !before.bollinger,
+                !before.rsi,
+                !before.atr
+            )
         );
         // Toggling again restores it, and other actions change nothing.
         assert!(apply_indicator_action(&mut app, Action::IndicatorEma));

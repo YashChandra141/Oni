@@ -607,13 +607,23 @@ mod tests {
         assert!(is_book(&events[0]));
         assert!(matches!(
             &events[1],
-            Event::Fill { price: Price(11), qty: Qty(5), remaining: Qty(0), ts: 50, .. }
+            Event::Fill {
+                price: Price(11),
+                qty: Qty(5),
+                remaining: Qty(0),
+                ts: 50,
+                ..
+            }
         ));
         assert_eq!(events[2], ack(&guest, OrderStatus::Filled));
         // Req 13.4: the Position follows the fill and the filled ack.
         assert!(matches!(
             &events[3],
-            Event::Position { qty: Qty(5), avg_entry: Some(Price(11)), .. }
+            Event::Position {
+                qty: Qty(5),
+                avg_entry: Some(Price(11)),
+                ..
+            }
         ));
         // Nothing left to cancel.
         assert_eq!(
@@ -627,7 +637,11 @@ mod tests {
         assert_eq!(reset.len(), INSTRUMENTS.len());
         assert!(reset.iter().all(|e| matches!(
             e,
-            Event::Position { qty: Qty(0), avg_entry: None, .. }
+            Event::Position {
+                qty: Qty(0),
+                avg_entry: None,
+                ..
+            }
         )));
     }
 
@@ -653,11 +667,19 @@ mod tests {
         let tail = &events[events.len() - 3..];
         assert!(matches!(
             &tail[0],
-            Event::Fill { price: Price(110), qty: Qty(2), ts: 200, .. }
+            Event::Fill {
+                price: Price(110),
+                qty: Qty(2),
+                ts: 200,
+                ..
+            }
         ));
         assert!(matches!(
             &tail[1],
-            Event::OrderAck { status: OrderStatus::Filled, .. }
+            Event::OrderAck {
+                status: OrderStatus::Filled,
+                ..
+            }
         ));
         assert!(matches!(&tail[2], Event::Position { qty: Qty(2), .. }));
     }
@@ -746,7 +768,12 @@ mod tests {
     #[test]
     fn second_book_message_within_100ms_is_withheld() {
         let mut engine = Engine::new();
-        assert_eq!(engine.on_market(snap(BTC, &[(99, 1)], &[(101, 1)], 1_000)).len(), 1);
+        assert_eq!(
+            engine
+                .on_market(snap(BTC, &[(99, 1)], &[(101, 1)], 1_000))
+                .len(),
+            1
+        );
         assert_eq!(engine.on_market(delta(BTC, Side::Buy, 98, 2, 1_099)), []);
     }
 
@@ -770,7 +797,12 @@ mod tests {
         assert_eq!(bids, &vec![lv(99, 1), lv(98, 2)]);
         assert_eq!(*ts, 1_100);
         // Clean now: nothing more is emitted.
-        assert!(!engine.on_market(trade_msg(BTC, 100, 1, 1_300)).iter().any(is_book));
+        assert!(
+            !engine
+                .on_market(trade_msg(BTC, 100, 1, 1_300))
+                .iter()
+                .any(is_book)
+        );
     }
 
     #[test]
@@ -790,7 +822,9 @@ mod tests {
     #[test]
     fn two_book_messages_100ms_apart_both_emit() {
         let mut engine = Engine::new();
-        assert!(is_book(&engine.on_market(snap(BTC, &[(99, 1)], &[(101, 1)], 0))[0]));
+        assert!(is_book(
+            &engine.on_market(snap(BTC, &[(99, 1)], &[(101, 1)], 0))[0]
+        ));
         let events = engine.on_market(delta(BTC, Side::Sell, 102, 1, 100));
         assert_eq!(events.len(), 1);
         assert!(is_book(&events[0]));
@@ -817,7 +851,12 @@ mod tests {
             other => panic!("expected one error, got {other:?}"),
         }
         // Book unchanged and not dirty: a later trade emits no Book.
-        assert!(!engine.on_market(trade_msg(BTC, 100, 1, 900)).iter().any(is_book));
+        assert!(
+            !engine
+                .on_market(trade_msg(BTC, 100, 1, 900))
+                .iter()
+                .any(is_book)
+        );
         assert_eq!(engine.books[BTC].book.bids.get(&Price(99)), Some(&Qty(1)));
     }
 
@@ -826,7 +865,12 @@ mod tests {
         let mut engine = Engine::new();
         engine.on_market(snap(BTC, &[(99, 1)], &[(101, 1), (103, 1)], 0));
         let events = engine.on_market(delta(BTC, Side::Buy, 101, 5, 100));
-        let [Event::Book { bids, asks, spread, .. }] = events.as_slice() else {
+        let [
+            Event::Book {
+                bids, asks, spread, ..
+            },
+        ] = events.as_slice()
+        else {
             panic!("expected one book event, got {events:?}");
         };
         assert_eq!(bids, &vec![lv(101, 5), lv(99, 1)]);
@@ -940,7 +984,10 @@ mod tests {
             engine.on_market(trade_msg(BTC, 100 + i, 1, i * MIN));
         }
         let events = engine.on_command(subscribe(BTC, Timeframe::M1));
-        let [Event::Candle { bars, snapshot, .. }, Event::Indicators { .. }] = events.as_slice()
+        let [
+            Event::Candle { bars, snapshot, .. },
+            Event::Indicators { .. },
+        ] = events.as_slice()
         else {
             panic!("expected a candle and an indicators event, got {events:?}");
         };
@@ -963,7 +1010,10 @@ mod tests {
         );
         assert!(matches!(
             &events[2],
-            Event::Indicators { timeframe: Timeframe::M5, .. }
+            Event::Indicators {
+                timeframe: Timeframe::M5,
+                ..
+            }
         ));
         // Another symbol, and another timeframe of no subscriber: trades only.
         assert_eq!(
@@ -1258,11 +1308,23 @@ mod paper_tests {
         engine.on_market(snap(0));
         let events = engine.on_command(market("guest", "o-1", Side::Buy, 3));
         assert_eq!(events.len(), 4);
-        assert!(matches!(&events[0], Event::OrderAck { status: OrderStatus::Accepted, .. }));
+        assert!(matches!(
+            &events[0],
+            Event::OrderAck {
+                status: OrderStatus::Accepted,
+                ..
+            }
+        ));
         let Event::Fill { fee, .. } = &events[1] else {
             panic!("expected a fill, got {:?}", events[1]);
         };
-        assert!(matches!(&events[2], Event::OrderAck { status: OrderStatus::Filled, .. }));
+        assert!(matches!(
+            &events[2],
+            Event::OrderAck {
+                status: OrderStatus::Filled,
+                ..
+            }
+        ));
         // Basis 101 × 3; no trade yet, so unrealized is 0; the fee reduces realized P&L.
         assert_eq!(
             events[3],
@@ -1320,7 +1382,13 @@ mod paper_tests {
         let events = engine.on_market(trade(105, 10));
         assert!(matches!(events[0], Event::Trade { .. }));
         assert!(matches!(events[1], Event::Fill { .. }));
-        assert!(matches!(events[2], Event::OrderAck { status: OrderStatus::Filled, .. }));
+        assert!(matches!(
+            events[2],
+            Event::OrderAck {
+                status: OrderStatus::Filled,
+                ..
+            }
+        ));
         // One Position for the fill, with unrealized at the new last price: (105 − 101) × 2.
         assert_eq!(events.len(), 4);
         assert_eq!(positions(&events), [("guest", 2, 8)]);
@@ -1334,7 +1402,10 @@ mod paper_tests {
             engine.on_command(market(account, id, Side::Buy, 2));
         }
         let events = engine.on_market(snap(5));
-        let fills = events.iter().filter(|e| matches!(e, Event::Fill { .. })).count();
+        let fills = events
+            .iter()
+            .filter(|e| matches!(e, Event::Fill { .. }))
+            .count();
         assert_eq!(fills, 2);
         assert_eq!(positions(&events), [("guest", 2, 0), ("w_b", 2, 0)]);
         // Fill, filled ack for each order come before any Position.
@@ -1353,7 +1424,13 @@ mod paper_tests {
     fn account_cap_rejects_only_new_accounts() {
         let mut engine = Engine::with_account_cap(2);
         let rest = |account: &str, id: &str| {
-            place(account, id, Side::Buy, 1, OrderKind::Limit { price: Price(50) })
+            place(
+                account,
+                id,
+                Side::Buy,
+                1,
+                OrderKind::Limit { price: Price(50) },
+            )
         };
         assert_eq!(engine.on_command(rest("a", "o-1")).len(), 1);
         assert_eq!(engine.on_command(rest("b", "o-2")).len(), 1);
@@ -1370,7 +1447,13 @@ mod paper_tests {
         assert_eq!(engine.matcher.open_count(), 2);
         // Existing accounts keep trading at the cap.
         let events = engine.on_command(rest("a", "o-4"));
-        assert!(matches!(&events[0], Event::OrderAck { status: OrderStatus::Accepted, .. }));
+        assert!(matches!(
+            &events[0],
+            Event::OrderAck {
+                status: OrderStatus::Accepted,
+                ..
+            }
+        ));
         assert_eq!(engine.matcher.open_count(), 3);
     }
 
@@ -1382,14 +1465,22 @@ mod paper_tests {
             order_id: OrderId::new("o-9").unwrap(),
         });
         assert!(matches!(&events[0], Event::OrderRejected { .. }));
-        assert_eq!(engine.on_command(Command::CancelAll { account_id: acct("ghost") }), []);
+        assert_eq!(
+            engine.on_command(Command::CancelAll {
+                account_id: acct("ghost")
+            }),
+            []
+        );
         let events = engine.on_command(Command::ResetAccount {
             account_id: acct("ghost"),
         });
         assert_eq!(events.len(), INSTRUMENTS.len());
         assert_eq!(engine.accounts.len(), 0);
         // The cap slot is still free for a real account.
-        assert_eq!(engine.on_command(market("real", "o-1", Side::Buy, 1)).len(), 1);
+        assert_eq!(
+            engine.on_command(market("real", "o-1", Side::Buy, 1)).len(),
+            1
+        );
         assert_eq!(engine.accounts.len(), 1);
     }
 

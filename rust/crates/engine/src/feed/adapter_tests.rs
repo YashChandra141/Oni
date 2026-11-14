@@ -225,12 +225,22 @@ fn depth_text(first: u64, last: u64) -> String {
 
 /// Asserts that one recorded connection sent no auth-like header and no auth-like frame word.
 fn assert_public_only(record: &ConnRecord) {
-    assert!(!record.header_names.is_empty(), "no handshake headers recorded");
+    assert!(
+        !record.header_names.is_empty(),
+        "no handshake headers recorded"
+    );
     for name in &record.header_names {
-        assert!(!is_denied_header(name), "denied header {name} in {:?}", record.header_names);
+        assert!(
+            !is_denied_header(name),
+            "denied header {name} in {:?}",
+            record.header_names
+        );
     }
     for frame in &record.frames {
-        assert!(!frame_has_denied_word(frame), "denied word in frame {frame}");
+        assert!(
+            !frame_has_denied_word(frame),
+            "denied word in frame {frame}"
+        );
     }
 }
 
@@ -251,7 +261,12 @@ impl SnapshotFetcher for Fetcher {
             calls.push(symbol.to_owned());
             calls.len() - 1
         };
-        let id = self.ids.get(index).or(self.ids.last()).copied().unwrap_or(0);
+        let id = self
+            .ids
+            .get(index)
+            .or(self.ids.last())
+            .copied()
+            .unwrap_or(0);
         let snapshot = DepthSnapshot {
             symbol: symbol.to_owned(),
             last_update_id: id,
@@ -289,7 +304,13 @@ fn coinbase_trade_variants_table() {
         (
             "maker BUY means the aggressor sold",
             cb_trade().replace("\"SELL\"", "\"BUY\""),
-            vec![trade("BTC-USD", 6_716_813, 150_000, Side::Sell, 1_794_631_990_141)],
+            vec![trade(
+                "BTC-USD",
+                6_716_813,
+                150_000,
+                Side::Sell,
+                1_794_631_990_141,
+            )],
         ),
         (
             "SOL-USD with a whole-lot size",
@@ -297,20 +318,36 @@ fn coinbase_trade_variants_table() {
                 .replace("BTC-USD", "SOL-USD")
                 .replace("67168.13", "75.46")
                 .replace("0.00150000", "2"),
-            vec![trade("SOL-USD", 7_546, 200_000_000, Side::Buy, 1_794_631_990_141)],
+            vec![trade(
+                "SOL-USD",
+                7_546,
+                200_000_000,
+                Side::Buy,
+                1_794_631_990_141,
+            )],
         ),
         (
             "several trades in one event, unknown product skipped",
             multi.to_owned(),
             vec![
-                trade("ETH-USD", 189_925, 50_000_000, Side::Sell, 1_794_631_989_100),
+                trade(
+                    "ETH-USD",
+                    189_925,
+                    50_000_000,
+                    Side::Sell,
+                    1_794_631_989_100,
+                ),
                 trade("ETH-USD", 189_926, 25_000_000, Side::Buy, 1_794_631_989_200),
             ],
         ),
     ];
     for (name, text, expected) in cases {
         let mut stats = DropStats::new();
-        assert_eq!(parse_coinbase(&text, &mut stats).unwrap(), expected, "{name}");
+        assert_eq!(
+            parse_coinbase(&text, &mut stats).unwrap(),
+            expected,
+            "{name}"
+        );
         assert_eq!(stats.total(), 0, "{name}");
     }
 }
@@ -365,7 +402,11 @@ fn coinbase_drop_variants_table() {
         let msgs = parse_coinbase(&text, &mut stats).unwrap();
         assert_eq!(msgs.len(), kept, "{name}");
         let counts = stats.counts(Venue::Coinbase, symbol);
-        assert_eq!((counts.inexact, counts.malformed), (inexact, malformed), "{name}");
+        assert_eq!(
+            (counts.inexact, counts.malformed),
+            (inexact, malformed),
+            "{name}"
+        );
     }
 }
 
@@ -379,7 +420,13 @@ fn backpack_variants_table() {
                 .replace("SOL_USDC", "ETH_USDC")
                 .replace("\"75.41\"", "\"3000.5\"")
                 .replace("\"0.02\"", "\"1.5\""),
-            ParsedBackpack::Trade(trade("ETH-USD", 300_050, 150_000_000, Side::Sell, 1_794_633_085_618)),
+            ParsedBackpack::Trade(trade(
+                "ETH-USD",
+                300_050,
+                150_000_000,
+                Side::Sell,
+                1_794_633_085_618,
+            )),
         ),
         (
             "BTC_USDC trade, buyer aggressor",
@@ -387,7 +434,13 @@ fn backpack_variants_table() {
                 .replace("SOL_USDC", "BTC_USDC")
                 .replace("\"m\":true", "\"m\":false")
                 .replace("\"75.41\"", "\"67168.13\""),
-            ParsedBackpack::Trade(trade("BTC-USD", 6_716_813, 2_000_000, Side::Buy, 1_794_633_085_618)),
+            ParsedBackpack::Trade(trade(
+                "BTC-USD",
+                6_716_813,
+                2_000_000,
+                Side::Buy,
+                1_794_633_085_618,
+            )),
         ),
         (
             "zero quantity bid removes the level",
@@ -420,7 +473,10 @@ fn backpack_variants_table() {
     }
     // The inexact row counted exactly one drop.
     let mut stats = DropStats::new();
-    parse_backpack(&bp_depth().replace("\"198.5\"", "\"198.123456789\""), &mut stats);
+    parse_backpack(
+        &bp_depth().replace("\"198.5\"", "\"198.123456789\""),
+        &mut stats,
+    );
     assert_eq!(stats.counts(Venue::Backpack, "SOL-USD").inexact, 1);
     assert_eq!(stats.total(), 1);
 }
@@ -432,7 +488,11 @@ fn backpack_rest_snapshot_then_ws_update_pipeline() {
         panic!("expected a depth update");
     };
     let snapshot = parse_depth_snapshot(&bp_rest_depth(), "SOL-USD", &mut stats).unwrap();
-    assert_eq!(snapshot.last_update_id + 1, update.first_id, "the sample ids line up");
+    assert_eq!(
+        snapshot.last_update_id + 1,
+        update.first_id,
+        "the sample ids line up"
+    );
 
     let mut sync = DepthSync::new();
     assert_eq!(sync.on_update(update), SyncOutput::default());
@@ -520,7 +580,10 @@ fn buffered_duplicates_and_stale_updates_before_a_snapshot_are_dropped() {
     }
     let out = sync.on_snapshot(snap(100));
     assert!(!out.need_resync);
-    assert!(matches!(out.msgs.first(), Some(MarketMsg::BookSnapshot { .. })));
+    assert!(matches!(
+        out.msgs.first(),
+        Some(MarketMsg::BookSnapshot { .. })
+    ));
     assert_eq!(applied(&out.msgs), [101, 103]);
 }
 
@@ -537,7 +600,9 @@ fn resync_after_a_gap_applies_only_updates_after_the_new_snapshot() {
     }
     let out = sync.on_snapshot(snap(149));
     assert!(!out.need_resync);
-    assert!(matches!(out.msgs.first(), Some(MarketMsg::BookSnapshot { bids, .. }) if bids.len() == 1));
+    assert!(
+        matches!(out.msgs.first(), Some(MarketMsg::BookSnapshot { bids, .. }) if bids.len() == 1)
+    );
     assert_eq!(applied(&out.msgs), [150, 151]);
     assert_eq!(applied(&sync.on_update(upd(152, 152)).msgs), [152]);
 }
@@ -577,7 +642,10 @@ fn ids_next_to_u64_max_follow_the_same_rules() {
     sync.on_snapshot(snap(u64::MAX - 2));
     assert_eq!(sync.on_update(upd(u64::MAX - 1, u64::MAX)).msgs.len(), 1);
     // Nothing follows u64::MAX.
-    assert_eq!(sync.on_update(upd(u64::MAX, u64::MAX)), SyncOutput::default());
+    assert_eq!(
+        sync.on_update(upd(u64::MAX, u64::MAX)),
+        SyncOutput::default()
+    );
 
     // Buffered ids at the top of the range are applied after the snapshot.
     let mut sync = DepthSync::new();
@@ -594,15 +662,30 @@ fn ids_next_to_u64_max_follow_the_same_rules() {
 
 #[test]
 fn deny_list_is_case_insensitive_and_does_not_flag_normal_headers() {
-    for bad in ["Authorization", "COOKIE", "X-Api-Key", "x-signature", "X-Window", "X-Timestamp"] {
+    for bad in [
+        "Authorization",
+        "COOKIE",
+        "X-Api-Key",
+        "x-signature",
+        "X-Window",
+        "X-Timestamp",
+    ] {
         assert!(is_denied_header(bad), "{bad}");
     }
-    for ok in ["host", "upgrade", "connection", "sec-websocket-key", "sec-websocket-version"] {
+    for ok in [
+        "host",
+        "upgrade",
+        "connection",
+        "sec-websocket-key",
+        "sec-websocket-version",
+    ] {
         assert!(!is_denied_header(ok), "{ok}");
     }
     assert!(frame_has_denied_word("{\"JWT\":\"x\"}"));
     assert!(frame_has_denied_word("{\"apiKey\":1}"));
-    assert!(!frame_has_denied_word("{\"type\":\"subscribe\",\"channel\":\"level2\"}"));
+    assert!(!frame_has_denied_word(
+        "{\"type\":\"subscribe\",\"channel\":\"level2\"}"
+    ));
 }
 
 // Req 5.1, 5.5: no auth header or word, feed_disconnected after a drop, resubscribe.
@@ -630,12 +713,24 @@ async fn coinbase_mock_server_handshake_drop_and_resubscribe() {
 
     let driver = async {
         let first = recv(&mut market).await;
-        assert!(matches!(first, MarketMsg::Trade { side: Side::Buy, .. }), "{first:?}");
+        assert!(
+            matches!(
+                first,
+                MarketMsg::Trade {
+                    side: Side::Buy,
+                    ..
+                }
+            ),
+            "{first:?}"
+        );
         let Event::Error { code, message } = recv(&mut errors).await else {
             panic!("expected an error event");
         };
         assert_eq!(code, ErrorCode::FeedDisconnected);
-        assert!(message.starts_with("coinbase feed disconnected"), "{message}");
+        assert!(
+            message.starts_with("coinbase feed disconnected"),
+            "{message}"
+        );
         let again = recv(&mut market).await;
         assert!(matches!(again, MarketMsg::Trade { .. }), "{again:?}");
 
@@ -656,7 +751,10 @@ async fn coinbase_mock_server_handshake_drop_and_resubscribe() {
                 .collect();
             assert_eq!(channels, ["market_trades", "level2", "heartbeats"]);
         }
-        assert_eq!(records[0].frames, records[1].frames, "same subscribe frames again");
+        assert_eq!(
+            records[0].frames, records[1].frames,
+            "same subscribe frames again"
+        );
     };
     drive(
         async { coinbase::run_with_url(&url, &products, &tx, &err_tx, backoff).await },
@@ -698,17 +796,32 @@ async fn backpack_mock_server_handshake_drop_resubscribe_and_resync() {
 
     let driver = async {
         // Connection 1: snapshot (id 100), delta from update 101, trade.
-        assert!(matches!(recv(&mut market).await, MarketMsg::BookSnapshot { .. }));
-        assert!(matches!(recv(&mut market).await, MarketMsg::BookDelta { .. }));
+        assert!(matches!(
+            recv(&mut market).await,
+            MarketMsg::BookSnapshot { .. }
+        ));
+        assert!(matches!(
+            recv(&mut market).await,
+            MarketMsg::BookDelta { .. }
+        ));
         assert!(matches!(recv(&mut market).await, MarketMsg::Trade { .. }));
         let Event::Error { code, message } = recv(&mut errors).await else {
             panic!("expected an error event");
         };
         assert_eq!(code, ErrorCode::FeedDisconnected);
-        assert!(message.starts_with("backpack feed disconnected"), "{message}");
+        assert!(
+            message.starts_with("backpack feed disconnected"),
+            "{message}"
+        );
         // Connection 2: a new snapshot (id 500) and update 501 applies to it.
-        assert!(matches!(recv(&mut market).await, MarketMsg::BookSnapshot { .. }));
-        assert!(matches!(recv(&mut market).await, MarketMsg::BookDelta { .. }));
+        assert!(matches!(
+            recv(&mut market).await,
+            MarketMsg::BookSnapshot { .. }
+        ));
+        assert!(matches!(
+            recv(&mut market).await,
+            MarketMsg::BookDelta { .. }
+        ));
         assert!(matches!(recv(&mut market).await, MarketMsg::Trade { .. }));
 
         assert_eq!(*seen_calls.lock().unwrap(), ["SOL-USD", "SOL-USD"]);
@@ -719,9 +832,15 @@ async fn backpack_mock_server_handshake_drop_resubscribe_and_resync() {
             assert_eq!(record.frames.len(), 1);
             let v: Value = serde_json::from_str(&record.frames[0]).unwrap();
             assert_eq!(v["method"], "SUBSCRIBE");
-            assert_eq!(v["params"], serde_json::json!(["trade.SOL_USDC", "depth.SOL_USDC"]));
+            assert_eq!(
+                v["params"],
+                serde_json::json!(["trade.SOL_USDC", "depth.SOL_USDC"])
+            );
         }
-        assert_eq!(records[0].frames, records[1].frames, "same subscribe frame again");
+        assert_eq!(
+            records[0].frames, records[1].frames,
+            "same subscribe frame again"
+        );
     };
     drive(
         async { backpack::run_with_url(&url, &syms, &tx, &err_tx, backoff, &mut fetcher).await },
@@ -765,7 +884,10 @@ async fn coinbase_backoff_after(frames: Vec<String>) -> Backoff {
     })
     .await
     .expect("timed out");
-    assert!(result.is_err(), "a dropped connection is an error: {result:?}");
+    assert!(
+        result.is_err(),
+        "a dropped connection is an error: {result:?}"
+    );
     backoff
 }
 
@@ -796,7 +918,10 @@ async fn backpack_backoff_after(frames: Vec<String>) -> Backoff {
     })
     .await
     .expect("timed out");
-    assert!(result.is_err(), "a dropped connection is an error: {result:?}");
+    assert!(
+        result.is_err(),
+        "a dropped connection is an error: {result:?}"
+    );
     backoff
 }
 
@@ -806,7 +931,10 @@ fn backoff_sequence_is_500ms_doubling_to_30s_for_both_adapters() {
     assert_eq!(coinbase::MAX_BACKOFF, Duration::from_secs(30));
     let mut backoff = Backoff::new();
     let millis: Vec<u128> = (0..8).map(|_| backoff.next_delay().as_millis()).collect();
-    assert_eq!(millis, [500, 1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000]);
+    assert_eq!(
+        millis,
+        [500, 1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000]
+    );
     // An initial delay above the cap is clamped.
     let mut clamped = Backoff::with_bounds(Duration::from_secs(60), Duration::from_secs(30));
     assert_eq!(clamped.next_delay(), Duration::from_secs(30));
@@ -894,6 +1022,9 @@ fn public_adapter_sources_contain_no_auth_strings() {
     ];
     for (name, source) in sources {
         let hits = forbidden_hits(source);
-        assert!(hits.is_empty(), "{name} contains auth-like strings: {hits:?}");
+        assert!(
+            hits.is_empty(),
+            "{name} contains auth-like strings: {hits:?}"
+        );
     }
 }

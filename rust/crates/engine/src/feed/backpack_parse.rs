@@ -177,11 +177,7 @@ fn qty_of(text: &str, symbol: &str, allow_zero: bool, stats: &mut DropStats) -> 
 }
 
 /// Converts raw `[price, qty]` pairs; a pair with a bad value is dropped and counted.
-fn convert_levels(
-    raw: &[[String; 2]],
-    symbol: &str,
-    stats: &mut DropStats,
-) -> Vec<(Price, Qty)> {
+fn convert_levels(raw: &[[String; 2]], symbol: &str, stats: &mut DropStats) -> Vec<(Price, Qty)> {
     raw.iter()
         .filter_map(|[price, qty]| {
             let price = price_of(price, symbol, stats)?;
@@ -491,8 +487,14 @@ fn levels_of(pairs: &[(Price, Qty)]) -> Vec<Level> {
 
 /// One BookDelta per level, bids first. Quantity zero removes the level.
 fn deltas_of(update: &DepthUpdate) -> Vec<MarketMsg> {
-    let bids = update.bids.iter().map(|&(price, qty)| (Side::Buy, price, qty));
-    let asks = update.asks.iter().map(|&(price, qty)| (Side::Sell, price, qty));
+    let bids = update
+        .bids
+        .iter()
+        .map(|&(price, qty)| (Side::Buy, price, qty));
+    let asks = update
+        .asks
+        .iter()
+        .map(|&(price, qty)| (Side::Sell, price, qty));
     bids.chain(asks)
         .map(|(side, price, qty)| MarketMsg::BookDelta {
             symbol: update.symbol.clone(),
@@ -644,7 +646,11 @@ mod tests {
                 "depth.SOL_USDC"
             ])
         );
-        assert_eq!(v.as_object().unwrap().len(), 2, "only method and params: {text}");
+        assert_eq!(
+            v.as_object().unwrap().len(),
+            2,
+            "only method and params: {text}"
+        );
         let lower = text.to_ascii_lowercase();
         for forbidden in ["signature", "key", "auth", "account"] {
             assert!(!lower.contains(forbidden), "{forbidden}");
@@ -693,7 +699,10 @@ mod tests {
         let none = text.replace("\"E\":1794633085618437,", "");
         assert_eq!(parse_message(&none, &mut stats), ParsedBackpack::Ignored);
         let negative = text.replace("1794633085618437", "-5");
-        assert_eq!(parse_message(&negative, &mut stats), ParsedBackpack::Ignored);
+        assert_eq!(
+            parse_message(&negative, &mut stats),
+            ParsedBackpack::Ignored
+        );
         assert_eq!(stats.counts(Venue::Backpack, "SOL-USD").malformed, 2);
     }
 
@@ -763,7 +772,11 @@ mod tests {
             r#"{"stream":"nodot","data":{}}"#,
             "{}",
         ] {
-            assert_eq!(parse_message(text, &mut stats), ParsedBackpack::Ignored, "{text}");
+            assert_eq!(
+                parse_message(text, &mut stats),
+                ParsedBackpack::Ignored,
+                "{text}"
+            );
         }
         assert_eq!(stats.total(), 0);
         assert!(matches!(
@@ -805,8 +818,20 @@ mod tests {
         let snap = parse_depth_snapshot(json, "BTC-USD", &mut stats).unwrap();
         assert_eq!(snap.last_update_id, 7, "a numeric id is accepted");
         assert_eq!(snap.ts, 2);
-        assert_eq!(snap.asks, vec![(Price(1_000), Qty(200_000_000)), (Price(1_002), Qty(100_000_000))]);
-        assert_eq!(snap.bids, vec![(Price(999), Qty(300_000_000)), (Price(900), Qty(100_000_000))]);
+        assert_eq!(
+            snap.asks,
+            vec![
+                (Price(1_000), Qty(200_000_000)),
+                (Price(1_002), Qty(100_000_000))
+            ]
+        );
+        assert_eq!(
+            snap.bids,
+            vec![
+                (Price(999), Qty(300_000_000)),
+                (Price(900), Qty(100_000_000))
+            ]
+        );
     }
 
     #[test]
@@ -821,7 +846,10 @@ mod tests {
             r#"{"asks":[],"bids":[],"lastUpdateId":"1","timestamp":-1}"#,
         ] {
             assert!(
-                matches!(parse_depth_snapshot(json, "BTC-USD", &mut stats), Err(ParseError::Json(_))),
+                matches!(
+                    parse_depth_snapshot(json, "BTC-USD", &mut stats),
+                    Err(ParseError::Json(_))
+                ),
                 "{json}"
             );
         }
@@ -969,12 +997,21 @@ mod tests {
         sync.on_snapshot(snap(SYM, 100));
         sync.on_update(upd(101, 105));
         let gap = sync.on_update(upd(107, 108));
-        assert_eq!(gap, SyncOutput { msgs: Vec::new(), need_resync: true });
+        assert_eq!(
+            gap,
+            SyncOutput {
+                msgs: Vec::new(),
+                need_resync: true
+            }
+        );
         assert!(!sync.is_synced(SYM));
         // Updates while the snapshot is in flight are buffered, not forwarded.
         assert_eq!(sync.on_update(upd(109, 109)), SyncOutput::default());
         let out = sync.on_snapshot(snap(SYM, 108));
-        assert!(matches!(out.msgs.first(), Some(MarketMsg::BookSnapshot { .. })));
+        assert!(matches!(
+            out.msgs.first(),
+            Some(MarketMsg::BookSnapshot { .. })
+        ));
         assert_eq!(bid_qtys(&out.msgs), [109]);
         assert!(sync.is_synced(SYM));
     }
@@ -1002,7 +1039,13 @@ mod tests {
         let mut sync = DepthSync::new();
         sync.on_update(upd(120, 121));
         let out = sync.on_snapshot(snap(SYM, 100));
-        assert_eq!(out, SyncOutput { msgs: Vec::new(), need_resync: true });
+        assert_eq!(
+            out,
+            SyncOutput {
+                msgs: Vec::new(),
+                need_resync: true
+            }
+        );
         assert!(!sync.is_synced(SYM));
         // The buffer was cleared: a later snapshot starts clean.
         let out = sync.on_snapshot(snap(SYM, 121));
@@ -1016,7 +1059,13 @@ mod tests {
         sync.on_update(upd(101, 102));
         sync.on_update(upd(105, 106));
         let out = sync.on_snapshot(snap(SYM, 100));
-        assert_eq!(out, SyncOutput { msgs: Vec::new(), need_resync: true });
+        assert_eq!(
+            out,
+            SyncOutput {
+                msgs: Vec::new(),
+                need_resync: true
+            }
+        );
     }
 
     #[test]
@@ -1031,7 +1080,10 @@ mod tests {
         }
         let mut sync = DepthSync::new();
         sync.on_snapshot(snap(SYM, u64::MAX));
-        assert_eq!(sync.on_update(upd(u64::MAX, u64::MAX)), SyncOutput::default());
+        assert_eq!(
+            sync.on_update(upd(u64::MAX, u64::MAX)),
+            SyncOutput::default()
+        );
     }
 
     #[test]

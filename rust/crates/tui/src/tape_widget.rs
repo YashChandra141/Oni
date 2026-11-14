@@ -175,8 +175,18 @@ mod tests {
         assert!(row_text(&buf, 1, 30).contains("no data"));
         let other: VecDeque<TapeEntry> = [entry("ETH-USD", 1, Side::Buy, 0)].into_iter().collect();
         assert!(row_text(&render(&other, 30, 5), 1, 30).contains("no data"));
-        let entries: VecDeque<TapeEntry> = [entry("BTC-USD", 1, Side::Buy, 0)].into_iter().collect();
-        for (w, h) in [(0, 0), (1, 1), (2, 2), (3, 3), (10, 3), (9, 3), (11, 3), (30, 1)] {
+        let entries: VecDeque<TapeEntry> =
+            [entry("BTC-USD", 1, Side::Buy, 0)].into_iter().collect();
+        for (w, h) in [
+            (0, 0),
+            (1, 1),
+            (2, 2),
+            (3, 3),
+            (10, 3),
+            (9, 3),
+            (11, 3),
+            (30, 1),
+        ] {
             let _ = render(&entries, w, h);
         }
     }

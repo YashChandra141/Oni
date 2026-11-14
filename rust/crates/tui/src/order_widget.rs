@@ -78,7 +78,11 @@ fn left_pad(text: &str, width: usize) -> String {
 
 /// Rows the command bar needs: the bar, plus the caret and message rows under a parse error.
 pub fn command_rows(app: &App) -> u16 {
-    if app.account.parse_error.is_some() { 3 } else { 1 }
+    if app.account.parse_error.is_some() {
+        3
+    } else {
+        1
+    }
 }
 
 /// True when the bar must be visible even on a screen too short to reserve a row for it: it
@@ -95,7 +99,11 @@ pub fn visible_window(text: &str, cursor: usize, width: usize) -> (String, usize
     if width == 0 {
         return (String::new(), 0);
     }
-    let start = if cursor >= width { cursor + 1 - width } else { 0 };
+    let start = if cursor >= width {
+        cursor + 1 - width
+    } else {
+        0
+    };
     (text.chars().skip(start).take(width).collect(), start)
 }
 
@@ -128,9 +136,9 @@ pub fn draw_command_bar(
     };
     let max_right = usize::from(area.width) / 2;
     let right = right.map(|(text, style)| (truncate(&text, max_right), style));
-    let right_width = right
-        .as_ref()
-        .map_or(0, |(text, _)| u16::try_from(text.chars().count()).unwrap_or(0));
+    let right_width = right.as_ref().map_or(0, |(text, _)| {
+        u16::try_from(text.chars().count()).unwrap_or(0)
+    });
     let gap = u16::from(right_width > 0);
     let left = Rect::new(
         area.x,
@@ -139,7 +147,12 @@ pub fn draw_command_bar(
         1,
     );
     if let Some((text, style)) = right {
-        let rect = Rect::new(area.right().saturating_sub(right_width), area.y, right_width, 1);
+        let rect = Rect::new(
+            area.right().saturating_sub(right_width),
+            area.y,
+            right_width,
+            1,
+        );
         frame.render_widget(Paragraph::new(Span::styled(text, style)), rect);
     }
 
@@ -165,7 +178,9 @@ pub fn draw_command_bar(
     frame.render_widget(Paragraph::new(Line::from(spans)), left);
     if focused && left.width > 2 {
         let column = u16::try_from(editor.cursor().saturating_sub(start)).unwrap_or(u16::MAX);
-        let x = (left.x + 2).saturating_add(column).min(left.right().saturating_sub(1));
+        let x = (left.x + 2)
+            .saturating_add(column)
+            .min(left.right().saturating_sub(1));
         frame.set_cursor_position(Position::new(x, area.y));
     }
 
@@ -253,7 +268,11 @@ pub fn draw_ticket_line(frame: &mut Frame, app: &App, hits: &mut HitMap, area: R
     let value_cell = right_pad(&value, 10);
     let segments: Vec<Segment> = vec![
         (head, Style::new(), None),
-        (" QTY ".to_owned(), Style::new().fg(Color::Gray), Some(HitTarget::TicketQty)),
+        (
+            " QTY ".to_owned(),
+            Style::new().fg(Color::Gray),
+            Some(HitTarget::TicketQty),
+        ),
         (value_cell, value_style, Some(HitTarget::TicketQty)),
         (
             " [BUY]".to_owned(),
@@ -269,7 +288,9 @@ pub fn draw_ticket_line(frame: &mut Frame, app: &App, hits: &mut HitMap, area: R
     let starts = draw_segments(frame, hits, area, segments);
     if focused && let Some(start) = starts.get(2) {
         let column = u16::try_from(app.ticket_qty.cursor()).unwrap_or(u16::MAX);
-        let x = start.saturating_add(column).min(area.right().saturating_sub(1));
+        let x = start
+            .saturating_add(column)
+            .min(area.right().saturating_sub(1));
         frame.set_cursor_position(Position::new(x, area.y));
     }
 }
@@ -280,7 +301,9 @@ pub fn draw_ticket_line(frame: &mut Frame, app: &App, hits: &mut HitMap, area: R
 /// Where the first of `rows` visible rows starts so the selected row stays in view.
 pub fn scroll_start(selected: Option<usize>, total: usize, rows: usize) -> usize {
     match selected {
-        Some(index) if rows > 0 && index >= rows => (index + 1 - rows).min(total.saturating_sub(rows)),
+        Some(index) if rows > 0 && index >= rows => {
+            (index + 1 - rows).min(total.saturating_sub(rows))
+        }
         _ => 0,
     }
 }
@@ -297,7 +320,10 @@ pub fn positions_lines(account: &AccountState) -> Vec<Line<'static>> {
     );
     let mut lines = vec![Line::styled(header, Style::new().fg(Color::Gray))];
     if account.positions.is_empty() {
-        lines.push(Line::styled("no positions", Style::new().fg(Color::DarkGray)));
+        lines.push(Line::styled(
+            "no positions",
+            Style::new().fg(Color::DarkGray),
+        ));
         return lines;
     }
     for row in account.positions.values() {
@@ -312,9 +338,7 @@ fn position_line(row: &PositionRow) -> Line<'static> {
     } else {
         Style::new().fg(Color::Green)
     };
-    let avg = row
-        .avg_entry
-        .map_or_else(|| "-".to_owned(), format_price);
+    let avg = row.avg_entry.map_or_else(|| "-".to_owned(), format_price);
     Line::from(vec![
         Span::raw(right_pad(&row.symbol, 8)),
         Span::styled(left_pad(&format_qty_trimmed(row.qty), 10), qty_style),
@@ -354,9 +378,7 @@ pub fn order_line(order: &OpenOrder, selected: bool) -> Line<'static> {
         None => "-",
     };
     let kind = order.kind.map_or("-", |kind| kind.label());
-    let price = order
-        .price
-        .map_or_else(|| "-".to_owned(), format_price);
+    let price = order.price.map_or_else(|| "-".to_owned(), format_price);
     let symbol = order.symbol.clone().unwrap_or_else(|| "-".to_owned());
     let base = if selected {
         Style::new().add_modifier(Modifier::REVERSED)
@@ -369,14 +391,8 @@ pub fn order_line(order: &OpenOrder, selected: bool) -> Line<'static> {
         Span::styled(right_pad(&symbol, 8), base),
         Span::styled(right_pad(kind, 4), base),
         Span::styled(left_pad(&price, 9), base),
-        Span::styled(
-            left_pad(&format_qty_trimmed(Qty(order.filled)), 7),
-            base,
-        ),
-        Span::styled(
-            left_pad(&format_qty_trimmed(Qty(order.remaining)), 7),
-            base,
-        ),
+        Span::styled(left_pad(&format_qty_trimmed(Qty(order.filled)), 7), base),
+        Span::styled(left_pad(&format_qty_trimmed(Qty(order.remaining)), 7), base),
     ])
 }
 
@@ -441,7 +457,10 @@ fn draw_orders(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect) {
         if inner.height > 1 {
             let rect = Rect::new(inner.x, inner.y + 1, inner.width, 1);
             frame.render_widget(
-                Paragraph::new(Line::styled("no open orders", Style::new().fg(Color::DarkGray))),
+                Paragraph::new(Line::styled(
+                    "no open orders",
+                    Style::new().fg(Color::DarkGray),
+                )),
                 rect,
             );
         }
@@ -530,10 +549,7 @@ pub fn preview_lines(state: &PreviewState, now_ms: i64) -> Vec<Line<'static>> {
             Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
         ),
         Line::from(""),
-        Line::styled(
-            state.preview.text.clone(),
-            Style::new().fg(Color::Yellow),
-        ),
+        Line::styled(state.preview.text.clone(), Style::new().fg(Color::Yellow)),
         Line::styled(
             format!("expires in {}s", seconds_left(state.deadline_ms, now_ms)),
             Style::new().fg(Color::Gray),
@@ -554,7 +570,14 @@ fn draw_preview_dialog(frame: &mut Frame, hits: &mut HitMap, state: &PreviewStat
     frame.render_widget(block, area);
     let lines = preview_lines(state, now_ms);
     frame.render_widget(Paragraph::new(lines).alignment(Alignment::Left), inner);
-    draw_buttons(frame, hits, inner, inner.y + 5, CONFIRM_LABEL, DISCARD_LABEL);
+    draw_buttons(
+        frame,
+        hits,
+        inner,
+        inner.y + 5,
+        CONFIRM_LABEL,
+        DISCARD_LABEL,
+    );
 }
 
 fn draw_confirm_dialog(frame: &mut Frame, hits: &mut HitMap, action: ConfirmAction) {
@@ -730,13 +753,22 @@ mod tests {
         });
         let text = rows.join("\n");
         assert!(text.contains("POSITIONS"), "{text}");
-        assert!(text.contains("SYMBOL") && text.contains("RPNL") && text.contains("UPNL"), "{text}");
+        assert!(
+            text.contains("SYMBOL") && text.contains("RPNL") && text.contains("UPNL"),
+            "{text}"
+        );
         let btc = rows.iter().find(|r| r.contains("BTC-USD")).unwrap();
         assert!(btc.contains("0.1") && btc.contains("64000.00"), "{btc}");
         assert!(btc.contains("1.20") && btc.contains("-0.50"), "{btc}");
         let eth = rows.iter().find(|r| r.contains("ETH-USD")).unwrap();
-        assert!(eth.contains("-2.5") && eth.contains("3200.00") && eth.contains("3.00"), "{eth}");
-        assert_eq!(hits.resolve(2, 0), Some(&HitTarget::Panel(PanelId::Positions)));
+        assert!(
+            eth.contains("-2.5") && eth.contains("3200.00") && eth.contains("3.00"),
+            "{eth}"
+        );
+        assert_eq!(
+            hits.resolve(2, 0),
+            Some(&HitTarget::Panel(PanelId::Positions))
+        );
     }
 
     #[test]
@@ -744,12 +776,14 @@ mod tests {
         let app = app_with_account();
         let mut terminal = Terminal::new(TestBackend::new(120, 8)).unwrap();
         let mut hits = HitMap::new();
-        terminal
-            .draw(|f| strip(f, &app, &mut hits))
-            .unwrap();
+        terminal.draw(|f| strip(f, &app, &mut hits)).unwrap();
         let buffer = terminal.backend().buffer();
         let rows: Vec<String> = (0..8)
-            .map(|y| (0..120).map(|x| buffer[(x, y)].symbol().to_owned()).collect())
+            .map(|y| {
+                (0..120)
+                    .map(|x| buffer[(x, y)].symbol().to_owned())
+                    .collect()
+            })
             .collect();
         let (x, y) = find(&rows, "-0.50").unwrap();
         assert_eq!(buffer[(x, y)].style().fg, Some(Color::Red));
@@ -767,7 +801,10 @@ mod tests {
         });
         let text = rows.join("\n");
         assert!(text.contains("OPEN ORDERS"), "{text}");
-        assert!(text.contains("SIDE") && text.contains("FILLED") && text.contains("LEFT"), "{text}");
+        assert!(
+            text.contains("SIDE") && text.contains("FILLED") && text.contains("LEFT"),
+            "{text}"
+        );
         // Two rows below the header; the cross is the first cell of each.
         let (cross_x, cross_y) = find(&rows, "✕").unwrap();
         assert_eq!(
@@ -840,7 +877,10 @@ mod tests {
         });
         let text = rows.join("\n");
         assert!(text.contains("P&L"), "{text}");
-        let realized = rows.iter().find(|r| r.contains("REALIZED") && !r.contains("UNREALIZED")).unwrap();
+        let realized = rows
+            .iter()
+            .find(|r| r.contains("REALIZED") && !r.contains("UNREALIZED"))
+            .unwrap();
         assert!(realized.contains("+1.20"), "{realized}");
         let unrealized = rows.iter().find(|r| r.contains("UNREALIZED")).unwrap();
         assert!(unrealized.contains("+2.50"), "{unrealized}");
@@ -858,14 +898,18 @@ mod tests {
         let mut app = App::new("ws://x/ws");
         app.account.command_sent("r1");
         app.now_ms = 0;
-        app.account.on_preview("r1", &preview_state(30_000).preview, 0);
+        app.account
+            .on_preview("r1", &preview_state(30_000).preview, 0);
         let (rows, hits) = render(80, 24, |f, h| draw_dialogs(f, &app, h));
         let text = rows.join("\n");
         assert!(text.contains("Order preview"), "{text}");
         assert!(text.contains("PLACE PAPER ORDER"), "{text}");
         assert!(text.contains("BUY BTC-USD 0.1 LMT 64000.00"), "{text}");
         assert!(text.contains("expires in 30s"), "{text}");
-        assert!(text.contains("Confirm [Enter/Y]") && text.contains("Discard [Esc/N]"), "{text}");
+        assert!(
+            text.contains("Confirm [Enter/Y]") && text.contains("Discard [Esc/N]"),
+            "{text}"
+        );
         let (x, y) = find(&rows, "Confirm [Enter/Y]").unwrap();
         assert_eq!(hits.resolve(x, y), Some(&HitTarget::DialogConfirm));
         let (x, y) = find(&rows, "Discard [Esc/N]").unwrap();
@@ -881,7 +925,12 @@ mod tests {
         let text = |now| -> String {
             preview_lines(&state, now)
                 .iter()
-                .map(|l| l.spans.iter().map(|s| s.content.to_string()).collect::<String>())
+                .map(|l| {
+                    l.spans
+                        .iter()
+                        .map(|s| s.content.to_string())
+                        .collect::<String>()
+                })
                 .collect::<Vec<_>>()
                 .join("|")
         };
@@ -903,7 +952,10 @@ mod tests {
             let (rows, hits) = render(80, 24, |f, h| draw_dialogs(f, &app, h));
             let text = rows.join("\n");
             assert!(text.contains(question), "{text}");
-            assert!(text.contains("Confirm [Enter/Y]") && text.contains("Cancel [Esc/N]"), "{text}");
+            assert!(
+                text.contains("Confirm [Enter/Y]") && text.contains("Cancel [Esc/N]"),
+                "{text}"
+            );
             let (x, y) = find(&rows, "Confirm [Enter/Y]").unwrap();
             assert_eq!(hits.resolve(x + 2, y), Some(&HitTarget::DialogConfirm));
             let (x, y) = find(&rows, "Cancel [Esc/N]").unwrap();
@@ -932,7 +984,10 @@ mod tests {
         // The prompt is two cells wide, and the error is at character 4: column 6.
         assert_eq!(rows[1].find('^'), Some(6), "{}", rows[1]);
         assert!(rows[2].contains("unknown symbol XYZ"), "{}", rows[2]);
-        assert_eq!(hits.resolve(10, 0), Some(&HitTarget::Panel(PanelId::CommandBar)));
+        assert_eq!(
+            hits.resolve(10, 0),
+            Some(&HitTarget::Panel(PanelId::CommandBar))
+        );
         // The text stays in the input (Req 31.4).
         assert_eq!(app.command.editor.text(), "BUY XYZ 1");
     }
@@ -978,7 +1033,11 @@ mod tests {
         app.ticket_qty.set("0.25");
         app.sync_ticket_qty();
         let (rows, hits) = render(60, 1, |f, h| ticket(f, &app, h));
-        assert!(rows[0].starts_with("TICKET: LMT 64001.00 QTY 0.25"), "{}", rows[0]);
+        assert!(
+            rows[0].starts_with("TICKET: LMT 64001.00 QTY 0.25"),
+            "{}",
+            rows[0]
+        );
         let (x, y) = find(&rows, "[BUY]").unwrap();
         assert_eq!(hits.resolve(x, y), Some(&HitTarget::TicketBuy));
         let (x, y) = find(&rows, "[SELL]").unwrap();
@@ -1022,6 +1081,9 @@ mod tests {
         );
         let (rows, _) = render(120, 6, |f, h| strip(f, &app, h));
         let text = rows.join("\n");
-        assert!(text.contains("no positions") && text.contains("no open orders"), "{text}");
+        assert!(
+            text.contains("no positions") && text.contains("no open orders"),
+            "{text}"
+        );
     }
 }

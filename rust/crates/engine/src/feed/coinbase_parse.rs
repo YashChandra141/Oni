@@ -130,8 +130,7 @@ struct RawUpdate {
 /// Dropped values are counted in `stats`. Trade `snapshot` events (recent history sent on
 /// subscribe) are skipped: they are not live prints and would move the last price backwards.
 pub fn parse_message(text: &str, stats: &mut DropStats) -> Result<Vec<MarketMsg>, ParseError> {
-    let env: Envelope =
-        serde_json::from_str(text).map_err(|e| ParseError::Json(e.to_string()))?;
+    let env: Envelope = serde_json::from_str(text).map_err(|e| ParseError::Json(e.to_string()))?;
     if env.kind == "error" {
         return Err(ParseError::Server(env.message));
     }
@@ -494,7 +493,9 @@ mod tests {
     }
 
     fn snapshot_sample() -> String {
-        sample(include_str!("../../tests/data/coinbase_level2_snapshot.json"))
+        sample(include_str!(
+            "../../tests/data/coinbase_level2_snapshot.json"
+        ))
     }
 
     fn update_sample() -> String {
@@ -675,7 +676,10 @@ mod tests {
             r#"{"channel":"ticker","events":[]}"#,
             r#"{}"#,
         ] {
-            assert!(parse_message(text, &mut stats).unwrap().is_empty(), "{text}");
+            assert!(
+                parse_message(text, &mut stats).unwrap().is_empty(),
+                "{text}"
+            );
         }
         assert_eq!(stats.total(), 0);
     }

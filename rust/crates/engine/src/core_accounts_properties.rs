@@ -562,8 +562,14 @@ fn account_limit_refuses_the_third_new_account() {
     assert_eq!(reset.len(), INSTRUMENTS.len());
     assert_eq!(e.accounts.len(), 0);
 
-    assert_eq!(rest(&mut e, "w_a", "a-1"), [ack("w_a", "a-1", OrderStatus::Accepted)]);
-    assert_eq!(rest(&mut e, "w_b", "b-1"), [ack("w_b", "b-1", OrderStatus::Accepted)]);
+    assert_eq!(
+        rest(&mut e, "w_a", "a-1"),
+        [ack("w_a", "a-1", OrderStatus::Accepted)]
+    );
+    assert_eq!(
+        rest(&mut e, "w_b", "b-1"),
+        [ack("w_b", "b-1", OrderStatus::Accepted)]
+    );
     assert_eq!(e.accounts.len(), 2);
 
     // The third new account is refused, is not created, and its order is not placed.
@@ -576,7 +582,10 @@ fn account_limit_refuses_the_third_new_account() {
     assert_eq!(e.matcher.open_count(), 2);
 
     // Existing accounts keep trading.
-    assert_eq!(rest(&mut e, "w_a", "a-2"), [ack("w_a", "a-2", OrderStatus::Accepted)]);
+    assert_eq!(
+        rest(&mut e, "w_a", "a-2"),
+        [ack("w_a", "a-2", OrderStatus::Accepted)]
+    );
     assert_eq!(e.matcher.open_count(), 3);
     // The refused account can still cancel (unknown order) without being created.
     assert_eq!(

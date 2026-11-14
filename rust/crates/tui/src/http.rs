@@ -107,10 +107,7 @@ impl Target {
             None => (rest, ""),
         };
         let (host, port) = match authority.rsplit_once(':') {
-            Some((host, port)) => (
-                host,
-                port.parse::<u16>().map_err(|_| HttpError::BadTarget)?,
-            ),
+            Some((host, port)) => (host, port.parse::<u16>().map_err(|_| HttpError::BadTarget)?),
             None => (authority, if tls { 443 } else { 80 }),
         };
         if !valid_host(host) || port == 0 {
@@ -245,8 +242,7 @@ pub fn decode_chunked(mut rest: &[u8]) -> Result<Vec<u8>, HttpError> {
 
 /// Parses a complete response read until the connection closed.
 pub fn parse_response(raw: &[u8]) -> Result<Response, HttpError> {
-    let head_end =
-        find(raw, b"\r\n\r\n", 0).ok_or(HttpError::BadResponse("no end of headers"))?;
+    let head_end = find(raw, b"\r\n\r\n", 0).ok_or(HttpError::BadResponse("no end of headers"))?;
     let head = raw
         .get(..head_end)
         .ok_or(HttpError::BadResponse("no end of headers"))?;
@@ -351,8 +347,7 @@ async fn exchange(target: &Target, text: &str) -> Result<Vec<u8>, HttpError> {
     if target.tls {
         install_crypto_provider();
         let connector = TlsConnector::from(tls_config()?);
-        let name =
-            ServerName::try_from(target.host.clone()).map_err(|_| HttpError::BadTarget)?;
+        let name = ServerName::try_from(target.host.clone()).map_err(|_| HttpError::BadTarget)?;
         let mut tls = connector.connect(name, tcp).await.map_err(|e| io_err(&e))?;
         roundtrip(&mut tls, text).await
     } else {
@@ -398,7 +393,10 @@ mod tests {
     #[test]
     fn target_parses_schemes_ports_and_prefix() {
         let t = Target::parse("https://example.com").unwrap();
-        assert_eq!((t.tls, t.host.as_str(), t.port, t.prefix.as_str()), (true, "example.com", 443, ""));
+        assert_eq!(
+            (t.tls, t.host.as_str(), t.port, t.prefix.as_str()),
+            (true, "example.com", 443, "")
+        );
         assert_eq!(t.host_header(), "example.com");
         let t = Target::parse("http://127.0.0.1:8080/api/").unwrap();
         assert_eq!((t.tls, t.port, t.prefix.as_str()), (false, 8080, "/api"));
@@ -426,7 +424,8 @@ mod tests {
 
     #[test]
     fn post_request_with_bearer_and_no_body() {
-        let text = build_request(Method::Post, "h.com", "/auth/logout", Some("v1.a.b"), None).unwrap();
+        let text =
+            build_request(Method::Post, "h.com", "/auth/logout", Some("v1.a.b"), None).unwrap();
         assert!(text.starts_with("POST /auth/logout HTTP/1.1\r\nHost: h.com\r\n"));
         assert!(text.contains("Authorization: Bearer v1.a.b\r\n"));
         assert!(text.contains("Content-Length: 0\r\n"));
@@ -437,7 +436,9 @@ mod tests {
     #[test]
     fn json_body_gets_type_and_length() {
         let text = build_request(Method::Post, "h.com", "/p", None, Some("{\"a\":1}")).unwrap();
-        assert!(text.contains("Content-Type: application/json\r\nContent-Length: 7\r\n\r\n{\"a\":1}"));
+        assert!(
+            text.contains("Content-Type: application/json\r\nContent-Length: 7\r\n\r\n{\"a\":1}")
+        );
         assert!(!text.to_ascii_lowercase().contains("authorization"));
         let get = build_request(Method::Get, "h.com", "/p", None, None).unwrap();
         assert!(get.starts_with("GET /p HTTP/1.1\r\n"));

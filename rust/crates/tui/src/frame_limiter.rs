@@ -112,7 +112,10 @@ mod tests {
         }
         assert!(draws.len() > 100, "should still draw regularly");
         for &start in &draws {
-            let in_window = draws.iter().filter(|&&d| d >= start && d < start + 1_000).count();
+            let in_window = draws
+                .iter()
+                .filter(|&&d| d >= start && d < start + 1_000)
+                .count();
             assert!(in_window <= 30, "{in_window} draws in one second");
         }
     }

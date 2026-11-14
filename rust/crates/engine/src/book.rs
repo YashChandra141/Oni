@@ -118,10 +118,7 @@ impl OrderBook {
         i32::try_from(bps).unwrap_or(if bps < 0 { -10_000 } else { 10_000 })
     }
 
-    fn sides_mut(
-        &mut self,
-        side: Side,
-    ) -> (&mut BTreeMap<Price, Qty>, &mut BTreeMap<Price, Qty>) {
+    fn sides_mut(&mut self, side: Side) -> (&mut BTreeMap<Price, Qty>, &mut BTreeMap<Price, Qty>) {
         match side {
             Side::Buy => (&mut self.bids, &mut self.asks),
             Side::Sell => (&mut self.asks, &mut self.bids),

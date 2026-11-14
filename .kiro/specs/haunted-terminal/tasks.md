@@ -27,7 +27,7 @@ Scope change (approved after 4.3): per-wallet paper accounts plus a shared guest
   - [x] 1.5 CI workflow
     - `.github/workflows/ci.yml` matrix on `windows-latest` and `macos-latest`, running `bun run check`
     - _Requirements: 41.1_
-  - [x] 1.6 Verify: install dev dependencies, run `bun run check` locally
+  - [-] 1.6 Verify: install dev dependencies, run `bun run check` locally
     - _Requirements: 41.2_
 
 - [x] 2. Protocol crate and engine echo loop
@@ -227,7 +227,7 @@ Scope change (approved after 4.3): per-wallet paper accounts plus a shared guest
     - Tests against the mock server: Authenticate and Bearer sent with the token, nothing sent without it, captured logs and tool results never contain the token
     - _Requirements: 24.4, 24.9, 24.10, 24.11_
 
-- [ ] 15. Release binaries and Render deploy
+- [x] 15. Release binaries and Render deploy
   - [x] 15.1 `Dockerfile` (rust:1.94-bookworm → oven/bun:1.4.4-debian, non-root)
     - Runtime stage installs production server dependencies, which include the pinned `prisma` CLI
     - Copies `server/` with `prisma.config.ts`, `prisma/schema.prisma`, `prisma/migrations/`, and `scripts/start.ts`; runs `bun run db:generate` during the build, before switching to the non-root user
@@ -245,9 +245,9 @@ Scope change (approved after 4.3): per-wallet paper accounts plus a shared guest
     - _Requirements: 38.3, 41.3, 41.4, 41.5, 41.6_
   - [x] 15.4 `release.yml`: Windows MSVC zip, macOS universal tar.gz via lipo, SHA-256, smoke checks
     - _Requirements: 40.1, 40.2, 40.3_
-  - [-] 15.5 README: Render setup, free-plan limits (sleeps after 15 min idle, about 1 min to wake; the journal persists in Neon while the paper account resets), downloads, Gatekeeper/SmartScreen, build from source
+  - [x] 15.5 README: Render setup, free-plan limits (sleeps after 15 min idle, about 1 min to wake; the journal persists in Neon while the paper account resets), downloads, Gatekeeper/SmartScreen, build from source
     - _Requirements: 40.4, 42.6_
-  - [ ] 15.6 README: Neon setup
+  - [x] 15.6 README: Neon setup
     - Create a Neon Free project; copy the pooled connection string (`-pooler` host) as `DATABASE_URL` and the direct connection string as `DIRECT_URL`, keeping `sslmode=require` in both; paste both into a local `.env` and into the Render dashboard; never commit either
     - Explain that the Start_Script applies Migrations with `prisma migrate deploy` over `DIRECT_URL` at container start, and that `bunx prisma migrate dev` is for creating new Migrations on a development database only
     - Optional: a Neon dev branch's direct URL as `TEST_DATABASE_URL` for local Postgres tests (apply the Migrations to that branch first)

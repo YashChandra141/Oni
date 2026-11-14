@@ -325,8 +325,8 @@ mod tests {
     #[test]
     fn malformed_text_is_rejected() {
         for text in [
-            "", ".", "1.", ".5", "1.2.3", "..", "abc", "1e5", "0x10", "-1", "-0", "+1", " 1",
-            "1 ", "1 0", "1,5", "NaN", "inf", "１",
+            "", ".", "1.", ".5", "1.2.3", "..", "abc", "1e5", "0x10", "-1", "-0", "+1", " 1", "1 ",
+            "1 0", "1,5", "NaN", "inf", "１",
         ] {
             assert_eq!(to_ticks(text, 2), Err(VenueError::Malformed), "{text:?}");
             assert_eq!(to_lots(text, 8), Err(VenueError::Malformed), "{text:?}");
@@ -340,15 +340,15 @@ mod tests {
             to_ticks("9223372036854775808", 0),
             Err(VenueError::Overflow)
         );
-        assert_eq!(
-            to_ticks("92233720368547758.07", 2),
-            Ok(Price(i64::MAX))
-        );
+        assert_eq!(to_ticks("92233720368547758.07", 2), Ok(Price(i64::MAX)));
         assert_eq!(
             to_ticks("92233720368547758.08", 2),
             Err(VenueError::Overflow)
         );
-        assert_eq!(to_lots("92233720368.54775808", 8), Err(VenueError::Overflow));
+        assert_eq!(
+            to_lots("92233720368.54775808", 8),
+            Err(VenueError::Overflow)
+        );
         assert_eq!(
             to_lots("99999999999999999999999999", 8),
             Err(VenueError::Overflow)
@@ -363,9 +363,15 @@ mod tests {
         stats.record(Venue::Backpack, "BTC-USD", VenueError::Malformed);
         stats.record(Venue::Coinbase, "BTC-USD", VenueError::Overflow);
         let counts = stats.counts(Venue::Backpack, "BTC-USD");
-        assert_eq!((counts.inexact, counts.malformed, counts.overflow), (2, 1, 0));
+        assert_eq!(
+            (counts.inexact, counts.malformed, counts.overflow),
+            (2, 1, 0)
+        );
         assert_eq!(stats.counts(Venue::Coinbase, "BTC-USD").overflow, 1);
-        assert_eq!(stats.counts(Venue::Backpack, "ETH-USD"), DropCounts::default());
+        assert_eq!(
+            stats.counts(Venue::Backpack, "ETH-USD"),
+            DropCounts::default()
+        );
         assert_eq!(stats.total(), 4);
         let snap = stats.snapshot();
         assert_eq!(snap.len(), 2);
@@ -383,7 +389,10 @@ mod tests {
         assert!(!stats.should_log(1_000));
         assert!(!stats.should_log(10_999));
         assert!(stats.should_log(11_000));
-        assert!(!stats.should_log(30_000), "no new drops since the last line");
+        assert!(
+            !stats.should_log(30_000),
+            "no new drops since the last line"
+        );
         stats.record(Venue::Backpack, "SOL-USD", VenueError::Malformed);
         assert!(stats.should_log(30_000));
         assert_eq!(stats.total(), 3, "logging does not reset the counters");
@@ -440,7 +449,11 @@ mod tests {
 
     #[test]
     fn venue_error_displays() {
-        for err in [VenueError::Inexact, VenueError::Malformed, VenueError::Overflow] {
+        for err in [
+            VenueError::Inexact,
+            VenueError::Malformed,
+            VenueError::Overflow,
+        ] {
             assert!(!err.to_string().is_empty());
         }
     }

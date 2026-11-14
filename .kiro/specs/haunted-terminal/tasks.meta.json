@@ -1287,6 +1287,54 @@
         "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1794659198625
+      },
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794659372163
+      }
+    ],
+    "15.6 README: Neon setup": [
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794659376697
+      },
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794659434414
+      }
+    ],
+    "15.7 README: accounts, wallet sign-in, pairing, venues": [
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794659440855
+      },
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794659577707
+      }
+    ],
+    "15. Release binaries and Render deploy": [
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794659578396
+      }
+    ],
+    "1.6 Verify: install dev dependencies, run `bun run check` locally": [
+      {
+        "executionId": "421193b7-0d3e-4116-ab6d-43f6fcb6dd3b",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794660418228
+      },
+      {
+        "executionId": "421193b7-0d3e-4116-ab6d-43f6fcb6dd3b",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794660426795
       }
     ]
   }

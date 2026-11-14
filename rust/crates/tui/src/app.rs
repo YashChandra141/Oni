@@ -622,7 +622,10 @@ mod tests {
     fn the_session_label_is_guest_or_the_short_address() {
         let mut app = App::new("ws://x/ws");
         update(&mut app, guest_session());
-        assert_eq!(app.session.as_ref().map(SessionInfo::label).as_deref(), Some("GUEST"));
+        assert_eq!(
+            app.session.as_ref().map(SessionInfo::label).as_deref(),
+            Some("GUEST")
+        );
         let address = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
         update(
             &mut app,
@@ -760,7 +763,10 @@ mod tests {
         update(&mut app, candles(Timeframe::M1, true, vec![bar(5, 5)]));
         assert_eq!(app.candles.len(), 1);
         // Other timeframes and symbols are ignored.
-        update(&mut app, candles(Timeframe::H1, true, vec![bar(1, 1), bar(2, 2)]));
+        update(
+            &mut app,
+            candles(Timeframe::H1, true, vec![bar(1, 1), bar(2, 2)]),
+        );
         assert_eq!(app.candles.len(), 1);
     }
 
@@ -897,9 +903,15 @@ mod tests {
     fn indicator_events_merge_by_bar_start_and_ignore_other_keys() {
         let mut app = App::new("ws://x/ws");
         assert!(app.indicator_series().is_none());
-        assert!(update(&mut app, indicators_event("BTC-USD", Timeframe::M1, 60_000, 1.0)));
+        assert!(update(
+            &mut app,
+            indicators_event("BTC-USD", Timeframe::M1, 60_000, 1.0)
+        ));
         // A later event time inside the same bar replaces the point.
-        update(&mut app, indicators_event("BTC-USD", Timeframe::M1, 90_000, 2.0));
+        update(
+            &mut app,
+            indicators_event("BTC-USD", Timeframe::M1, 90_000, 2.0),
+        );
         update(&mut app, indicators_event("BTC-USD", Timeframe::M1, 0, 0.5));
         let points = app.indicator_series().unwrap().points();
         let got: Vec<(i64, Option<f64>)> = points.iter().map(|p| (p.t, p.values.ema)).collect();
@@ -915,7 +927,12 @@ mod tests {
     fn indicator_points_are_capped_at_500() {
         let mut app = App::new("ws://x/ws");
         for i in 0..510 {
-            app.apply_indicators("BTC-USD", Timeframe::M1, i * 60_000, IndicatorValues::default());
+            app.apply_indicators(
+                "BTC-USD",
+                Timeframe::M1,
+                i * 60_000,
+                IndicatorValues::default(),
+            );
         }
         let points = app.indicator_series().unwrap().points();
         assert_eq!(points.len(), 500);
@@ -1109,21 +1126,27 @@ mod order_reducer_tests {
         // The confirmed placement labels the row of the next accepted ack.
         app.account.command_sent("r1");
         update(&mut app, preview("r1"));
-        assert_eq!(app.account.take_preview_for_confirm().as_deref(), Some("p1"));
+        assert_eq!(
+            app.account.take_preview_for_confirm().as_deref(),
+            Some("p1")
+        );
         update(&mut app, ack("o-1", OrderStatus::Accepted));
         assert_eq!(app.account.orders.len(), 1);
         assert_eq!(app.account.orders[0].symbol.as_deref(), Some("BTC-USD"));
-        update(&mut app, event(Event::Fill {
-            account_id: guest(),
-            order_id: OrderId::new("o-1").unwrap(),
-            symbol: "BTC-USD".into(),
-            side: Side::Buy,
-            price: Price(6_400_000),
-            qty: Qty(4_000_000),
-            fee: Money(0),
-            remaining: Qty(6_000_000),
-            ts: 1,
-        }));
+        update(
+            &mut app,
+            event(Event::Fill {
+                account_id: guest(),
+                order_id: OrderId::new("o-1").unwrap(),
+                symbol: "BTC-USD".into(),
+                side: Side::Buy,
+                price: Price(6_400_000),
+                qty: Qty(4_000_000),
+                fee: Money(0),
+                remaining: Qty(6_000_000),
+                ts: 1,
+            }),
+        );
         assert_eq!(app.account.orders[0].filled, 4_000_000);
         assert_eq!(app.account.orders[0].remaining, 6_000_000);
         update(&mut app, ack("o-1", OrderStatus::Canceled));
@@ -1136,11 +1159,14 @@ mod order_reducer_tests {
         let mut app = App::new("ws://x/ws");
         update(&mut app, session("guest", None));
         app.now_ms = 5_000;
-        assert!(update(&mut app, event(Event::OrderRejected {
-            account_id: guest(),
-            order_id: OrderId::new("o-7").unwrap(),
-            reason: "kill_switch".into(),
-        })));
+        assert!(update(
+            &mut app,
+            event(Event::OrderRejected {
+                account_id: guest(),
+                order_id: OrderId::new("o-7").unwrap(),
+                reason: "kill_switch".into(),
+            })
+        ));
         let latest = app.account.latest_rejection(5_000).unwrap();
         assert_eq!(latest.reason, "kill_switch");
         assert!(app.account.latest_rejection(15_000).is_none());
@@ -1153,7 +1179,10 @@ mod order_reducer_tests {
         assert!(!update(&mut app, preview("r1")));
         app.account.command_sent("r1");
         assert!(update(&mut app, preview("r1")));
-        assert_eq!(app.account.preview.as_ref().map(|p| p.deadline_ms), Some(30_000));
+        assert_eq!(
+            app.account.preview.as_ref().map(|p| p.deadline_ms),
+            Some(30_000)
+        );
         assert!(app.account.dialog_open());
     }
 
@@ -1168,7 +1197,10 @@ mod order_reducer_tests {
             position: 4,
         });
         assert!(update(&mut app, error));
-        assert_eq!(app.account.parse_error.as_ref().map(|e| e.position), Some(4));
+        assert_eq!(
+            app.account.parse_error.as_ref().map(|e| e.position),
+            Some(4)
+        );
     }
 
     // Req 46.4

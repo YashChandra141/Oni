@@ -15,8 +15,8 @@ use protocol::{AccountId, Event, Money, OrderStatus};
 
 use crate::order_model::{
     ConfirmAction, MAX_PENDING_PLACEMENTS, MAX_REJECTIONS, OpenOrder, ParseErrorState, Placement,
-    PositionRow, PreviewState, REJECTION_TTL_MS, Rejection, placement_from_action, preview_deadline,
-    seconds_left,
+    PositionRow, PreviewState, REJECTION_TTL_MS, Rejection, placement_from_action,
+    preview_deadline, seconds_left,
 };
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -140,8 +140,7 @@ impl AccountState {
                 remaining,
                 ..
             } if self.is_own(account_id) => {
-                let Some(order) = self.orders.iter_mut().find(|o| o.id == order_id.as_str())
-                else {
+                let Some(order) = self.orders.iter_mut().find(|o| o.id == order_id.as_str()) else {
                     return false;
                 };
                 if order.symbol.is_none() {
@@ -399,7 +398,8 @@ impl AccountState {
     }
 
     pub fn total_pnl(&self) -> i128 {
-        self.realized_total().saturating_add(self.unrealized_total())
+        self.realized_total()
+            .saturating_add(self.unrealized_total())
     }
 }
 
@@ -421,7 +421,13 @@ mod tests {
         OrderId::new(id).unwrap()
     }
 
-    fn position(account: AccountId, symbol: &str, qty: i64, realized: i64, unrealized: i64) -> Event {
+    fn position(
+        account: AccountId,
+        symbol: &str,
+        qty: i64,
+        realized: i64,
+        unrealized: i64,
+    ) -> Event {
         Event::Position {
             account_id: account,
             symbol: symbol.into(),
@@ -519,13 +525,19 @@ mod tests {
         assert_eq!(row.symbol.as_deref(), Some("BTC-USD"));
         assert_eq!(row.side, Some(Side::Buy));
         assert_eq!(row.price, Some(Price(6_400_000)));
-        assert_eq!((row.qty, row.filled, row.remaining), (10_000_000, 0, 10_000_000));
+        assert_eq!(
+            (row.qty, row.filled, row.remaining),
+            (10_000_000, 0, 10_000_000)
+        );
         // A repeated accepted ack changes nothing.
         assert!(!state.apply_event(&ack(guest(), "o-1", OrderStatus::Accepted), 0));
         // A partial fill moves quantity from remaining to filled.
         assert!(state.apply_event(&fill("o-1", 4_000_000, 6_000_000), 0));
         let row = &state.orders[0];
-        assert_eq!((row.filled, row.remaining, row.qty), (4_000_000, 6_000_000, 10_000_000));
+        assert_eq!(
+            (row.filled, row.remaining, row.qty),
+            (4_000_000, 6_000_000, 10_000_000)
+        );
         // Filled or canceled removes the row.
         assert!(state.apply_event(&ack(guest(), "o-1", OrderStatus::Filled), 0));
         assert!(state.orders.is_empty());
@@ -594,7 +606,10 @@ mod tests {
         assert!(state.preview.is_none() && state.parse_error.is_none());
         assert!(state.on_parse_error("r2", "unknown symbol", 4));
         let error = state.parse_error.clone().unwrap();
-        assert_eq!((error.message.as_str(), error.position), ("unknown symbol", 4));
+        assert_eq!(
+            (error.message.as_str(), error.position),
+            ("unknown symbol", 4)
+        );
         // A preview clears the error, and sending the next command clears both.
         assert!(state.on_preview("r2", &place_preview("p1", 30_000), 0));
         assert!(state.parse_error.is_none() && state.preview.is_some());

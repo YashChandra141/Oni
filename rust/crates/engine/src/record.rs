@@ -193,11 +193,7 @@ impl fmt::Display for RecordSummary {
         if let (Some(first), Some(last)) = (self.first_recv, self.last_recv) {
             write!(f, ", recv {first}..{last}")?;
         }
-        write!(
-            f,
-            ", {} filtered, {} invalid",
-            self.filtered, self.invalid
-        )
+        write!(f, ", {} filtered, {} invalid", self.filtered, self.invalid)
     }
 }
 
@@ -254,7 +250,10 @@ impl Recorder {
         self.first_recv.get_or_insert(recv);
         self.last_recv = Some(recv);
         self.lines += 1;
-        *self.per_symbol.entry(line.msg.symbol().to_owned()).or_insert(0) += 1;
+        *self
+            .per_symbol
+            .entry(line.msg.symbol().to_owned())
+            .or_insert(0) += 1;
         Some(line)
     }
 
@@ -511,9 +510,9 @@ fn normalize_symbols(symbols: &[String]) -> Result<Vec<String>, RecordError> {
 
 /// The wall clock in epoch ms. Only the real entry point calls this.
 fn wall_clock_ms() -> TimeMs {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |d| TimeMs::try_from(d.as_millis()).unwrap_or(TimeMs::MAX))
+    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| {
+        TimeMs::try_from(d.as_millis()).unwrap_or(TimeMs::MAX)
+    })
 }
 
 /// Runs the production adapter of `venue` until its channels close.
@@ -732,7 +731,10 @@ mod tests {
             .map(|(s, n)| (s.as_str(), *n))
             .collect();
         assert_eq!(counts, [("BTC-USD", 2), ("SOL-USD", 1)]);
-        assert_eq!((summary.first_recv, summary.last_recv), (Some(100), Some(103)));
+        assert_eq!(
+            (summary.first_recv, summary.last_recv),
+            (Some(100), Some(103))
+        );
         assert_eq!(
             summary.to_string(),
             "3 lines, BTC-USD 2, SOL-USD 1, recv 100..103, 2 filtered, 0 invalid"
@@ -756,14 +758,20 @@ mod tests {
             .collect();
         assert_eq!(recv, [100, 100, 100, 150, 150, 150]);
         let summary = recorder.finish();
-        assert_eq!((summary.first_recv, summary.last_recv), (Some(100), Some(150)));
+        assert_eq!(
+            (summary.first_recv, summary.last_recv),
+            (Some(100), Some(150))
+        );
     }
 
     #[test]
     fn a_filtered_message_does_not_move_the_clamp() {
         let mut recorder = Recorder::new(&["BTC-USD".to_owned()]);
         assert!(recorder.record(trade("ETH-USD", 10, 1), 500).is_none());
-        assert_eq!(recorder.record(trade("BTC-USD", 10, 1), 100).unwrap().recv, 100);
+        assert_eq!(
+            recorder.record(trade("BTC-USD", 10, 1), 100).unwrap().recv,
+            100
+        );
     }
 
     #[test]
@@ -852,7 +860,10 @@ mod tests {
             normalize_symbols(&list(&["DOGE-USD"])),
             Err(RecordError::Config(_))
         ));
-        assert!(matches!(normalize_symbols(&[]), Err(RecordError::Config(_))));
+        assert!(matches!(
+            normalize_symbols(&[]),
+            Err(RecordError::Config(_))
+        ));
     }
 
     // --- Writer -----------------------------------------------------------------------------
@@ -933,7 +944,10 @@ mod tests {
         fs::create_dir_all(out.parent().unwrap()).unwrap();
         fs::write(partial_path(&out), "stale").unwrap();
         let err = FixtureWriter::create(&out, false).unwrap_err();
-        assert!(matches!(&err, RecordError::Exists(p) if *p == partial_path(&out)), "{err}");
+        assert!(
+            matches!(&err, RecordError::Exists(p) if *p == partial_path(&out)),
+            "{err}"
+        );
         assert_eq!(fs::read_to_string(partial_path(&out)).unwrap(), "stale");
     }
 
@@ -1073,7 +1087,10 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(stop, StopReason::ChannelClosed);
-        assert_eq!(sink.iter().map(|l| l.recv).collect::<Vec<_>>(), [1_000, 1_001]);
+        assert_eq!(
+            sink.iter().map(|l| l.recv).collect::<Vec<_>>(),
+            [1_000, 1_001]
+        );
     }
 
     #[tokio::test]

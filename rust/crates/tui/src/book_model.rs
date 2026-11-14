@@ -491,14 +491,20 @@ mod tests {
             format_level(Price(6_400_050), Qty(10_000_000)),
             ("64000.50".to_owned(), "0.10000000".to_owned())
         );
-        assert_eq!(format_ticket(Some(Price(6_400_050))), "TICKET: LMT 64000.50");
+        assert_eq!(
+            format_ticket(Some(Price(6_400_050))),
+            "TICKET: LMT 64000.50"
+        );
         assert_eq!(format_ticket(None), "TICKET: -");
     }
 
     #[test]
     fn clock_is_utc_with_seconds() {
         assert_eq!(format_clock(0), "00:00:00");
-        assert_eq!(format_clock(13 * 3_600_000 + 7 * 60_000 + 9_999), "13:07:09");
+        assert_eq!(
+            format_clock(13 * 3_600_000 + 7 * 60_000 + 9_999),
+            "13:07:09"
+        );
         assert_eq!(format_clock(-1_000), "23:59:59");
         assert_eq!(format_clock(86_400_000 + 1_000), "00:00:01");
     }

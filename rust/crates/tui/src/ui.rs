@@ -438,10 +438,10 @@ fn connected_summary(app: &App) -> String {
         || "protocol ?".to_owned(),
         |h| format!("protocol v{}", h.protocol_version),
     );
-    let mode = app.hello.as_ref().map_or_else(
-        || "…".to_owned(),
-        |h| venue_label(h.venue, h.data_mode),
-    );
+    let mode = app
+        .hello
+        .as_ref()
+        .map_or_else(|| "…".to_owned(), |h| venue_label(h.venue, h.data_mode));
     let account = app
         .session
         .as_ref()
@@ -732,7 +732,10 @@ mod tests {
             Some(&HitTarget::Panel(PanelId::Watchlist))
         );
         assert_eq!(hits.resolve(115, 5), Some(&HitTarget::Panel(PanelId::Book)));
-        assert_eq!(hits.resolve(115, 29), Some(&HitTarget::Panel(PanelId::Tape)));
+        assert_eq!(
+            hits.resolve(115, 29),
+            Some(&HitTarget::Panel(PanelId::Tape))
+        );
         // Four level rows, ask 1, ask 0, (spread), bid 0, bid 1.
         let levels = level_rows(&hits, 100, 30);
         let kinds: Vec<(BookSide, usize)> = levels
@@ -839,7 +842,11 @@ mod tests {
     fn toggle_buttons_follow_the_timeframe_buttons_in_the_hit_map() {
         // Narrow layout: the button row is row 2, below the watchlist strip and the border.
         let (rows, hits) = draw_with_hits(60, 14, &with_indicators());
-        assert!(rows[2].contains("EMA") && rows[2].contains("ATR"), "{}", rows[2]);
+        assert!(
+            rows[2].contains("EMA") && rows[2].contains("ATR"),
+            "{}",
+            rows[2]
+        );
         for (x, indicator) in [
             (28, Indicator::Ema),
             (34, Indicator::Vwap),
@@ -847,7 +854,11 @@ mod tests {
             (46, Indicator::Rsi),
             (52, Indicator::Atr),
         ] {
-            assert_eq!(hits.resolve(x, 2), Some(&HitTarget::IndicatorToggle(indicator)), "x {x}");
+            assert_eq!(
+                hits.resolve(x, 2),
+                Some(&HitTarget::IndicatorToggle(indicator)),
+                "x {x}"
+            );
         }
         assert_eq!(
             hits.resolve(2, 2),
@@ -878,7 +889,10 @@ mod tests {
         assert!(btc.contains("BTC-USD") && btc.contains("64000.50"), "{btc}");
         assert!(slice(&rows, 2, 72, 48).contains("3200.00"));
         assert!(slice(&rows, 3, 72, 48).contains("—"));
-        assert_eq!(hits.resolve(80, 0), Some(&HitTarget::Panel(PanelId::Watchlist)));
+        assert_eq!(
+            hits.resolve(80, 0),
+            Some(&HitTarget::Panel(PanelId::Watchlist))
+        );
         for (y, symbol) in [(1, "BTC-USD"), (2, "ETH-USD"), (3, "SOL-USD")] {
             assert_eq!(
                 hits.resolve(80, y),
@@ -921,10 +935,16 @@ mod tests {
         let symbol = |s: &str| Some(HitTarget::WatchlistSymbol(s.to_owned()));
         assert_eq!(hits.resolve(0, 0), symbol("BTC-USD").as_ref());
         assert_eq!(hits.resolve(11, 0), symbol("BTC-USD").as_ref());
-        assert_eq!(hits.resolve(13, 0), Some(&HitTarget::Panel(PanelId::Watchlist)));
+        assert_eq!(
+            hits.resolve(13, 0),
+            Some(&HitTarget::Panel(PanelId::Watchlist))
+        );
         assert_eq!(hits.resolve(15, 0), symbol("ETH-USD").as_ref());
         assert_eq!(hits.resolve(27, 0), symbol("SOL-USD").as_ref());
-        assert_eq!(hits.resolve(40, 0), Some(&HitTarget::Panel(PanelId::Watchlist)));
+        assert_eq!(
+            hits.resolve(40, 0),
+            Some(&HitTarget::Panel(PanelId::Watchlist))
+        );
         // The selected symbol is reversed, the others are not.
         let reversed = |x: u16| {
             let style = buffer[(x, 0)].style();
@@ -957,13 +977,25 @@ mod tests {
     fn the_chart_border_shows_the_data_mode_from_hello() {
         let mut app = app_with_book();
         let (rows, _) = draw_with_hits(60, 14, &app);
-        assert!(!rows[1].contains("REPLAY") && !rows[1].contains("LIVE"), "{}", rows[1]);
+        assert!(
+            !rows[1].contains("REPLAY") && !rows[1].contains("LIVE"),
+            "{}",
+            rows[1]
+        );
         update(&mut app, hello(DataMode::Live, Some(Venue::Backpack)));
         let (rows, _) = draw_with_hits(60, 14, &app);
         assert!(rows[1].contains("BTC-USD 1m"), "{}", rows[1]);
-        assert!(rows[1].ends_with(" LIVE · Backpack (USDC) ┐"), "{}", rows[1]);
+        assert!(
+            rows[1].ends_with(" LIVE · Backpack (USDC) ┐"),
+            "{}",
+            rows[1]
+        );
         let (rows, _) = draw_with_hits(120, 30, &app);
-        assert!(slice(&rows, 0, 0, 72).contains("LIVE · Backpack (USDC)"), "{}", rows[0]);
+        assert!(
+            slice(&rows, 0, 0, 72).contains("LIVE · Backpack (USDC)"),
+            "{}",
+            rows[0]
+        );
         update(&mut app, hello(DataMode::Live, Some(Venue::Coinbase)));
         let (rows, _) = draw_with_hits(60, 14, &app);
         assert!(rows[1].contains(" LIVE · Coinbase "), "{}", rows[1]);
@@ -986,7 +1018,11 @@ mod tests {
         // No session yet: the mode only.
         let (rows, _) = draw_with_hits(80, 14, &app);
         assert!(!rows[1].contains("GUEST"), "{}", rows[1]);
-        assert!(rows[1].ends_with(" LIVE · Backpack (USDC) ┐"), "{}", rows[1]);
+        assert!(
+            rows[1].ends_with(" LIVE · Backpack (USDC) ┐"),
+            "{}",
+            rows[1]
+        );
         // The guest account.
         update(
             &mut app,
@@ -997,7 +1033,11 @@ mod tests {
         );
         let (rows, _) = draw_with_hits(80, 14, &app);
         assert!(rows[1].contains("BTC-USD 1m"), "{}", rows[1]);
-        assert!(rows[1].ends_with(" LIVE · Backpack (USDC) · GUEST ┐"), "{}", rows[1]);
+        assert!(
+            rows[1].ends_with(" LIVE · Backpack (USDC) · GUEST ┐"),
+            "{}",
+            rows[1]
+        );
         // A wallet account shows the shortened address and no GUEST.
         let address = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
         update(
@@ -1008,7 +1048,11 @@ mod tests {
             }),
         );
         let (rows, _) = draw_with_hits(80, 14, &app);
-        assert!(rows[1].ends_with(" LIVE · Backpack (USDC) · 9WzD…AWWM ┐"), "{}", rows[1]);
+        assert!(
+            rows[1].ends_with(" LIVE · Backpack (USDC) · 9WzD…AWWM ┐"),
+            "{}",
+            rows[1]
+        );
         assert!(!rows[1].contains("GUEST"), "{}", rows[1]);
         assert!(!rows[1].contains(address), "{}", rows[1]);
     }
@@ -1019,7 +1063,11 @@ mod tests {
         let mut app = with_indicators();
         // 30 rows: the chart column has 27 rows, so a 6 row sub-pane starts at row 23.
         let (rows, _) = draw_with_hits(120, 30, &app);
-        assert!(slice(&rows, 23, 62, 3) == "100", "{:?}", slice(&rows, 23, 62, 10));
+        assert!(
+            slice(&rows, 23, 62, 3) == "100",
+            "{:?}",
+            slice(&rows, 23, 62, 10)
+        );
         // 22 rows: the chart column has 19 rows, below the 20 row threshold.
         let (rows, _) = draw_with_hits(120, 22, &app);
         assert!((0..22).all(|y| !slice(&rows, y, 62, 10).contains("100")));
@@ -1109,13 +1157,29 @@ mod order_layout_tests {
         assert!(rows[36].contains("OPEN ORDERS"), "{}", rows[36]);
         assert!(rows[36].contains("P&L"), "{}", rows[36]);
         assert!(rows[44].starts_with("> "), "{}", rows[44]);
-        assert!(!rows[44].contains("P&L"), "the strip already shows the P&L: {}", rows[44]);
-        assert_eq!(hits.resolve(10, 40), Some(&HitTarget::Panel(PanelId::Positions)));
-        assert_eq!(hits.resolve(60, 40), Some(&HitTarget::Panel(PanelId::Orders)));
-        assert_eq!(hits.resolve(10, 44), Some(&HitTarget::Panel(PanelId::CommandBar)));
+        assert!(
+            !rows[44].contains("P&L"),
+            "the strip already shows the P&L: {}",
+            rows[44]
+        );
+        assert_eq!(
+            hits.resolve(10, 40),
+            Some(&HitTarget::Panel(PanelId::Positions))
+        );
+        assert_eq!(
+            hits.resolve(60, 40),
+            Some(&HitTarget::Panel(PanelId::Orders))
+        );
+        assert_eq!(
+            hits.resolve(10, 44),
+            Some(&HitTarget::Panel(PanelId::CommandBar))
+        );
         // The chart still sits above the strip, and the tape ends above it.
         assert_eq!(hits.resolve(0, 0), Some(&HitTarget::Panel(PanelId::Chart)));
-        assert_eq!(hits.resolve(115, 35), Some(&HitTarget::Panel(PanelId::Tape)));
+        assert_eq!(
+            hits.resolve(115, 35),
+            Some(&HitTarget::Panel(PanelId::Tape))
+        );
     }
 
     #[test]
@@ -1125,8 +1189,14 @@ mod order_layout_tests {
         assert!(!rows.join("\n").contains("POSITIONS"));
         assert!(rows[34].starts_with("> "), "{}", rows[34]);
         assert!(rows[34].contains("P&L 0.00"), "{}", rows[34]);
-        assert_eq!(hits.resolve(10, 34), Some(&HitTarget::Panel(PanelId::CommandBar)));
-        assert_eq!(hits.resolve(115, 33), Some(&HitTarget::Panel(PanelId::Tape)));
+        assert_eq!(
+            hits.resolve(10, 34),
+            Some(&HitTarget::Panel(PanelId::CommandBar))
+        );
+        assert_eq!(
+            hits.resolve(115, 33),
+            Some(&HitTarget::Panel(PanelId::Tape))
+        );
     }
 
     // The thresholds keep the existing fixed-size layouts: 120x30 has no bar row and no strip.
@@ -1135,8 +1205,15 @@ mod order_layout_tests {
         let app = app_with_candles();
         let (rows, hits) = screen(120, 30, &app);
         assert!(!rows.join("\n").contains("POSITIONS"));
-        assert_eq!(hits.resolve(115, 29), Some(&HitTarget::Panel(PanelId::Tape)));
-        assert!(rows[29].find("> ").is_none() || !rows[29].starts_with("> "), "{}", rows[29]);
+        assert_eq!(
+            hits.resolve(115, 29),
+            Some(&HitTarget::Panel(PanelId::Tape))
+        );
+        assert!(
+            rows[29].find("> ").is_none() || !rows[29].starts_with("> "),
+            "{}",
+            rows[29]
+        );
     }
 
     #[test]
@@ -1145,7 +1222,10 @@ mod order_layout_tests {
         let (rows, hits) = screen(60, 20, &app);
         assert!(rows[19].starts_with("> "), "{}", rows[19]);
         assert!(rows[19].contains("P&L 0.00"), "{}", rows[19]);
-        assert_eq!(hits.resolve(0, 19), Some(&HitTarget::Panel(PanelId::CommandBar)));
+        assert_eq!(
+            hits.resolve(0, 19),
+            Some(&HitTarget::Panel(PanelId::CommandBar))
+        );
         // The watchlist strip and the chart panel start where they did.
         assert_eq!(hits.resolve(0, 1), Some(&HitTarget::Panel(PanelId::Chart)));
         // 14 rows (the size of the existing narrow tests) keep the chart to the bottom row.
@@ -1162,7 +1242,10 @@ mod order_layout_tests {
         app.command.editor.set("BUY BTC 1");
         let (rows, hits) = screen(60, 14, &app);
         assert!(rows[13].starts_with("> BUY BTC 1"), "{}", rows[13]);
-        assert_eq!(hits.resolve(5, 13), Some(&HitTarget::Panel(PanelId::CommandBar)));
+        assert_eq!(
+            hits.resolve(5, 13),
+            Some(&HitTarget::Panel(PanelId::CommandBar))
+        );
     }
 
     // Req 31.4
@@ -1201,7 +1284,10 @@ mod order_layout_tests {
         let byte = rows[confirm_row].find("Confirm [Enter/Y]").unwrap();
         let x = rows[confirm_row][..byte].chars().count();
         assert_eq!(
-            hits.resolve(u16::try_from(x).unwrap(), u16::try_from(confirm_row).unwrap()),
+            hits.resolve(
+                u16::try_from(x).unwrap(),
+                u16::try_from(confirm_row).unwrap()
+            ),
             Some(&HitTarget::DialogConfirm)
         );
     }

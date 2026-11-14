@@ -129,9 +129,9 @@ fn shorten(text: &str) -> String {
 }
 
 fn now_ms() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| {
-        i64::try_from(d.as_millis()).unwrap_or(i64::MAX)
-    })
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
 fn log_drops(stats: &mut DropStats) {
@@ -276,10 +276,7 @@ pub(crate) async fn run_with_url<F: SnapshotFetcher>(
     }
 }
 
-async fn send_all(
-    tx: &mpsc::Sender<MarketMsg>,
-    msgs: Vec<MarketMsg>,
-) -> Result<(), AdapterError> {
+async fn send_all(tx: &mpsc::Sender<MarketMsg>, msgs: Vec<MarketMsg>) -> Result<(), AdapterError> {
     for msg in msgs {
         tx.send(msg).await.map_err(|_| AdapterError::Shutdown)?;
     }
@@ -548,7 +545,10 @@ mod tests {
             klines_path("BTC_USDC", Timeframe::M15, 10, 20),
             "/api/v1/klines?symbol=BTC_USDC&interval=15m&startTime=10&endTime=20"
         );
-        assert_eq!(kline_window(1_794_632_280, Timeframe::M1), (1_794_602_280, 1_794_632_280));
+        assert_eq!(
+            kline_window(1_794_632_280, Timeframe::M1),
+            (1_794_602_280, 1_794_632_280)
+        );
         assert_eq!(kline_window(100, Timeframe::D1), (0, 100));
     }
 
@@ -597,7 +597,9 @@ mod tests {
             let level = |price, qty| (Price(price), Qty(qty));
             let mut deltas = Vec::new();
             for _ in 0..3 {
-                let MarketMsg::BookDelta { side, price, qty, .. } = market.recv().await.unwrap()
+                let MarketMsg::BookDelta {
+                    side, price, qty, ..
+                } = market.recv().await.unwrap()
                 else {
                     panic!("expected a delta");
                 };
@@ -613,7 +615,13 @@ mod tests {
             );
             let trade = market.recv().await.unwrap();
             assert!(
-                matches!(trade, MarketMsg::Trade { side: Side::Sell, .. }),
+                matches!(
+                    trade,
+                    MarketMsg::Trade {
+                        side: Side::Sell,
+                        ..
+                    }
+                ),
                 "{trade:?}"
             );
         };
@@ -658,14 +666,20 @@ mod tests {
             }
             // Continuous update, then a gap (111..112 after 101), then silence.
             ws.send(Message::text(depth_text(101, 101))).await.unwrap();
-            assert!(matches!(market.recv().await.unwrap(), MarketMsg::BookDelta { .. }));
+            assert!(matches!(
+                market.recv().await.unwrap(),
+                MarketMsg::BookDelta { .. }
+            ));
             ws.send(Message::text(depth_text(111, 112))).await.unwrap();
             // The refetch yields a new snapshot at id 200 for SOL-USD.
             let msg = market.recv().await.unwrap();
             assert_eq!(snapshot_symbol(&msg), "SOL-USD");
             // The next update continues from 200.
             ws.send(Message::text(depth_text(201, 201))).await.unwrap();
-            assert!(matches!(market.recv().await.unwrap(), MarketMsg::BookDelta { .. }));
+            assert!(matches!(
+                market.recv().await.unwrap(),
+                MarketMsg::BookDelta { .. }
+            ));
             // A stale update after the resync produces nothing; the following one flows.
             ws.send(Message::text(depth_text(150, 160))).await.unwrap();
             ws.send(Message::text(depth_text(202, 202))).await.unwrap();
@@ -715,7 +729,10 @@ mod tests {
                 market.recv().await.unwrap();
             }
             ws.send(Message::text(depth_text(101, 101))).await.unwrap();
-            assert!(matches!(market.recv().await.unwrap(), MarketMsg::BookDelta { .. }));
+            assert!(matches!(
+                market.recv().await.unwrap(),
+                MarketMsg::BookDelta { .. }
+            ));
             drop(ws);
 
             let event = errors.recv().await.unwrap();
@@ -723,7 +740,10 @@ mod tests {
                 panic!("expected an error event, got {event:?}");
             };
             assert_eq!(code, ErrorCode::FeedDisconnected);
-            assert!(message.starts_with("backpack feed disconnected"), "{message}");
+            assert!(
+                message.starts_with("backpack feed disconnected"),
+                "{message}"
+            );
 
             let (mut ws, names) = accept(&listener).await;
             assert_no_auth_headers(&names);
@@ -736,7 +756,10 @@ mod tests {
             assert_eq!(snapshots, ["BTC-USD", "ETH-USD", "SOL-USD"]);
             // Update 501 continues from the new snapshot id 500 (the old state was reset).
             ws.send(Message::text(depth_text(501, 501))).await.unwrap();
-            assert!(matches!(market.recv().await.unwrap(), MarketMsg::BookDelta { .. }));
+            assert!(matches!(
+                market.recv().await.unwrap(),
+                MarketMsg::BookDelta { .. }
+            ));
             let _keep = ws;
         };
 
@@ -786,7 +809,10 @@ mod tests {
     fn snapshot_message_shape() {
         let msg = MarketMsg::BookSnapshot {
             symbol: "SOL-USD".into(),
-            bids: vec![Level { price: Price(1), qty: Qty(1) }],
+            bids: vec![Level {
+                price: Price(1),
+                qty: Qty(1),
+            }],
             asks: Vec::new(),
             ts: 0,
         };

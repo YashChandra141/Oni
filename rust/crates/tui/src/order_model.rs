@@ -457,7 +457,10 @@ mod tests {
         assert_eq!(parse_qty("0.123456789", 8), None);
         // 10^11 whole units at 8 decimals does not fit in an i64.
         assert_eq!(parse_qty("100000000000", 8), None);
-        assert_eq!(parse_qty("92233720368", 8), Some(Qty(9_223_372_036_800_000_000)));
+        assert_eq!(
+            parse_qty("92233720368", 8),
+            Some(Qty(9_223_372_036_800_000_000))
+        );
     }
 
     #[test]
@@ -576,8 +579,14 @@ mod tests {
         assert_eq!(KindLabel::Limit.label(), "LMT");
         assert_eq!(KindLabel::Stop.label(), "STP");
         assert_eq!(rejection_text("max_order_value"), "max order value");
-        assert_eq!(ConfirmAction::FlattenAll.question(), "Flatten every position?");
-        assert_eq!(ConfirmAction::CancelAll.question(), "Cancel every open order?");
+        assert_eq!(
+            ConfirmAction::FlattenAll.question(),
+            "Flatten every position?"
+        );
+        assert_eq!(
+            ConfirmAction::CancelAll.question(),
+            "Cancel every open order?"
+        );
         assert_eq!(caret_column(4, 10), 4);
         assert_eq!(caret_column(40, 10), 10);
     }

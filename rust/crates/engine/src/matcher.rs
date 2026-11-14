@@ -208,7 +208,11 @@ impl Matcher {
             remaining_qty: req.qty.0,
             stop_triggered,
         };
-        out.events.push(ack(&order.account_id, &order.order_id, OrderStatus::Accepted));
+        out.events.push(ack(
+            &order.account_id,
+            &order.order_id,
+            OrderStatus::Accepted,
+        ));
         let mut overlay = Overlay::default();
         let done = match_order(&mut order, book, &mut overlay, self.fee_bps, ts, &mut out);
         if !done {
@@ -267,7 +271,11 @@ impl Matcher {
             .find(|(_, o)| &o.order_id == order_id && &o.account_id == account_id)
             .map(|(seq, _)| *seq);
         match found.and_then(|seq| self.orders.remove(&seq)) {
-            Some(order) => vec![ack(&order.account_id, &order.order_id, OrderStatus::Canceled)],
+            Some(order) => vec![ack(
+                &order.account_id,
+                &order.order_id,
+                OrderStatus::Canceled,
+            )],
             None => vec![Event::OrderRejected {
                 account_id: account_id.clone(),
                 order_id: order_id.clone(),
@@ -496,7 +504,12 @@ mod tests {
     fn market_buy_walks_two_levels() {
         let mut m = Matcher::default();
         let b = book(&[(99_000, 5_000)], &[(100_000, 2_000), (100_100, 5_000)]);
-        let out = m.place(req("guest", "o-1", Side::Buy, 4_000, OrderKind::Market), &b, None, 7);
+        let out = m.place(
+            req("guest", "o-1", Side::Buy, 4_000, OrderKind::Market),
+            &b,
+            None,
+            7,
+        );
         assert_eq!(
             out.events,
             vec![
@@ -516,7 +529,12 @@ mod tests {
         let mut m = Matcher::default();
         let b = book(&[(99_000, 5)], &[(100_000, 5)]);
         let before = b.clone();
-        m.place(req("guest", "o-1", Side::Buy, 5, OrderKind::Market), &b, None, 7);
+        m.place(
+            req("guest", "o-1", Side::Buy, 5, OrderKind::Market),
+            &b,
+            None,
+            7,
+        );
         assert_eq!(b, before);
     }
 
@@ -524,7 +542,12 @@ mod tests {
     fn thin_book_partially_fills_and_remainder_rests() {
         let mut m = Matcher::default();
         let b = book(&[], &[(100_000, 3)]);
-        let out = m.place(req("guest", "o-1", Side::Buy, 5, OrderKind::Market), &b, None, 7);
+        let out = m.place(
+            req("guest", "o-1", Side::Buy, 5, OrderKind::Market),
+            &b,
+            None,
+            7,
+        );
         assert_eq!(
             out.events,
             vec![
@@ -537,7 +560,10 @@ mod tests {
         assert_eq!(open.len(), 1);
         assert_eq!(open[0].remaining_qty, 2);
         assert_eq!(open[0].filled_qty(), 3);
-        assert_eq!(open[0].filled_qty() + open[0].remaining_qty, open[0].original_qty);
+        assert_eq!(
+            open[0].filled_qty() + open[0].remaining_qty,
+            open[0].original_qty
+        );
     }
 
     #[test]
@@ -549,7 +575,10 @@ mod tests {
             None,
             7,
         );
-        assert_eq!(out.events, vec![ack_ev("guest", "o-1", OrderStatus::Accepted)]);
+        assert_eq!(
+            out.events,
+            vec![ack_ev("guest", "o-1", OrderStatus::Accepted)]
+        );
         assert_eq!(m.open_count(), 1);
         // Retried on a later book update.
         let b = book(&[(99_000, 9)], &[]);
@@ -563,7 +592,12 @@ mod tests {
     fn limit_buy_fills_only_at_or_below_limit() {
         let mut m = Matcher::default();
         let b = book(&[], &[(100_000, 2), (100_100, 2)]);
-        let out = m.place(req("guest", "o-1", Side::Buy, 4, limit(100_000)), &b, None, 7);
+        let out = m.place(
+            req("guest", "o-1", Side::Buy, 4, limit(100_000)),
+            &b,
+            None,
+            7,
+        );
         assert_eq!(
             out.events,
             vec![
@@ -574,8 +608,16 @@ mod tests {
         assert_eq!(m.open_count(), 1);
 
         let mut m = Matcher::default();
-        let out = m.place(req("guest", "o-2", Side::Buy, 4, limit(99_999)), &b, None, 7);
-        assert_eq!(out.events, vec![ack_ev("guest", "o-2", OrderStatus::Accepted)]);
+        let out = m.place(
+            req("guest", "o-2", Side::Buy, 4, limit(99_999)),
+            &b,
+            None,
+            7,
+        );
+        assert_eq!(
+            out.events,
+            vec![ack_ev("guest", "o-2", OrderStatus::Accepted)]
+        );
         assert!(out.fills.is_empty());
     }
 
@@ -583,7 +625,12 @@ mod tests {
     fn limit_sell_fills_only_at_or_above_limit() {
         let mut m = Matcher::default();
         let b = book(&[(100_000, 2), (99_900, 2)], &[]);
-        let out = m.place(req("guest", "o-1", Side::Sell, 4, limit(100_000)), &b, None, 7);
+        let out = m.place(
+            req("guest", "o-1", Side::Sell, 4, limit(100_000)),
+            &b,
+            None,
+            7,
+        );
         assert_eq!(
             out.events,
             vec![
@@ -592,7 +639,12 @@ mod tests {
             ]
         );
         let mut m = Matcher::default();
-        let out = m.place(req("guest", "o-2", Side::Sell, 4, limit(100_001)), &b, None, 7);
+        let out = m.place(
+            req("guest", "o-2", Side::Sell, 4, limit(100_001)),
+            &b,
+            None,
+            7,
+        );
         assert!(out.fills.is_empty());
         assert_eq!(m.open_count(), 1);
     }
@@ -601,7 +653,12 @@ mod tests {
     fn resting_limit_fills_on_a_later_book_update() {
         let mut m = Matcher::default();
         let thin = book(&[], &[(101_000, 5)]);
-        m.place(req("guest", "o-1", Side::Buy, 3, limit(100_000)), &thin, None, 7);
+        m.place(
+            req("guest", "o-1", Side::Buy, 3, limit(100_000)),
+            &thin,
+            None,
+            7,
+        );
         let better = book(&[], &[(100_000, 5)]);
         let out = m.on_market(BTC, &better, None, 9);
         assert_eq!(out.events.len(), 2);
@@ -614,10 +671,22 @@ mod tests {
     fn stop_triggers_on_a_crossing_trade_then_fills_as_market() {
         let mut m = Matcher::default();
         let b = book(&[(99_000, 5)], &[(106_000, 5)]);
-        let out = m.place(req("guest", "o-1", Side::Buy, 2, stop(105_000)), &b, Some(Price(100_000)), 7);
-        assert_eq!(out.events, vec![ack_ev("guest", "o-1", OrderStatus::Accepted)]);
+        let out = m.place(
+            req("guest", "o-1", Side::Buy, 2, stop(105_000)),
+            &b,
+            Some(Price(100_000)),
+            7,
+        );
+        assert_eq!(
+            out.events,
+            vec![ack_ev("guest", "o-1", OrderStatus::Accepted)]
+        );
         // Below the stop: still resting.
-        assert!(m.on_market(BTC, &b, Some(Price(104_999)), 8).events.is_empty());
+        assert!(
+            m.on_market(BTC, &b, Some(Price(104_999)), 8)
+                .events
+                .is_empty()
+        );
         // At the stop: triggers and fills at the ask, not at the stop price.
         let out = m.on_market(BTC, &b, Some(Price(105_000)), 9);
         assert_eq!(
@@ -633,9 +702,17 @@ mod tests {
     fn sell_stop_already_satisfied_triggers_at_placement() {
         let mut m = Matcher::default();
         let b = book(&[(90_000, 5)], &[]);
-        let out = m.place(req("guest", "o-1", Side::Sell, 2, stop(95_000)), &b, Some(Price(94_000)), 7);
+        let out = m.place(
+            req("guest", "o-1", Side::Sell, 2, stop(95_000)),
+            &b,
+            Some(Price(94_000)),
+            7,
+        );
         assert_eq!(out.events.len(), 3);
-        assert_eq!(out.events[1], fill_ev("guest", "o-1", Side::Sell, 90_000, 2, 0));
+        assert_eq!(
+            out.events[1],
+            fill_ev("guest", "o-1", Side::Sell, 90_000, 2, 0)
+        );
         assert_eq!(m.open_count(), 0);
     }
 
@@ -644,21 +721,36 @@ mod tests {
         // notional 3 * 1000 = 3000, fee 3000 * 5 / 10000 = 1 (1.5 truncated).
         let mut m = Matcher::default();
         let b = book(&[], &[(3, 400), (3, 0), (4, 600)]);
-        let out = m.place(req("guest", "o-1", Side::Buy, 1_000, OrderKind::Market), &b, None, 7);
+        let out = m.place(
+            req("guest", "o-1", Side::Buy, 1_000, OrderKind::Market),
+            &b,
+            None,
+            7,
+        );
         let fees: Vec<Money> = out.fills.iter().map(|f| f.fee).collect();
         // 3*400 = 1200 -> 0 (0.6); 4*600 = 2400 -> 1 (1.2).
         assert_eq!(fees, vec![Money(0), Money(1)]);
         // Custom rate: 100 bps of 3000 = 30.
         let mut m = Matcher::new(100);
         let b = book(&[], &[(3, 1_000)]);
-        let out = m.place(req("guest", "o-2", Side::Buy, 1_000, OrderKind::Market), &b, None, 7);
+        let out = m.place(
+            req("guest", "o-2", Side::Buy, 1_000, OrderKind::Market),
+            &b,
+            None,
+            7,
+        );
         assert_eq!(out.fills[0].fee, Money(30));
     }
 
     #[test]
     fn cancel_removes_an_open_order() {
         let mut m = Matcher::default();
-        m.place(req("guest", "o-1", Side::Buy, 1, limit(1)), &OrderBook::new(), None, 7);
+        m.place(
+            req("guest", "o-1", Side::Buy, 1, limit(1)),
+            &OrderBook::new(),
+            None,
+            7,
+        );
         assert_eq!(
             m.cancel(&acct("guest"), &oid("o-1")),
             vec![ack_ev("guest", "o-1", OrderStatus::Canceled)]
@@ -669,7 +761,12 @@ mod tests {
     #[test]
     fn cancel_of_unknown_or_foreign_order_is_rejected_and_order_stays() {
         let mut m = Matcher::default();
-        m.place(req("w_a", "o-1", Side::Buy, 1, limit(1)), &OrderBook::new(), None, 7);
+        m.place(
+            req("w_a", "o-1", Side::Buy, 1, limit(1)),
+            &OrderBook::new(),
+            None,
+            7,
+        );
         assert_eq!(
             m.cancel(&acct("w_b"), &oid("o-1")),
             vec![rejected("w_b", "o-1", "unknown_order")]
@@ -703,8 +800,18 @@ mod tests {
     fn two_orders_in_one_pass_share_displayed_liquidity_in_sequence_order() {
         let mut m = Matcher::default();
         let empty = OrderBook::new();
-        m.place(req("w_a", "a-1", Side::Buy, 5, OrderKind::Market), &empty, None, 7);
-        m.place(req("w_b", "b-1", Side::Buy, 5, OrderKind::Market), &empty, None, 7);
+        m.place(
+            req("w_a", "a-1", Side::Buy, 5, OrderKind::Market),
+            &empty,
+            None,
+            7,
+        );
+        m.place(
+            req("w_b", "b-1", Side::Buy, 5, OrderKind::Market),
+            &empty,
+            None,
+            7,
+        );
         let b = book(&[], &[(100, 6)]);
         let out = m.on_market(BTC, &b, None, 8);
         let fills: Vec<(String, i64)> = out
@@ -726,14 +833,24 @@ mod tests {
         let empty = OrderBook::new();
         let mut bad = req("guest", "o-1", Side::Buy, 1, OrderKind::Market);
         bad.symbol = "DOGE-USD".into();
-        assert_eq!(m.place(bad, &empty, None, 7).events, vec![rejected("guest", "o-1", "unknown_symbol")]);
         assert_eq!(
-            m.place(req("guest", "o-1", Side::Buy, 0, OrderKind::Market), &empty, None, 7).events,
+            m.place(bad, &empty, None, 7).events,
+            vec![rejected("guest", "o-1", "unknown_symbol")]
+        );
+        assert_eq!(
+            m.place(
+                req("guest", "o-1", Side::Buy, 0, OrderKind::Market),
+                &empty,
+                None,
+                7
+            )
+            .events,
             vec![rejected("guest", "o-1", "invalid_quantity")]
         );
         m.place(req("w_a", "o-2", Side::Buy, 1, limit(1)), &empty, None, 7);
         assert_eq!(
-            m.place(req("w_b", "o-2", Side::Buy, 1, limit(1)), &empty, None, 7).events,
+            m.place(req("w_b", "o-2", Side::Buy, 1, limit(1)), &empty, None, 7)
+                .events,
             vec![rejected("w_b", "o-2", "duplicate_order_id")]
         );
         assert_eq!(m.open_count(), 1);
@@ -745,7 +862,12 @@ mod tests {
             let mut m = Matcher::default();
             let b = book(&[(99_000, 3)], &[(100_000, 2), (100_100, 4)]);
             vec![
-                m.place(req("w_a", "a-1", Side::Buy, 5, OrderKind::Market), &b, None, 7),
+                m.place(
+                    req("w_a", "a-1", Side::Buy, 5, OrderKind::Market),
+                    &b,
+                    None,
+                    7,
+                ),
                 m.place(req("w_b", "b-1", Side::Sell, 9, limit(99_000)), &b, None, 7),
                 m.on_market(BTC, &b, Some(Price(100_000)), 8),
             ]

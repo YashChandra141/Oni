@@ -137,7 +137,11 @@ impl Widget for CandleChart<'_> {
         // Candles.
         for (i, bar) in shown.iter().enumerate() {
             let x = l.plot.x + to_u16(bar_col(i, count, width));
-            let color = if is_bullish(bar) { UP_COLOR } else { DOWN_COLOR };
+            let color = if is_bullish(bar) {
+                UP_COLOR
+            } else {
+                DOWN_COLOR
+            };
             for row in 0..price_h {
                 if let Some(ch) = candle_glyph(candle_cell(bar, &scale, price_h, row)) {
                     let cell = &mut buf[(x, l.plot.y + to_u16(row))];
@@ -365,7 +369,10 @@ mod tests {
         assert_eq!(l.axis_x, 30);
         // Short area: no readout and no volume.
         let l = layout(Rect::new(0, 0, 40, 4)).unwrap();
-        assert_eq!((l.plot.height, l.volume.height, l.readout.height), (4, 0, 0));
+        assert_eq!(
+            (l.plot.height, l.volume.height, l.readout.height),
+            (4, 0, 0)
+        );
         assert_eq!(layout(Rect::new(0, 0, AXIS_WIDTH, 12)), None);
         assert_eq!(layout(Rect::new(0, 0, 40, 0)), None);
     }
@@ -455,8 +462,7 @@ mod tests {
         // Zero height.
         let area = Rect::new(0, 0, 40, 0);
         let mut buf = Buffer::empty(area);
-        CandleChart::new(&two_bars(), Timeframe::M1, ChartView::default())
-            .render(area, &mut buf);
+        CandleChart::new(&two_bars(), Timeframe::M1, ChartView::default()).render(area, &mut buf);
         // One plot column, tiny heights, and a crosshair outside the area.
         for h in 1..=6 {
             let ch = Some(Crosshair { col: 99, row: 99 });

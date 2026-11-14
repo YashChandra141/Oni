@@ -36,7 +36,13 @@ fn peeks_strategy() -> impl Strategy<Value = Vec<u32>> {
 fn bar_steps_strategy() -> impl Strategy<Value = Vec<(u32, u32, u32, u32, i64)>> {
     let step = prop_oneof![Just(0i64), Just(1), Just(1), Just(1), Just(2), Just(1500)];
     prop::collection::vec(
-        (1u32..=MAX_PRICE, 0u32..1000, 0u32..1000, 0u32..1_000_000, step),
+        (
+            1u32..=MAX_PRICE,
+            0u32..1000,
+            0u32..1000,
+            0u32..1_000_000,
+            step,
+        ),
         1..120,
     )
 }

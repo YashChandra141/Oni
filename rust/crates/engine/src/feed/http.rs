@@ -143,8 +143,7 @@ pub fn decode_chunked(mut rest: &[u8]) -> Result<Vec<u8>, HttpError> {
 
 /// Parses a complete response read until the connection closed.
 pub fn parse_response(raw: &[u8]) -> Result<Response, HttpError> {
-    let head_end =
-        find(raw, b"\r\n\r\n", 0).ok_or(HttpError::BadResponse("no end of headers"))?;
+    let head_end = find(raw, b"\r\n\r\n", 0).ok_or(HttpError::BadResponse("no end of headers"))?;
     let head = raw
         .get(..head_end)
         .ok_or(HttpError::BadResponse("no end of headers"))?;
@@ -282,7 +281,14 @@ mod tests {
         assert!(text.starts_with("GET /a/b?x=1&y=2 HTTP/1.1\r\nHost: api.coinbase.com\r\n"));
         assert!(text.ends_with("\r\n\r\n"));
         let lower = text.to_ascii_lowercase();
-        for forbidden in ["authorization", "cookie", "x-api", "jwt", "signature", "cb-access"] {
+        for forbidden in [
+            "authorization",
+            "cookie",
+            "x-api",
+            "jwt",
+            "signature",
+            "cb-access",
+        ] {
             assert!(!lower.contains(forbidden), "{forbidden}");
         }
         let names: Vec<&str> = text
@@ -292,7 +298,13 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            ["Host", "User-Agent", "Accept", "Cache-Control", "Connection"]
+            [
+                "Host",
+                "User-Agent",
+                "Accept",
+                "Cache-Control",
+                "Connection"
+            ]
         );
         assert!(text.contains("Connection: close\r\n"));
     }
@@ -309,7 +321,11 @@ mod tests {
             ("a.com", "/é"),
             ("a.com:443", "/"),
         ] {
-            assert_eq!(build_request(host, path), Err(HttpError::BadTarget), "{host:?} {path:?}");
+            assert_eq!(
+                build_request(host, path),
+                Err(HttpError::BadTarget),
+                "{host:?} {path:?}"
+            );
         }
     }
 
@@ -350,7 +366,10 @@ mod tests {
     #[test]
     fn chunked_errors() {
         assert_eq!(decode_chunked(b"0\r\n\r\n"), Ok(Vec::new()));
-        assert_eq!(decode_chunked(b"A\r\n0123456789\r\n0\r\n").unwrap().len(), 10);
+        assert_eq!(
+            decode_chunked(b"A\r\n0123456789\r\n0\r\n").unwrap().len(),
+            10
+        );
         for bad in [
             &b""[..],
             b"5\r\nhel",
@@ -361,7 +380,10 @@ mod tests {
             b"123456789\r\n",
             b"5\r\nhello\r\n",
         ] {
-            assert!(matches!(decode_chunked(bad), Err(HttpError::BadResponse(_))), "{bad:?}");
+            assert!(
+                matches!(decode_chunked(bad), Err(HttpError::BadResponse(_))),
+                "{bad:?}"
+            );
         }
         assert_eq!(decode_chunked(b"FFFFFFF\r\n"), Err(HttpError::TooLarge));
     }

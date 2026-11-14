@@ -381,7 +381,10 @@ mod tests {
         assert!(t.toggle(Indicator::Atr));
         assert!(t.wants_subpane());
         assert!(!t.toggle(Indicator::Atr));
-        assert_eq!(Indicator::ALL.map(Indicator::label), ["EMA", "VWAP", "BB", "RSI", "ATR"]);
+        assert_eq!(
+            Indicator::ALL.map(Indicator::label),
+            ["EMA", "VWAP", "BB", "RSI", "ATR"]
+        );
     }
 
     #[test]
@@ -438,7 +441,11 @@ mod tests {
     fn line_dots_are_one_per_column_with_none_skipped() {
         // 3 bars right-aligned in 10 columns: columns 7, 8, 9.
         let bars = [bar(0), bar(60), bar(120)];
-        let points = [point(0, Some(1_000.0)), point(60, None), point(120, Some(1_000.0))];
+        let points = [
+            point(0, Some(1_000.0)),
+            point(60, None),
+            point(120, Some(1_000.0)),
+        ];
         let dots = line_dots(&points, &bars, pick_ema, &SCALE, 10, 10);
         assert_eq!(dots, [Dot { x: 14, y: 0 }, Dot { x: 18, y: 0 }]);
         // A bar with no point at all is skipped too.
@@ -467,7 +474,11 @@ mod tests {
     #[test]
     fn a_gap_breaks_the_fill() {
         let bars = [bar(0), bar(60), bar(120)];
-        let points = [point(0, Some(1_000.0)), point(60, None), point(120, Some(0.0))];
+        let points = [
+            point(0, Some(1_000.0)),
+            point(60, None),
+            point(120, Some(0.0)),
+        ];
         let dots = line_dots(&points, &bars, pick_ema, &SCALE, 3, 10);
         assert_eq!(dots, [Dot { x: 0, y: 0 }, Dot { x: 4, y: 39 }]);
     }
@@ -511,10 +522,7 @@ mod tests {
             },
         });
         let mut t = Toggles::default();
-        assert_eq!(
-            legend_text(&s, &t),
-            "EMA 64000.50  VWAP 63990.00  RSI 55.3"
-        );
+        assert_eq!(legend_text(&s, &t), "EMA 64000.50  VWAP 63990.00  RSI 55.3");
         t.bollinger = true;
         t.atr = true;
         t.ema = false;
@@ -524,7 +532,10 @@ mod tests {
             legend_text(&s, &t),
             "BB 64100.00 64000.00 63900.00  ATR 12.34"
         );
-        assert_eq!(legend_text(&IndicatorSeries::default(), &Toggles::default()), "");
+        assert_eq!(
+            legend_text(&IndicatorSeries::default(), &Toggles::default()),
+            ""
+        );
         assert_eq!(format_ticks(f64::NAN), None);
         assert_eq!(format_ticks(1e30), None);
     }

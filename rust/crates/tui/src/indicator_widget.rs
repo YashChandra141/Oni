@@ -140,7 +140,12 @@ pub fn draw_subpane(
     if toggles.rsi {
         for value in [100.0, 70.0, 30.0, 0.0] {
             let text = format!("{value:.0}");
-            put_label(buf, label_x, area.y + percent_row(value, area.height), &text);
+            put_label(
+                buf,
+                label_x,
+                area.y + percent_row(value, area.height),
+                &text,
+            );
         }
     } else if let Some((min, max)) = atr_range {
         let top = format_ticks(max).unwrap_or_default();
@@ -182,7 +187,9 @@ mod tests {
     }
 
     fn is_braille(sym: &str) -> bool {
-        sym.chars().next().is_some_and(|c| ('\u{2800}'..='\u{28FF}').contains(&c))
+        sym.chars()
+            .next()
+            .is_some_and(|c| ('\u{2800}'..='\u{28FF}').contains(&c))
     }
 
     const SCALE: PriceScale = PriceScale { min: 0, max: 1_000 };
@@ -245,7 +252,9 @@ mod tests {
         let drawn = (0..5).filter(|y| is_braille(buf[(9, *y)].symbol())).count();
         assert_eq!(drawn, 3);
         assert_eq!(
-            (0..5).find(|y| is_braille(buf[(9, *y)].symbol())).map(|y| buf[(9, y)].style().fg),
+            (0..5)
+                .find(|y| is_braille(buf[(9, *y)].symbol()))
+                .map(|y| buf[(9, y)].style().fg),
             Some(Some(BOLLINGER_COLOR))
         );
     }
@@ -290,8 +299,20 @@ mod tests {
         assert!((0..6).all(|y| (0..30).all(|x| buf[(x, y)].symbol() == " ")));
         // Too narrow or zero height: no panic, nothing drawn.
         let mut narrow = Buffer::empty(Rect::new(0, 0, 8, 6));
-        draw_subpane(&mut narrow, Rect::new(0, 0, 8, 6), &[], &s, &Toggles::default());
-        draw_subpane(&mut buf, Rect::new(0, 0, 30, 0), &[], &s, &Toggles::default());
+        draw_subpane(
+            &mut narrow,
+            Rect::new(0, 0, 8, 6),
+            &[],
+            &s,
+            &Toggles::default(),
+        );
+        draw_subpane(
+            &mut buf,
+            Rect::new(0, 0, 30, 0),
+            &[],
+            &s,
+            &Toggles::default(),
+        );
         assert!((0..6).all(|y| (0..8).all(|x| narrow[(x, y)].symbol() == " ")));
     }
 

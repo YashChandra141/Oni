@@ -82,7 +82,11 @@ pub fn generate_secret() -> Option<[u8; SECRET_BYTES]> {
 /// `ABCD2345` shown as `ABCD-2345`. Any other length is shown unchanged.
 pub fn format_code(code: &str) -> String {
     if code.len() == 8 && code.is_ascii() {
-        format!("{}-{}", code.get(..4).unwrap_or(""), code.get(4..).unwrap_or(""))
+        format!(
+            "{}-{}",
+            code.get(..4).unwrap_or(""),
+            code.get(4..).unwrap_or("")
+        )
     } else {
         code.to_owned()
     }
@@ -174,8 +178,8 @@ impl PairingState {
                 remaining_secs,
                 ..
             } => {
-                let change =
-                    expires_at.saturating_sub(remaining_secs.saturating_sub(1).saturating_mul(1000));
+                let change = expires_at
+                    .saturating_sub(remaining_secs.saturating_sub(1).saturating_mul(1000));
                 Some((*next_poll).min(change))
             }
             _ => None,
@@ -366,9 +370,7 @@ pub fn interpret_poll(response: &Result<Response, HttpError>, server: &str) -> P
                 "pending" => PollResult::Pending,
                 "ok" => match (body.token, body.address, body.exp) {
                     (Some(token), Some(address), Some(exp)) if !token.is_empty() => {
-                        let account_id = body
-                            .account_id
-                            .unwrap_or_else(|| format!("w_{address}"));
+                        let account_id = body.account_id.unwrap_or_else(|| format!("w_{address}"));
                         PollResult::Ok(Box::new(StoredSession {
                             server: server.to_owned(),
                             token,
@@ -408,9 +410,8 @@ pub fn complete_sign_in(
 /// True for the key that opens the dialog, or retries from the expired or failed screen.
 pub fn is_pair_key(keymap: &Keymap, key: &KeyEvent) -> bool {
     key.kind == KeyEventKind::Press
-        && chord_from_crossterm(key).is_some_and(|chord| {
-            resolve(keymap, Context::Global, &chord) == Some(Action::AuthPair)
-        })
+        && chord_from_crossterm(key)
+            .is_some_and(|chord| resolve(keymap, Context::Global, &chord) == Some(Action::AuthPair))
 }
 
 /// True for Esc, which cancels the dialog.
@@ -451,12 +452,7 @@ async fn publish(tx: &mpsc::Sender<PairingMsg>, id: u64, state: &PairingState) -
     tx.send(PairingMsg { id, kind }).await.is_ok()
 }
 
-async fn drive(
-    target: Option<Target>,
-    server: String,
-    id: u64,
-    tx: mpsc::Sender<PairingMsg>,
-) {
+async fn drive(target: Option<Target>, server: String, id: u64, tx: mpsc::Sender<PairingMsg>) {
     let origin = Instant::now();
     let mut state = PairingState::Idle;
     state.apply(PairingEvent::Started);
@@ -520,14 +516,8 @@ async fn drive(
         if let Some(code) = due {
             // The secret goes only to the poll route.
             let body = serde_json::json!({ "code": code, "secret": secret_text }).to_string();
-            let response = http::request(
-                &target,
-                Method::Post,
-                "/auth/pair/poll",
-                None,
-                Some(&body),
-            )
-            .await;
+            let response =
+                http::request(&target, Method::Post, "/auth/pair/poll", None, Some(&body)).await;
             let now = elapsed_ms(origin);
             let event = match interpret_poll(&response, &server) {
                 PollResult::Ok(session) => {
@@ -609,7 +599,9 @@ mod tests {
     #[test]
     fn base64url_round_trips_through_the_test_decoder() {
         for len in 0..40_u8 {
-            let bytes: Vec<u8> = (0..len).map(|i| i.wrapping_mul(37).wrapping_add(11)).collect();
+            let bytes: Vec<u8> = (0..len)
+                .map(|i| i.wrapping_mul(37).wrapping_add(11))
+                .collect();
             assert_eq!(decode_base64url(&base64url(&bytes)), bytes, "len {len}");
         }
     }
@@ -645,7 +637,10 @@ mod tests {
             display_url("https://app.example.com/pair?code=ABCD2345"),
             "https://app.example.com/pair/?code=ABCD2345"
         );
-        assert_eq!(display_url("https://x/pair/?code=A"), "https://x/pair/?code=A");
+        assert_eq!(
+            display_url("https://x/pair/?code=A"),
+            "https://x/pair/?code=A"
+        );
         assert_eq!(format_countdown(0), "0:00");
         assert_eq!(format_countdown(272), "4:32");
         assert_eq!(format_countdown(300), "5:00");
@@ -733,8 +728,15 @@ mod tests {
             panic!("not showing");
         };
         assert_eq!(*next_poll, 7_100);
-        assert!(state.apply(PairingEvent::PollOk { address: "ADDR".into() }));
-        assert_eq!(state, PairingState::Done { address: "ADDR".into() });
+        assert!(state.apply(PairingEvent::PollOk {
+            address: "ADDR".into()
+        }));
+        assert_eq!(
+            state,
+            PairingState::Done {
+                address: "ADDR".into()
+            }
+        );
         assert!(!state.is_open());
         assert_eq!(state.next_wake(), None);
     }
@@ -873,21 +875,47 @@ mod tests {
                 2
             ))
         );
-        assert!(interpret_create(&reply(429, "{}")).unwrap_err().contains("too many"));
-        assert!(interpret_create(&reply(500, "")).unwrap_err().contains("500"));
+        assert!(
+            interpret_create(&reply(429, "{}"))
+                .unwrap_err()
+                .contains("too many")
+        );
+        assert!(
+            interpret_create(&reply(500, ""))
+                .unwrap_err()
+                .contains("500")
+        );
         assert!(interpret_create(&reply(200, "nope")).is_err());
         assert!(interpret_create(&Err(HttpError::Timeout)).is_err());
     }
 
     #[test]
     fn poll_answers_are_interpreted() {
-        assert_eq!(interpret_poll(&reply(200, r#"{"status":"pending"}"#), SERVER), PollResult::Pending);
-        assert_eq!(interpret_poll(&reply(404, r#"{"error":"not_found"}"#), SERVER), PollResult::NotFound);
-        assert_eq!(interpret_poll(&reply(429, "{}"), SERVER), PollResult::RateLimited);
-        assert!(matches!(interpret_poll(&reply(400, "{}"), SERVER), PollResult::Rejected(_)));
+        assert_eq!(
+            interpret_poll(&reply(200, r#"{"status":"pending"}"#), SERVER),
+            PollResult::Pending
+        );
+        assert_eq!(
+            interpret_poll(&reply(404, r#"{"error":"not_found"}"#), SERVER),
+            PollResult::NotFound
+        );
+        assert_eq!(
+            interpret_poll(&reply(429, "{}"), SERVER),
+            PollResult::RateLimited
+        );
+        assert!(matches!(
+            interpret_poll(&reply(400, "{}"), SERVER),
+            PollResult::Rejected(_)
+        ));
         assert_eq!(interpret_poll(&reply(503, ""), SERVER), PollResult::Retry);
-        assert_eq!(interpret_poll(&reply(200, "garbage"), SERVER), PollResult::Retry);
-        assert_eq!(interpret_poll(&Err(HttpError::Timeout), SERVER), PollResult::Retry);
+        assert_eq!(
+            interpret_poll(&reply(200, "garbage"), SERVER),
+            PollResult::Retry
+        );
+        assert_eq!(
+            interpret_poll(&Err(HttpError::Timeout), SERVER),
+            PollResult::Retry
+        );
         let ok = reply(
             200,
             r#"{"status":"ok","token":"v1.p.m","account_id":"w_ADDR","address":"ADDR","exp":1900000000}"#,
@@ -903,7 +931,10 @@ mod tests {
             }))
         );
         let incomplete = reply(200, r#"{"status":"ok","address":"ADDR"}"#);
-        assert!(matches!(interpret_poll(&incomplete, SERVER), PollResult::Rejected(_)));
+        assert!(matches!(
+            interpret_poll(&incomplete, SERVER),
+            PollResult::Rejected(_)
+        ));
     }
 
     // Req 48.1, 48.11
@@ -919,7 +950,12 @@ mod tests {
             exp: u64::MAX,
         };
         let (message, saved) = complete_sign_in(&session, Some(&store));
-        assert_eq!(message, ClientMessage::Authenticate { token: "v1.p.m".to_owned() });
+        assert_eq!(
+            message,
+            ClientMessage::Authenticate {
+                token: "v1.p.m".to_owned()
+            }
+        );
         assert_eq!(saved, Ok(()));
         assert_eq!(store.load(SERVER, 0), Some(session.clone()));
         assert_eq!(store.load("wss://other/ws", 0), None);
@@ -944,16 +980,33 @@ mod tests {
     fn p_opens_and_esc_cancels() {
         let keymap = Keymap::embedded().unwrap();
         let press = |c, m| key(c, m, KeyEventKind::Press);
-        assert!(is_pair_key(&keymap, &press(KeyCode::Char('p'), KeyModifiers::NONE)));
-        assert!(is_pair_key(&keymap, &press(KeyCode::Char('P'), KeyModifiers::SHIFT)));
-        assert!(!is_pair_key(&keymap, &press(KeyCode::Char('q'), KeyModifiers::NONE)));
+        assert!(is_pair_key(
+            &keymap,
+            &press(KeyCode::Char('p'), KeyModifiers::NONE)
+        ));
+        assert!(is_pair_key(
+            &keymap,
+            &press(KeyCode::Char('P'), KeyModifiers::SHIFT)
+        ));
         assert!(!is_pair_key(
             &keymap,
-            &key(KeyCode::Char('p'), KeyModifiers::NONE, KeyEventKind::Release)
+            &press(KeyCode::Char('q'), KeyModifiers::NONE)
+        ));
+        assert!(!is_pair_key(
+            &keymap,
+            &key(
+                KeyCode::Char('p'),
+                KeyModifiers::NONE,
+                KeyEventKind::Release
+            )
         ));
         assert!(is_cancel_key(&press(KeyCode::Esc, KeyModifiers::NONE)));
         assert!(!is_cancel_key(&press(KeyCode::Enter, KeyModifiers::NONE)));
-        assert!(!is_cancel_key(&key(KeyCode::Esc, KeyModifiers::NONE, KeyEventKind::Release)));
+        assert!(!is_cancel_key(&key(
+            KeyCode::Esc,
+            KeyModifiers::NONE,
+            KeyEventKind::Release
+        )));
     }
 
     // ---- driver against a mock HTTP server ----
@@ -1028,8 +1081,7 @@ mod tests {
         )
     }
 
-    const OK_REPLY: &str =
-        r#"{"status":"ok","token":"v1.p.m","account_id":"w_ADDR","address":"ADDR","exp":1900000000}"#;
+    const OK_REPLY: &str = r#"{"status":"ok","token":"v1.p.m","account_id":"w_ADDR","address":"ADDR","exp":1900000000}"#;
 
     async fn next(rx: &mut mpsc::Receiver<PairingMsg>) -> PairingMsg {
         tokio::time::timeout(Duration::from_secs(15), rx.recv())
@@ -1094,7 +1146,11 @@ mod tests {
 
     #[tokio::test]
     async fn the_driver_reports_expired_on_a_404() {
-        let (server, log) = mock(create_reply(), vec![(404, r#"{"error":"not_found"}"#.into())]).await;
+        let (server, log) = mock(
+            create_reply(),
+            vec![(404, r#"{"error":"not_found"}"#.into())],
+        )
+        .await;
         let (tx, mut rx) = mpsc::channel(32);
         let _handle = spawn(&server, 1, tx);
         loop {
@@ -1104,7 +1160,12 @@ mod tests {
                 PairingKind::SignedIn(_) => panic!("signed in on a 404"),
             }
         }
-        assert!(log.lock().unwrap().iter().any(|(p, _)| p == "/auth/pair/poll"));
+        assert!(
+            log.lock()
+                .unwrap()
+                .iter()
+                .any(|(p, _)| p == "/auth/pair/poll")
+        );
     }
 
     #[tokio::test]
@@ -1125,7 +1186,12 @@ mod tests {
             }
         }
         // It expired before the first poll was due.
-        assert!(log.lock().unwrap().iter().all(|(p, _)| p != "/auth/pair/poll"));
+        assert!(
+            log.lock()
+                .unwrap()
+                .iter()
+                .all(|(p, _)| p != "/auth/pair/poll")
+        );
     }
 
     #[tokio::test]
@@ -1147,18 +1213,30 @@ mod tests {
 
     #[tokio::test]
     async fn dropping_the_handle_cancels_the_pairing() {
-        let (server, log) = mock(create_reply(), vec![(200, r#"{"status":"pending"}"#.into())]).await;
+        let (server, log) = mock(
+            create_reply(),
+            vec![(200, r#"{"status":"pending"}"#.into())],
+        )
+        .await;
         let (tx, mut rx) = mpsc::channel(32);
         let handle = spawn(&server, 1, tx);
         // Wait for the code to show, then cancel before the first poll is due.
         loop {
-            if matches!(next(&mut rx).await.kind, PairingKind::State(PairingState::Showing { .. })) {
+            if matches!(
+                next(&mut rx).await.kind,
+                PairingKind::State(PairingState::Showing { .. })
+            ) {
                 break;
             }
         }
         drop(handle);
         tokio::time::sleep(Duration::from_millis(1_600)).await;
-        assert!(log.lock().unwrap().iter().all(|(p, _)| p != "/auth/pair/poll"));
+        assert!(
+            log.lock()
+                .unwrap()
+                .iter()
+                .all(|(p, _)| p != "/auth/pair/poll")
+        );
         // The task is gone, so the channel closes.
         assert!(rx.recv().await.is_none());
     }

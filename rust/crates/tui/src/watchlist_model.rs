@@ -211,8 +211,14 @@ mod tests {
     #[test]
     fn price_change_directions() {
         assert_eq!(price_change(Some(Price(1)), Some(Price(2))), Direction::Up);
-        assert_eq!(price_change(Some(Price(2)), Some(Price(1))), Direction::Down);
-        assert_eq!(price_change(Some(Price(2)), Some(Price(2))), Direction::Flat);
+        assert_eq!(
+            price_change(Some(Price(2)), Some(Price(1))),
+            Direction::Down
+        );
+        assert_eq!(
+            price_change(Some(Price(2)), Some(Price(2))),
+            Direction::Flat
+        );
         assert_eq!(price_change(None, Some(Price(2))), Direction::Flat);
         assert_eq!(price_change(Some(Price(2)), None), Direction::Flat);
         assert_eq!(price_change(None, None), Direction::Flat);
@@ -237,12 +243,18 @@ mod tests {
     #[test]
     fn venue_labels_match_the_web() {
         assert_eq!(venue_label(None, DataMode::Replay), "REPLAY");
-        assert_eq!(venue_label(Some(Venue::Backpack), DataMode::Replay), "REPLAY");
+        assert_eq!(
+            venue_label(Some(Venue::Backpack), DataMode::Replay),
+            "REPLAY"
+        );
         assert_eq!(
             venue_label(Some(Venue::Backpack), DataMode::Live),
             "LIVE · Backpack (USDC)"
         );
-        assert_eq!(venue_label(Some(Venue::Coinbase), DataMode::Live), "LIVE · Coinbase");
+        assert_eq!(
+            venue_label(Some(Venue::Coinbase), DataMode::Live),
+            "LIVE · Coinbase"
+        );
         assert_eq!(venue_label(None, DataMode::Live), "LIVE");
     }
 

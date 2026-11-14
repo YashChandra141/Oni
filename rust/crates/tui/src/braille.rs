@@ -136,7 +136,12 @@ mod tests {
         let area = Rect::new(2, 1, 4, 3);
         let mut buf = Buffer::empty(Rect::new(0, 0, 10, 6));
         // Dot x 5 is cell column 2, right dot column; dot y 9 is cell row 2, dot row 1.
-        draw_braille_line(&mut buf, &geometry(area), Color::Cyan, &[Dot { x: 5, y: 9 }]);
+        draw_braille_line(
+            &mut buf,
+            &geometry(area),
+            Color::Cyan,
+            &[Dot { x: 5, y: 9 }],
+        );
         assert_eq!(buf[(4, 3)].symbol(), "⠐");
     }
 
@@ -164,7 +169,14 @@ mod tests {
     fn dots_outside_the_plot_or_buffer_are_skipped() {
         let area = Rect::new(0, 0, 2, 2);
         let mut buf = Buffer::empty(Rect::new(0, 0, 5, 5));
-        let dots = [Dot { x: 4, y: 0 }, Dot { x: 0, y: 8 }, Dot { x: usize::MAX, y: 0 }];
+        let dots = [
+            Dot { x: 4, y: 0 },
+            Dot { x: 0, y: 8 },
+            Dot {
+                x: usize::MAX,
+                y: 0,
+            },
+        ];
         draw_braille_line(&mut buf, &geometry(area), Color::Green, &dots);
         assert!((0..5).all(|y| (0..5).all(|x| buf[(x, y)].symbol() == " ")));
         // A plot area larger than the buffer does not panic.

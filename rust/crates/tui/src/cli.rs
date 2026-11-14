@@ -11,11 +11,7 @@ use crate::http::{self, HttpError, Method, Target};
 pub const DEFAULT_SERVER_URL: &str = "wss://oni-server.onrender.com/ws";
 
 #[derive(Debug, Parser)]
-#[command(
-    name = "tui",
-    version,
-    about = "Oni: paper-trading terminal client"
-)]
+#[command(name = "tui", version, about = "Oni: paper-trading terminal client")]
 pub struct Cli {
     /// WebSocket URL of the Oni server (ws:// or wss://).
     #[arg(
@@ -88,9 +84,7 @@ pub async fn run_logout(store: &TokenStore, server: &str) -> String {
             "tui: the server answered HTTP {}; {local}. The token expires on its own.",
             r.status
         ),
-        Err(e) => format!(
-            "tui: server unreachable ({e}); {local}. The token expires on its own."
-        ),
+        Err(e) => format!("tui: server unreachable ({e}); {local}. The token expires on its own."),
     }
 }
 
@@ -200,9 +194,7 @@ mod tests {
     }
 
     /// Accepts one connection, records the request text, and answers with `reply`.
-    async fn mock_server(
-        reply: &'static str,
-    ) -> (String, tokio::task::JoinHandle<String>) {
+    async fn mock_server(reply: &'static str) -> (String, tokio::task::JoinHandle<String>) {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let ws_url = format!("ws://{}/ws", listener.local_addr().unwrap());
@@ -234,7 +226,10 @@ mod tests {
         store.save(&saved(&server)).unwrap();
         let message = run_logout(&store, &server).await;
         let request = request.await.unwrap();
-        assert!(request.starts_with("POST /auth/logout HTTP/1.1\r\n"), "{request}");
+        assert!(
+            request.starts_with("POST /auth/logout HTTP/1.1\r\n"),
+            "{request}"
+        );
         assert!(
             request.contains(&format!("Authorization: Bearer {TOKEN}\r\n")),
             "{request}"
@@ -268,7 +263,11 @@ mod tests {
         assert!(store.path().exists());
         assert!(message.contains("no saved sign-in"), "{message}");
         let empty = TokenStore::in_dir(tmp.0.join("none"));
-        assert!(run_logout(&empty, "ws://127.0.0.1:9/ws").await.contains("no saved"));
+        assert!(
+            run_logout(&empty, "ws://127.0.0.1:9/ws")
+                .await
+                .contains("no saved")
+        );
     }
 
     #[test]

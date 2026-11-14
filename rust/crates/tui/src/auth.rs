@@ -73,18 +73,13 @@ impl Platform {
 /// The per-user config directory, from an injected environment lookup. Windows: `%APPDATA%`.
 /// macOS: `$HOME/Library/Application Support`. Otherwise `$XDG_CONFIG_HOME` (when absolute and
 /// non-empty) or `$HOME/.config`. `None` when the needed variable is missing or empty.
-pub fn config_dir_for(
-    platform: Platform,
-    env: &dyn Fn(&str) -> Option<String>,
-) -> Option<PathBuf> {
+pub fn config_dir_for(platform: Platform, env: &dyn Fn(&str) -> Option<String>) -> Option<PathBuf> {
     let get = |name: &str| env(name).filter(|v| !v.is_empty());
     match platform {
         Platform::Windows => get("APPDATA").map(PathBuf::from),
-        Platform::MacOs => get("HOME").map(|h| {
-            PathBuf::from(h)
-                .join("Library")
-                .join("Application Support")
-        }),
+        Platform::MacOs => {
+            get("HOME").map(|h| PathBuf::from(h).join("Library").join("Application Support"))
+        }
         Platform::Other => get("XDG_CONFIG_HOME")
             .map(PathBuf::from)
             .filter(|p| p.is_absolute())
@@ -225,10 +220,8 @@ pub mod test_support {
             let nanos = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map_or(0, |d| d.subsec_nanos());
-            let dir = std::env::temp_dir().join(format!(
-                "ht-tui-test-{}-{n}-{nanos}",
-                std::process::id()
-            ));
+            let dir = std::env::temp_dir()
+                .join(format!("ht-tui-test-{}-{n}-{nanos}", std::process::id()));
             Self(dir)
         }
     }
@@ -401,7 +394,10 @@ mod tests {
             session_token(false, Some(&store), SERVER, 1_000).as_deref(),
             Some("v1.payload.mac")
         );
-        assert_eq!(session_token(false, Some(&store), "wss://x/ws", 1_000), None);
+        assert_eq!(
+            session_token(false, Some(&store), "wss://x/ws", 1_000),
+            None
+        );
         assert_eq!(session_token(false, None, SERVER, 1_000), None);
         // Expired: no token, and the file goes away.
         assert_eq!(session_token(false, Some(&store), SERVER, 2_000), None);

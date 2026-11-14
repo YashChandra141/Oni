@@ -213,7 +213,10 @@ proptest! {
 #[test]
 fn p33_i64_max_boundary_is_exact() {
     assert_eq!(
-        to_ticks(&fmt_scaled(i64::MAX as u128, PRICE_DECIMALS), PRICE_DECIMALS),
+        to_ticks(
+            &fmt_scaled(i64::MAX as u128, PRICE_DECIMALS),
+            PRICE_DECIMALS
+        ),
         Ok(Price(i64::MAX))
     );
     assert_eq!(

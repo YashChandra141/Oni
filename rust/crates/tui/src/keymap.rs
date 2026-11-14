@@ -167,9 +167,33 @@ fn modifier_index(lower: &str) -> Option<usize> {
 }
 
 const NAMED_KEYS: [&str; 27] = [
-    "Up", "Down", "Left", "Right", "Enter", "Escape", "Tab", "Backspace", "Delete", "Insert",
-    "Home", "End", "PageUp", "PageDown", "Space", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8",
-    "F9", "F10", "F11", "F12",
+    "Up",
+    "Down",
+    "Left",
+    "Right",
+    "Enter",
+    "Escape",
+    "Tab",
+    "Backspace",
+    "Delete",
+    "Insert",
+    "Home",
+    "End",
+    "PageUp",
+    "PageDown",
+    "Space",
+    "F1",
+    "F2",
+    "F3",
+    "F4",
+    "F5",
+    "F6",
+    "F7",
+    "F8",
+    "F9",
+    "F10",
+    "F11",
+    "F12",
 ];
 
 /// Lower-case alias to canonical named key, including browser `KeyboardEvent.key` names.
@@ -407,8 +431,8 @@ impl<'de> Visitor<'de> for RawVisitor {
 /// identical raw keys. Every error names the context and the key it concerns. Messages match
 /// `loadKeymap` in `shared/keymap.ts`.
 pub fn load_keymap(text: &str) -> Result<Keymap, Vec<String>> {
-    let raw: Raw = serde_json::from_str(text)
-        .map_err(|e| vec![format!("keymap: invalid JSON: {e}")])?;
+    let raw: Raw =
+        serde_json::from_str(text).map_err(|e| vec![format!("keymap: invalid JSON: {e}")])?;
     let Raw::Object(fields) = raw else {
         return Err(vec!["keymap: expected a JSON object".to_owned()]);
     };
@@ -452,7 +476,9 @@ pub fn load_keymap(text: &str) -> Result<Keymap, Vec<String>> {
             continue;
         };
         let Raw::Object(pairs) = bindings else {
-            errors.push(format!("context \"{ctx_name}\": bindings must be an object"));
+            errors.push(format!(
+                "context \"{ctx_name}\": bindings must be an object"
+            ));
             continue;
         };
         if std::mem::replace(&mut seen_contexts[ctx.index()], true) {
@@ -532,9 +558,18 @@ mod tests {
     #[test]
     fn embedded_keymap_loads() {
         let keymap = embedded();
-        assert_eq!(resolve(&keymap, Context::Global, "B"), Some(Action::OrderBuy));
-        assert_eq!(resolve(&keymap, Context::Global, "P"), Some(Action::AuthPair));
-        assert_eq!(resolve(&keymap, Context::Global, "Q"), Some(Action::AppQuit));
+        assert_eq!(
+            resolve(&keymap, Context::Global, "B"),
+            Some(Action::OrderBuy)
+        );
+        assert_eq!(
+            resolve(&keymap, Context::Global, "P"),
+            Some(Action::AuthPair)
+        );
+        assert_eq!(
+            resolve(&keymap, Context::Global, "Q"),
+            Some(Action::AppQuit)
+        );
         assert_eq!(
             resolve(&keymap, Context::Global, "Shift+Tab"),
             Some(Action::SymbolPrev)
@@ -599,7 +634,10 @@ mod tests {
     #[test]
     fn modifier_order_and_spelling_are_normalized() {
         assert_eq!(normalize_key("shift+tab").as_deref(), Some("Shift+Tab"));
-        assert_eq!(normalize_key("Shift+Ctrl+x").as_deref(), Some("Ctrl+Shift+X"));
+        assert_eq!(
+            normalize_key("Shift+Ctrl+x").as_deref(),
+            Some("Ctrl+Shift+X")
+        );
         assert_eq!(
             normalize_key("control+alt+Delete").as_deref(),
             Some("Ctrl+Alt+Delete")
@@ -659,12 +697,30 @@ mod tests {
     #[test]
     fn crossterm_chars_and_shift() {
         let chord = |code, mods| chord_from_crossterm(&press(code, mods));
-        assert_eq!(chord(KeyCode::Char('q'), KeyModifiers::NONE).as_deref(), Some("Q"));
-        assert_eq!(chord(KeyCode::Char('Q'), KeyModifiers::SHIFT).as_deref(), Some("Q"));
-        assert_eq!(chord(KeyCode::Char(':'), KeyModifiers::SHIFT).as_deref(), Some(":"));
-        assert_eq!(chord(KeyCode::Char('+'), KeyModifiers::NONE).as_deref(), Some("+"));
-        assert_eq!(chord(KeyCode::Char('1'), KeyModifiers::NONE).as_deref(), Some("1"));
-        assert_eq!(chord(KeyCode::Char(' '), KeyModifiers::NONE).as_deref(), Some("Space"));
+        assert_eq!(
+            chord(KeyCode::Char('q'), KeyModifiers::NONE).as_deref(),
+            Some("Q")
+        );
+        assert_eq!(
+            chord(KeyCode::Char('Q'), KeyModifiers::SHIFT).as_deref(),
+            Some("Q")
+        );
+        assert_eq!(
+            chord(KeyCode::Char(':'), KeyModifiers::SHIFT).as_deref(),
+            Some(":")
+        );
+        assert_eq!(
+            chord(KeyCode::Char('+'), KeyModifiers::NONE).as_deref(),
+            Some("+")
+        );
+        assert_eq!(
+            chord(KeyCode::Char('1'), KeyModifiers::NONE).as_deref(),
+            Some("1")
+        );
+        assert_eq!(
+            chord(KeyCode::Char(' '), KeyModifiers::NONE).as_deref(),
+            Some("Space")
+        );
         assert_eq!(
             chord(KeyCode::Char(' '), KeyModifiers::SHIFT).as_deref(),
             Some("Shift+Space")
@@ -674,7 +730,11 @@ mod tests {
             Some("Ctrl+C")
         );
         assert_eq!(
-            chord(KeyCode::Char('x'), KeyModifiers::ALT | KeyModifiers::CONTROL).as_deref(),
+            chord(
+                KeyCode::Char('x'),
+                KeyModifiers::ALT | KeyModifiers::CONTROL
+            )
+            .as_deref(),
             Some("Ctrl+Alt+X")
         );
         assert_eq!(
@@ -687,14 +747,38 @@ mod tests {
     #[test]
     fn crossterm_named_keys() {
         let chord = |code, mods| chord_from_crossterm(&press(code, mods));
-        assert_eq!(chord(KeyCode::Up, KeyModifiers::NONE).as_deref(), Some("Up"));
-        assert_eq!(chord(KeyCode::Left, KeyModifiers::NONE).as_deref(), Some("Left"));
-        assert_eq!(chord(KeyCode::Esc, KeyModifiers::NONE).as_deref(), Some("Escape"));
-        assert_eq!(chord(KeyCode::Enter, KeyModifiers::NONE).as_deref(), Some("Enter"));
-        assert_eq!(chord(KeyCode::Delete, KeyModifiers::NONE).as_deref(), Some("Delete"));
-        assert_eq!(chord(KeyCode::PageUp, KeyModifiers::NONE).as_deref(), Some("PageUp"));
-        assert_eq!(chord(KeyCode::F(1), KeyModifiers::NONE).as_deref(), Some("F1"));
-        assert_eq!(chord(KeyCode::F(12), KeyModifiers::NONE).as_deref(), Some("F12"));
+        assert_eq!(
+            chord(KeyCode::Up, KeyModifiers::NONE).as_deref(),
+            Some("Up")
+        );
+        assert_eq!(
+            chord(KeyCode::Left, KeyModifiers::NONE).as_deref(),
+            Some("Left")
+        );
+        assert_eq!(
+            chord(KeyCode::Esc, KeyModifiers::NONE).as_deref(),
+            Some("Escape")
+        );
+        assert_eq!(
+            chord(KeyCode::Enter, KeyModifiers::NONE).as_deref(),
+            Some("Enter")
+        );
+        assert_eq!(
+            chord(KeyCode::Delete, KeyModifiers::NONE).as_deref(),
+            Some("Delete")
+        );
+        assert_eq!(
+            chord(KeyCode::PageUp, KeyModifiers::NONE).as_deref(),
+            Some("PageUp")
+        );
+        assert_eq!(
+            chord(KeyCode::F(1), KeyModifiers::NONE).as_deref(),
+            Some("F1")
+        );
+        assert_eq!(
+            chord(KeyCode::F(12), KeyModifiers::NONE).as_deref(),
+            Some("F12")
+        );
         assert_eq!(chord(KeyCode::F(13), KeyModifiers::NONE), None);
         assert_eq!(chord(KeyCode::F(0), KeyModifiers::NONE), None);
         assert_eq!(chord(KeyCode::Null, KeyModifiers::NONE), None);
@@ -771,7 +855,11 @@ mod tests {
 
     #[test]
     fn rejects_invalid_json_non_object_and_wrong_version() {
-        assert!(errors_of("{").first().is_some_and(|e| e.starts_with("keymap: invalid JSON:")));
+        assert!(
+            errors_of("{")
+                .first()
+                .is_some_and(|e| e.starts_with("keymap: invalid JSON:"))
+        );
         assert_eq!(errors_of("null"), ["keymap: expected a JSON object"]);
         assert_eq!(errors_of("[]"), ["keymap: expected a JSON object"]);
         assert_eq!(
@@ -861,7 +949,9 @@ mod tests {
             [r#"context "global": key "b" duplicates "B" (both normalize to "B")"#]
         );
         assert_eq!(
-            errors_of(r#"{"version":1,"contexts":{"orders":{"Up":"orders.up","ArrowUp":"orders.down"}}}"#),
+            errors_of(
+                r#"{"version":1,"contexts":{"orders":{"Up":"orders.up","ArrowUp":"orders.down"}}}"#
+            ),
             [r#"context "orders": key "ArrowUp" duplicates "Up" (both normalize to "Up")"#]
         );
     }
@@ -870,7 +960,9 @@ mod tests {
     #[test]
     fn rejects_identical_raw_keys_in_one_context() {
         assert_eq!(
-            errors_of(r#"{"version":1,"contexts":{"dialog":{"Y":"dialog.confirm","Y":"dialog.cancel"}}}"#),
+            errors_of(
+                r#"{"version":1,"contexts":{"dialog":{"Y":"dialog.confirm","Y":"dialog.cancel"}}}"#
+            ),
             [r#"context "dialog": key "Y" duplicates "Y" (both normalize to "Y")"#]
         );
     }
@@ -897,7 +989,10 @@ mod tests {
         )
         .expect("valid keymap");
         assert_eq!(resolve(&keymap, Context::Book, "Up"), Some(Action::BookUp));
-        assert_eq!(resolve(&keymap, Context::Orders, "up"), Some(Action::OrdersUp));
+        assert_eq!(
+            resolve(&keymap, Context::Orders, "up"),
+            Some(Action::OrdersUp)
+        );
     }
 
     #[test]
@@ -913,10 +1008,19 @@ mod tests {
     #[test]
     fn focused_context_wins_over_global_then_falls_back_to_global() {
         let keymap = embedded();
-        assert_eq!(resolve(&keymap, Context::Book, "Enter"), Some(Action::BookPrefill));
-        assert_eq!(resolve(&keymap, Context::Dialog, "Enter"), Some(Action::DialogConfirm));
+        assert_eq!(
+            resolve(&keymap, Context::Book, "Enter"),
+            Some(Action::BookPrefill)
+        );
+        assert_eq!(
+            resolve(&keymap, Context::Dialog, "Enter"),
+            Some(Action::DialogConfirm)
+        );
         assert_eq!(resolve(&keymap, Context::Book, "B"), Some(Action::OrderBuy));
-        assert_eq!(resolve(&keymap, Context::Chart, "1"), Some(Action::Timeframe1m));
+        assert_eq!(
+            resolve(&keymap, Context::Chart, "1"),
+            Some(Action::Timeframe1m)
+        );
         assert_eq!(resolve(&keymap, Context::Global, "Enter"), None);
         assert_eq!(resolve(&keymap, Context::Global, "Z"), None);
         assert_eq!(resolve(&keymap, Context::Global, ""), None);
@@ -928,16 +1032,31 @@ mod tests {
             r#"{"version":1,"contexts":{"global":{"B":"order.buy"},"dialog":{"B":"dialog.cancel"}}}"#,
         )
         .expect("valid keymap");
-        assert_eq!(resolve(&keymap, Context::Dialog, "b"), Some(Action::DialogCancel));
-        assert_eq!(resolve(&keymap, Context::Chart, "b"), Some(Action::OrderBuy));
+        assert_eq!(
+            resolve(&keymap, Context::Dialog, "b"),
+            Some(Action::DialogCancel)
+        );
+        assert_eq!(
+            resolve(&keymap, Context::Chart, "b"),
+            Some(Action::OrderBuy)
+        );
     }
 
     #[test]
     fn command_focus_uses_only_command_bindings_so_letters_type_text() {
         let keymap = embedded();
-        assert_eq!(resolve(&keymap, Context::Command, "Enter"), Some(Action::CommandSubmit));
-        assert_eq!(resolve(&keymap, Context::Command, "Escape"), Some(Action::CommandBlur));
-        assert_eq!(resolve(&keymap, Context::Command, "Up"), Some(Action::HistoryPrev));
+        assert_eq!(
+            resolve(&keymap, Context::Command, "Enter"),
+            Some(Action::CommandSubmit)
+        );
+        assert_eq!(
+            resolve(&keymap, Context::Command, "Escape"),
+            Some(Action::CommandBlur)
+        );
+        assert_eq!(
+            resolve(&keymap, Context::Command, "Up"),
+            Some(Action::HistoryPrev)
+        );
         assert_eq!(resolve(&keymap, Context::Command, "B"), None);
         assert_eq!(resolve(&keymap, Context::Command, "q"), None);
         assert_eq!(resolve(&keymap, Context::Command, "1"), None);
@@ -962,7 +1081,12 @@ mod tests {
         &["Enter", "enter", "Return"],
         &["Tab", "tab"],
         &["Shift+Tab", "shift+tab", "SHIFT+Tab"],
-        &["Ctrl+Shift+X", "Shift+Ctrl+x", "ctrl+shift+X", "control+Shift+x"],
+        &[
+            "Ctrl+Shift+X",
+            "Shift+Ctrl+x",
+            "ctrl+shift+X",
+            "control+Shift+x",
+        ],
         &["Shift+B", "shift+b"],
         // `P` opens the pairing dialog (`auth.pair`, Task 21.2); `Action::ALL` already
         // includes `AuthPair`, so this lets P24 bind and resolve it.

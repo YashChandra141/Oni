@@ -131,7 +131,11 @@ impl PriceScale {
     pub fn from_bars(bars: &[Bar]) -> Option<Self> {
         let low = bars.iter().map(|b| b.low.0).min()?;
         let high = bars.iter().map(|b| b.high.0).max()?;
-        let (low, high) = if low <= high { (low, high) } else { (high, low) };
+        let (low, high) = if low <= high {
+            (low, high)
+        } else {
+            (high, low)
+        };
         let range = i128::from(high) - i128::from(low);
         let margin = (range / 50).max(1);
         let min = clamp_i64(i128::from(low) - margin);
@@ -181,8 +185,8 @@ pub fn price_at_row(row: usize, scale: &PriceScale, height: usize) -> Price {
         return Price(scale.max);
     }
     let row = row.min(height - 1);
-    let step = i128::try_from(row).unwrap_or(0) * scale.range()
-        / i128::try_from(height - 1).unwrap_or(1);
+    let step =
+        i128::try_from(row).unwrap_or(0) * scale.range() / i128::try_from(height - 1).unwrap_or(1);
     Price(clamp_i64(i128::from(scale.max) - step))
 }
 
@@ -464,7 +468,13 @@ mod tests {
     fn scale_has_a_margin_and_never_a_zero_range() {
         let bars = [bar(0, 1_000, 2_000, 0, 1_500, 1)];
         let scale = PriceScale::from_bars(&bars).unwrap();
-        assert_eq!(scale, PriceScale { min: -40, max: 2_040 });
+        assert_eq!(
+            scale,
+            PriceScale {
+                min: -40,
+                max: 2_040
+            }
+        );
         let flat = [bar(0, 500, 500, 500, 500, 1)];
         let scale = PriceScale::from_bars(&flat).unwrap();
         assert_eq!(scale, PriceScale { min: 499, max: 501 });
@@ -551,7 +561,13 @@ mod tests {
         assert_eq!(format_time(1_798_761_600_000, Timeframe::H1), "01-01 00:00");
         assert_eq!(format_time(1_798_761_600_000, Timeframe::D1), "01-01 00:00");
         assert_eq!(format_time(1_798_761_600_000, Timeframe::M1), "00:00");
-        assert_eq!(format_time(1_798_761_600_000 + 13 * 3_600_000 + 7 * 60_000, Timeframe::M5), "13:07");
+        assert_eq!(
+            format_time(
+                1_798_761_600_000 + 13 * 3_600_000 + 7 * 60_000,
+                Timeframe::M5
+            ),
+            "13:07"
+        );
         assert_eq!(format_time(-60_000, Timeframe::H1), "12-31 23:59");
     }
 }

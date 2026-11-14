@@ -104,8 +104,9 @@ pub fn apply_edit(editor: &mut LineEditor, op: EditOp) -> bool {
 }
 
 fn has_command_modifier(key: &KeyEvent) -> bool {
-    key.modifiers
-        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER | KeyModifiers::META)
+    key.modifiers.intersects(
+        KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER | KeyModifiers::META,
+    )
 }
 
 fn edit_op_for_navigation(code: KeyCode) -> Option<EditOp> {
@@ -603,12 +604,26 @@ mod tests {
     fn dialog_keys_confirm_or_cancel_and_everything_else_is_swallowed() {
         let app = app_with_preview();
         assert_eq!(effective_focus(&app), Focus::Dialog);
-        assert_eq!(decide(&app, press(KeyCode::Enter)), Some(KeyCommand::DialogConfirm));
+        assert_eq!(
+            decide(&app, press(KeyCode::Enter)),
+            Some(KeyCommand::DialogConfirm)
+        );
         assert_eq!(decide(&app, ch('y')), Some(KeyCommand::DialogConfirm));
         assert_eq!(decide(&app, ch('Y')), Some(KeyCommand::DialogConfirm));
-        assert_eq!(decide(&app, press(KeyCode::Esc)), Some(KeyCommand::DialogCancel));
+        assert_eq!(
+            decide(&app, press(KeyCode::Esc)),
+            Some(KeyCommand::DialogCancel)
+        );
         assert_eq!(decide(&app, ch('n')), Some(KeyCommand::DialogCancel));
-        for key in [ch('b'), ch('s'), ch('f'), ch('x'), ch(':'), ch('q'), press(KeyCode::Tab)] {
+        for key in [
+            ch('b'),
+            ch('s'),
+            ch('f'),
+            ch('x'),
+            ch(':'),
+            ch('q'),
+            press(KeyCode::Tab),
+        ] {
             assert_eq!(decide(&app, key), Some(KeyCommand::Swallow), "{key:?}");
         }
         assert!(blocks_global_keys(&app));
@@ -622,13 +637,31 @@ mod tests {
         assert_eq!(effective_focus(&app), Focus::Command);
         assert!(blocks_global_keys(&app));
         // `q`, `b`, and `p` are text here, not quit, buy, or pairing.
-        assert_eq!(decide(&app, ch('q')), Some(KeyCommand::Command(EditOp::Insert('q'))));
-        assert_eq!(decide(&app, ch('b')), Some(KeyCommand::Command(EditOp::Insert('b'))));
-        assert_eq!(decide(&app, ch('P')), Some(KeyCommand::Command(EditOp::Insert('P'))));
-        assert_eq!(decide(&app, press(KeyCode::Enter)), Some(KeyCommand::Submit));
+        assert_eq!(
+            decide(&app, ch('q')),
+            Some(KeyCommand::Command(EditOp::Insert('q')))
+        );
+        assert_eq!(
+            decide(&app, ch('b')),
+            Some(KeyCommand::Command(EditOp::Insert('b')))
+        );
+        assert_eq!(
+            decide(&app, ch('P')),
+            Some(KeyCommand::Command(EditOp::Insert('P')))
+        );
+        assert_eq!(
+            decide(&app, press(KeyCode::Enter)),
+            Some(KeyCommand::Submit)
+        );
         assert_eq!(decide(&app, press(KeyCode::Esc)), Some(KeyCommand::Blur));
-        assert_eq!(decide(&app, press(KeyCode::Up)), Some(KeyCommand::HistoryPrev));
-        assert_eq!(decide(&app, press(KeyCode::Down)), Some(KeyCommand::HistoryNext));
+        assert_eq!(
+            decide(&app, press(KeyCode::Up)),
+            Some(KeyCommand::HistoryPrev)
+        );
+        assert_eq!(
+            decide(&app, press(KeyCode::Down)),
+            Some(KeyCommand::HistoryNext)
+        );
         assert_eq!(
             decide(&app, press(KeyCode::Backspace)),
             Some(KeyCommand::Command(EditOp::Backspace))
@@ -644,9 +677,18 @@ mod tests {
         let mut app = App::new("ws://x/ws");
         app.focus = Focus::Orders;
         assert_eq!(decide(&app, press(KeyCode::Up)), Some(KeyCommand::OrdersUp));
-        assert_eq!(decide(&app, press(KeyCode::Down)), Some(KeyCommand::OrdersDown));
-        assert_eq!(decide(&app, press(KeyCode::Delete)), Some(KeyCommand::CancelSelected));
-        assert_eq!(decide(&app, press(KeyCode::Esc)), Some(KeyCommand::LeaveOrders));
+        assert_eq!(
+            decide(&app, press(KeyCode::Down)),
+            Some(KeyCommand::OrdersDown)
+        );
+        assert_eq!(
+            decide(&app, press(KeyCode::Delete)),
+            Some(KeyCommand::CancelSelected)
+        );
+        assert_eq!(
+            decide(&app, press(KeyCode::Esc)),
+            Some(KeyCommand::LeaveOrders)
+        );
         // The global order keys still work, other keys fall through.
         assert_eq!(decide(&app, ch('b')), Some(KeyCommand::Buy));
         assert_eq!(decide(&app, ch('f')), Some(KeyCommand::AskFlatten));
@@ -661,11 +703,23 @@ mod tests {
     fn the_ticket_takes_quantity_characters() {
         let mut app = App::new("ws://x/ws");
         app.focus = Focus::Ticket;
-        assert_eq!(decide(&app, ch('5')), Some(KeyCommand::Ticket(EditOp::Insert('5'))));
-        assert_eq!(decide(&app, ch('.')), Some(KeyCommand::Ticket(EditOp::Insert('.'))));
+        assert_eq!(
+            decide(&app, ch('5')),
+            Some(KeyCommand::Ticket(EditOp::Insert('5')))
+        );
+        assert_eq!(
+            decide(&app, ch('.')),
+            Some(KeyCommand::Ticket(EditOp::Insert('.')))
+        );
         assert_eq!(decide(&app, ch('m')), Some(KeyCommand::TicketMarket));
-        assert_eq!(decide(&app, press(KeyCode::Enter)), Some(KeyCommand::TicketDone));
-        assert_eq!(decide(&app, press(KeyCode::Esc)), Some(KeyCommand::TicketDone));
+        assert_eq!(
+            decide(&app, press(KeyCode::Enter)),
+            Some(KeyCommand::TicketDone)
+        );
+        assert_eq!(
+            decide(&app, press(KeyCode::Esc)),
+            Some(KeyCommand::TicketDone)
+        );
         assert_eq!(decide(&app, ch('b')), Some(KeyCommand::Buy));
         assert_eq!(decide(&app, ch('q')), None);
     }
@@ -707,7 +761,10 @@ mod tests {
             panic!("expected command_text, got {:?}", outcome.messages[0]);
         };
         assert_eq!(text, "BUY BTC-USD 0.1 LMT 64000.00");
-        assert_eq!(app.account.last_request_id.as_deref(), Some(request_id.as_str()));
+        assert_eq!(
+            app.account.last_request_id.as_deref(),
+            Some(request_id.as_str())
+        );
         // The ticket is not typed, so the history stays empty.
         assert!(app.command.history.is_empty());
         // Sell at market: clear the limit price first.
@@ -751,11 +808,17 @@ mod tests {
         send_key(&mut app, ch('f'));
         let outcome = send_key(&mut app, press(KeyCode::Enter));
         assert_eq!(outcome.messages.len(), 1);
-        assert!(matches!(outcome.messages[0], ClientMessage::FlattenAll { .. }));
+        assert!(matches!(
+            outcome.messages[0],
+            ClientMessage::FlattenAll { .. }
+        ));
         assert_eq!(app.account.confirm, None);
         send_key(&mut app, ch('x'));
         let outcome = send_key(&mut app, ch('y'));
-        assert!(matches!(outcome.messages[0], ClientMessage::CancelAll { .. }));
+        assert!(matches!(
+            outcome.messages[0],
+            ClientMessage::CancelAll { .. }
+        ));
         // With no dialog open, Enter is not a dialog key.
         assert_eq!(decide(&app, press(KeyCode::Enter)), None);
     }
@@ -786,7 +849,11 @@ mod tests {
         );
         assert!(app.account.preview.is_none());
         // Nothing is left to confirm.
-        assert!(send_key(&mut app, press(KeyCode::Enter)).messages.is_empty());
+        assert!(
+            send_key(&mut app, press(KeyCode::Enter))
+                .messages
+                .is_empty()
+        );
     }
 
     // Req 31.1, 31.3
@@ -806,14 +873,21 @@ mod tests {
         assert_eq!(app.command.submitted.as_deref(), Some(request_id.as_str()));
         // A second identical submit gets a fresh request id and no second history entry.
         let outcome = send_key(&mut app, press(KeyCode::Enter));
-        let ClientMessage::CommandText { request_id: second, .. } = &outcome.messages[0] else {
+        let ClientMessage::CommandText {
+            request_id: second, ..
+        } = &outcome.messages[0]
+        else {
             panic!("expected command_text");
         };
         assert_ne!(second, request_id);
         assert_eq!(app.command.history.len(), 1);
         // Blank text sends nothing.
         app.command.editor.clear();
-        assert!(send_key(&mut app, press(KeyCode::Enter)).messages.is_empty());
+        assert!(
+            send_key(&mut app, press(KeyCode::Enter))
+                .messages
+                .is_empty()
+        );
         // History: Up shows the entry, Down restores the draft.
         type_text(&mut app, "SELL");
         send_key(&mut app, press(KeyCode::Up));
@@ -845,7 +919,10 @@ mod tests {
             }),
         );
         let error = app.account.parse_error.clone().unwrap();
-        assert_eq!((error.message.as_str(), error.position), ("unknown symbol XYZ", 4));
+        assert_eq!(
+            (error.message.as_str(), error.position),
+            ("unknown symbol XYZ", 4)
+        );
         assert_eq!(app.command.editor.text(), "BUY XYZ 1");
         // A preview for another request changes nothing.
         update(&mut app, preview_message("other", "p9", place_action()));
@@ -877,7 +954,11 @@ mod tests {
         }
         app.focus = Focus::Orders;
         // Nothing selected: Delete sends nothing.
-        assert!(send_key(&mut app, press(KeyCode::Delete)).messages.is_empty());
+        assert!(
+            send_key(&mut app, press(KeyCode::Delete))
+                .messages
+                .is_empty()
+        );
         send_key(&mut app, press(KeyCode::Down));
         assert_eq!(app.account.selected_order.as_deref(), Some("o-1"));
         send_key(&mut app, press(KeyCode::Down));
@@ -889,8 +970,8 @@ mod tests {
         // The cancel waits for the engine's ack: the row is still open.
         assert_eq!(app.account.orders.len(), 2);
         // Mouse: the cross of a row sends the cancel for that row.
-        let outcome = apply_order_mouse(&mut app, &MouseAction::CancelOrder("o-1".into()), 5)
-            .unwrap();
+        let outcome =
+            apply_order_mouse(&mut app, &MouseAction::CancelOrder("o-1".into()), 5).unwrap();
         assert!(matches!(
             &outcome.messages[0],
             ClientMessage::Cancel { order_id, .. } if order_id.as_str() == "o-1"

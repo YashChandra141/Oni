@@ -145,9 +145,9 @@ fn shorten(text: &str) -> String {
 }
 
 fn now_ms() -> i64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| {
-        i64::try_from(d.as_millis()).unwrap_or(i64::MAX)
-    })
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
 }
 
 fn log_drops(stats: &mut DropStats) {
@@ -352,7 +352,9 @@ mod tests {
             .collect();
         assert_eq!(
             delays,
-            [500, 1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000, 30_000]
+            [
+                500, 1_000, 2_000, 4_000, 8_000, 16_000, 30_000, 30_000, 30_000
+            ]
         );
         backoff.reset();
         assert_eq!(backoff.next_delay(), Duration::from_millis(500));
@@ -362,7 +364,10 @@ mod tests {
 
     #[test]
     fn candle_window_and_path() {
-        assert_eq!(candle_window(1_794_632_280, Timeframe::M1), (1_794_611_280, 1_794_632_280));
+        assert_eq!(
+            candle_window(1_794_632_280, Timeframe::M1),
+            (1_794_611_280, 1_794_632_280)
+        );
         assert_eq!(candle_window(100, Timeframe::D1), (0, 100));
         let path = candles_path("BTC-USD", 10, 20, Timeframe::M15);
         assert_eq!(
@@ -428,8 +433,10 @@ mod tests {
     // dropped connection reports feed_disconnected, reconnects, and resubscribes.
     #[tokio::test]
     async fn subscribes_forwards_and_reconnects_after_a_drop() {
-        let snapshot = sample(include_str!("../../tests/data/coinbase_level2_snapshot.json"))
-            .replace("ETH-USD", "BTC-USD");
+        let snapshot = sample(include_str!(
+            "../../tests/data/coinbase_level2_snapshot.json"
+        ))
+        .replace("ETH-USD", "BTC-USD");
         let trade = sample(include_str!("../../tests/data/coinbase_trade.json"));
 
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -443,7 +450,10 @@ mod tests {
             // First connection.
             let (mut ws, header_names) = accept(&listener).await;
             for forbidden in ["authorization", "cookie", "cb-access-key", "x-api-key"] {
-                assert!(!header_names.iter().any(|n| n == forbidden), "{header_names:?}");
+                assert!(
+                    !header_names.iter().any(|n| n == forbidden),
+                    "{header_names:?}"
+                );
             }
             expect_subscribes(&mut ws).await;
             ws.send(Message::text(snapshot.clone())).await.unwrap();
@@ -464,7 +474,13 @@ mod tests {
             );
             let second = market.recv().await.unwrap();
             assert!(
-                matches!(second, MarketMsg::Trade { side: Side::Buy, .. }),
+                matches!(
+                    second,
+                    MarketMsg::Trade {
+                        side: Side::Buy,
+                        ..
+                    }
+                ),
                 "{second:?}"
             );
 
@@ -475,7 +491,10 @@ mod tests {
                 panic!("expected an error event, got {event:?}");
             };
             assert_eq!(code, ErrorCode::FeedDisconnected);
-            assert!(message.starts_with("coinbase feed disconnected"), "{message}");
+            assert!(
+                message.starts_with("coinbase feed disconnected"),
+                "{message}"
+            );
 
             // Second connection: resubscribed, data flows again.
             let (mut ws, header_names) = accept(&listener).await;

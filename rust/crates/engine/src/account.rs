@@ -524,7 +524,9 @@ mod tests {
     fn position_event_carries_all_fields() {
         let mut a = PaperAccount::default();
         apply(&mut a, Side::Buy, 100, 10, 3);
-        let event = a.position_event(&acct("guest"), BTC, Some(Price(104))).unwrap();
+        let event = a
+            .position_event(&acct("guest"), BTC, Some(Price(104)))
+            .unwrap();
         assert_eq!(
             event,
             Event::Position {
@@ -544,7 +546,9 @@ mod tests {
         apply(&mut a, Side::Buy, 100, 10, 3);
         a.reset();
         assert_eq!(a, PaperAccount::default());
-        let event = a.position_event(&acct("guest"), BTC, Some(Price(104))).unwrap();
+        let event = a
+            .position_event(&acct("guest"), BTC, Some(Price(104)))
+            .unwrap();
         assert_eq!(
             event,
             Event::Position {
