@@ -51,7 +51,7 @@ describe("JSON Schema and Zod schema agree", () => {
 
   test("same enum values", () => {
     expect(INTENT_JSON_SCHEMA.properties.action.enum).toEqual([...IntentSchema.shape.action.options]);
-    expect(IntentSchema.shape.action.options).toEqual([...INTENT_ACTIONS]);
+    expect<readonly string[]>(IntentSchema.shape.action.options).toEqual([...INTENT_ACTIONS]);
     expect(INTENT_JSON_SCHEMA.properties.side.enum).toEqual([...INTENT_SIDES, null]);
     expect(INTENT_JSON_SCHEMA.properties.order_type.enum).toEqual([...INTENT_ORDER_TYPES, null]);
     expect([...IntentSchema.shape.side.unwrap().options]).toEqual([...INTENT_SIDES]);
@@ -92,7 +92,7 @@ describe("IntentSchema", () => {
       amount: { absolute: "0.1" },
       order_type: "limit",
       price: { relative_to_last_pct: -1 },
-    };
+    } as const;
     expect(IntentSchema.parse(order)).toEqual(order);
   });
 

@@ -86,7 +86,7 @@ export class MemoryJournalStore implements JournalStore {
     this.calls.listJournal += 1;
     this.#maybeFail();
     const rows = this.#select(q);
-    return mergeJournal(
+    return mergeJournal<JournalRow>(
       [
         rows.filter((r): r is OrderRow => r.type === "order"),
         rows.filter((r): r is FillRow => r.type === "fill"),

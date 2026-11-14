@@ -11,6 +11,8 @@ pub mod replay;
 #[cfg(test)]
 pub(crate) mod strategies;
 pub mod synth;
+#[cfg(test)]
+pub(crate) mod test_ws;
 pub mod venue;
 
 use protocol::{Level, Price, Qty, Side, TimeMs};

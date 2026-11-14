@@ -55,7 +55,7 @@ async function generateKeyPair(): Promise<KeyPair> {
 }
 
 async function sign(key: KeyPair, message: Uint8Array): Promise<Uint8Array> {
-  return new Uint8Array(await crypto.subtle.sign("Ed25519", key.privateKey, message));
+  return new Uint8Array(await crypto.subtle.sign("Ed25519", key.privateKey, new Uint8Array(message)));
 }
 
 /** A fresh nonce record for `fields`, issued for its address and ORIGIN, valid until NOW + 3 min. */

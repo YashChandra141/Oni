@@ -60,7 +60,7 @@ function b64urlEncode(bytes: Uint8Array): string {
 
 const B64URL = /^[A-Za-z0-9_-]*$/;
 
-function b64urlDecode(text: string): Uint8Array | null {
+function b64urlDecode(text: string): Uint8Array<ArrayBuffer> | null {
   if (!B64URL.test(text)) return null;
   return new Uint8Array(Buffer.from(text, "base64url"));
 }

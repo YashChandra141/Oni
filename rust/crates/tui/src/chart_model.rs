@@ -99,7 +99,7 @@ impl ChartView {
 
 /// The bars in the window: at most `min(view.visible, width)` bars, ending `offset_from_right`
 /// bars before the newest. One column per bar.
-pub fn visible_bars(bars: &[Bar], width: usize, view: &ChartView) -> &[Bar] {
+pub fn visible_bars<'a>(bars: &'a [Bar], width: usize, view: &ChartView) -> &'a [Bar] {
     let end = bars.len().saturating_sub(view.offset_from_right);
     let count = view.visible.min(width);
     let start = end.saturating_sub(count);

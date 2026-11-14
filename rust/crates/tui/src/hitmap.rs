@@ -218,7 +218,7 @@ mod tests {
                 let model = rects
                     .iter()
                     .enumerate()
-                    .filter(|(_, r)| {
+                    .rfind(|(_, r)| {
                         r.width > 0
                             && r.height > 0
                             && x >= r.x
@@ -226,7 +226,6 @@ mod tests {
                             && y >= r.y
                             && y < r.y + r.height
                     })
-                    .next_back()
                     .map(|(i, _)| i);
                 match map.resolve_rect(x, y) {
                     Some((rect, target)) => {

@@ -78,7 +78,7 @@ export async function makeWallet(): Promise<Wallet> {
   const raw = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));
   return {
     address: encodeBase58(raw),
-    sign: async (bytes) => new Uint8Array(await crypto.subtle.sign("Ed25519", pair.privateKey, bytes)),
+    sign: async (bytes) => new Uint8Array(await crypto.subtle.sign("Ed25519", pair.privateKey, new Uint8Array(bytes))),
   };
 }
 

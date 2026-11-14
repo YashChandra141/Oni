@@ -80,7 +80,7 @@ export function fromRejectedEvent(event: Extract<Event, { type: "order_rejected"
 }
 
 /** JSON-safe view: every bigint becomes a decimal string (design endpoint table). */
-export function rowToJson(row: Record<string, unknown>): Record<string, unknown> {
+export function rowToJson(row: object): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(row)) out[key] = typeof value === "bigint" ? value.toString() : value;
   return out;

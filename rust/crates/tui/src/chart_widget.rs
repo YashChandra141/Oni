@@ -5,10 +5,6 @@
 //! least 5 rows). The price axis is a column of `AXIS_WIDTH` cells at the right edge.
 //! All math is in `chart_model`; this file only draws.
 
-// `overlay` and `PlotGeometry` are the extension point for the braille indicator lines of
-// Task 9.3 and are not called yet.
-#![allow(dead_code)]
-
 use protocol::{Bar, Timeframe};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -43,14 +39,16 @@ pub struct PlotGeometry {
 }
 
 /// A hook that draws on top of the candles, for indicator lines (Task 9.3).
-pub type OverlayFn = dyn Fn(&mut Buffer, &PlotGeometry);
+/// The `+ 'a` bound lets the hook borrow frame-local data (an alias of a bare `dyn Fn` would
+/// default to `'static`).
+pub type OverlayFn<'a> = dyn Fn(&mut Buffer, &PlotGeometry) + 'a;
 
 pub struct CandleChart<'a> {
     bars: &'a [Bar],
     timeframe: Timeframe,
     view: ChartView,
     crosshair: Option<Crosshair>,
-    overlay: Option<&'a OverlayFn>,
+    overlay: Option<&'a OverlayFn<'a>>,
 }
 
 impl<'a> CandleChart<'a> {
@@ -71,7 +69,7 @@ impl<'a> CandleChart<'a> {
     }
 
     /// Registers a hook that draws after the candles and before the crosshair.
-    pub fn overlay(mut self, overlay: &'a OverlayFn) -> Self {
+    pub fn overlay(mut self, overlay: &'a OverlayFn<'a>) -> Self {
         self.overlay = Some(overlay);
         self
     }

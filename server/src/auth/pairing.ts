@@ -57,7 +57,7 @@ export function normalizePairingCode(text: string): string {
   return text.replace(/[-\s]/g, "").toUpperCase();
 }
 
-function decodeB64url(text: string): Uint8Array | null {
+function decodeB64url(text: string): Uint8Array<ArrayBuffer> | null {
   if (!B64URL.test(text)) return null;
   return new Uint8Array(Buffer.from(text, "base64url"));
 }

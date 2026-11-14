@@ -420,8 +420,9 @@ mod tests {
     use protocol::{Level, Price, Qty, Side};
     use serde_json::Value;
     use tokio::net::{TcpListener, TcpStream};
-    use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
     use tokio_tungstenite::{WebSocketStream, accept_hdr_async};
+
+    use crate::feed::test_ws::HeaderNames;
 
     const SOL_FIRST_ID: u64 = 4_686_272_930;
 
@@ -489,15 +490,9 @@ mod tests {
     async fn accept(listener: &TcpListener) -> (WebSocketStream<TcpStream>, Vec<String>) {
         let (socket, _) = listener.accept().await.unwrap();
         let mut names = Vec::new();
-        let ws = accept_hdr_async(
-            socket,
-            |request: &Request, response: Response| -> Result<Response, ErrorResponse> {
-                names.extend(request.headers().keys().map(|k| k.as_str().to_owned()));
-                Ok(response)
-            },
-        )
-        .await
-        .unwrap();
+        let ws = accept_hdr_async(socket, HeaderNames(&mut names))
+            .await
+            .unwrap();
         (ws, names)
     }
 

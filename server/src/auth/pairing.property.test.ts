@@ -24,7 +24,8 @@ function seededBytes(seed: number): (length: number) => Uint8Array {
 }
 
 async function verifierOf(secret: Uint8Array): Promise<string> {
-  return Buffer.from(new Uint8Array(await crypto.subtle.digest("SHA-256", secret))).toString("base64url");
+  // Copy into an ArrayBuffer-backed array: WebCrypto's BufferSource excludes SharedArrayBuffer.
+  return Buffer.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new Uint8Array(secret)))).toString("base64url");
 }
 
 type Op =

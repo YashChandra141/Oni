@@ -45,6 +45,9 @@ pub fn draw_overlays(
 ) {
     let width = usize::from(geometry.area.width);
     let rows = usize::from(geometry.area.height);
+    // The chart's own bar count wins: if the caller's window is wider than what the chart
+    // drew, the lines would otherwise be shifted against the candles.
+    let shown = &shown[shown.len().saturating_sub(geometry.count)..];
     let bands: [Pick; 3] = [pick_bb_upper, pick_bb_mid, pick_bb_lower];
     let vwap: [Pick; 1] = [pick_vwap];
     let ema: [Pick; 1] = [pick_ema];

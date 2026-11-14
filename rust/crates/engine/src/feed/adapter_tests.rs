@@ -26,7 +26,6 @@ use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 use tokio_tungstenite::accept_hdr_async;
 use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
 
 use super::MarketMsg;
 use super::backpack::{self, FetchError, SnapshotFetcher, SnapshotFuture};
@@ -36,6 +35,7 @@ use super::backpack_parse::{
 };
 use super::coinbase::{self, Backoff};
 use super::coinbase_parse::parse_message as parse_coinbase;
+use super::test_ws::HeaderNames;
 use super::venue::DropStats;
 
 /// Upper bound for every wait in this module.
@@ -118,15 +118,9 @@ async fn serve(listener: TcpListener, scripts: Vec<Script>, records: Records) {
     loop {
         let (socket, _) = listener.accept().await.unwrap();
         let mut names: Vec<String> = Vec::new();
-        let mut ws = accept_hdr_async(
-            socket,
-            |request: &Request, response: Response| -> Result<Response, ErrorResponse> {
-                names.extend(request.headers().keys().map(|k| k.as_str().to_owned()));
-                Ok(response)
-            },
-        )
-        .await
-        .unwrap();
+        let mut ws = accept_hdr_async(socket, HeaderNames(&mut names))
+            .await
+            .unwrap();
         let index = conn;
         conn += 1;
         records.lock().unwrap().push(ConnRecord {
