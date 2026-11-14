@@ -2,7 +2,16 @@
 
 import type { ReactNode } from "react";
 import { ChartPanelLoader } from "../components/ChartPanelLoader";
+import { CommandBar } from "../components/CommandBar";
+import { ConfirmDialog } from "../components/ConfirmDialog";
+import OpenOrdersPanel from "../components/OpenOrdersPanel";
 import OrderBookPanel from "../components/OrderBookPanel";
+import { OrderHotkeys } from "../components/OrderHotkeys";
+import OrderTicket from "../components/OrderTicket";
+import PnlPanel from "../components/PnlPanel";
+import PositionsPanel from "../components/PositionsPanel";
+import { PreviewDialog } from "../components/PreviewDialog";
+import { RejectionToast } from "../components/RejectionToast";
 import { StatusBar } from "../components/StatusBar";
 import TradesTape from "../components/TradesTape";
 import Watchlist from "../components/Watchlist";
@@ -12,8 +21,8 @@ import { useTerminalStore } from "../lib/store";
 import { TerminalSocketContext } from "../lib/terminalContext";
 import { useTerminalSocket } from "../lib/useTerminalSocket";
 
-// Terminal layout (Task 5.1) with the live connection (Task 5.3) and the chart (Task 5.4). The
-// panels match design.md "5. Web UI"; the other panels arrive in later tasks.
+// Terminal layout (Task 5.1) with the live connection (Task 5.3), the chart (Task 5.4), and order
+// entry and the account panels (Task 12.3). The panels match design.md "5. Web UI".
 
 function Panel({
   title,
@@ -39,7 +48,7 @@ export default function Home() {
 
   return (
     <TerminalSocketContext.Provider value={socket}>
-    <main className="grid h-screen grid-cols-[12rem_1fr_16rem] grid-rows-[auto_1fr_10rem_auto] gap-1 p-1">
+    <main className="grid h-screen grid-cols-[12rem_1fr_16rem] grid-rows-[auto_1fr_12rem_auto] gap-1 p-1">
       <StatusBar />
 
       <Panel title="Watchlist" className="row-span-2">
@@ -50,23 +59,23 @@ export default function Home() {
         <ChartPanelLoader />
       </Panel>
 
-      <Panel title="Order book">
-        <OrderBookPanel />
-      </Panel>
+      <div className="flex min-h-0 flex-col gap-1">
+        <Panel title="Order book" className="flex-1">
+          <OrderBookPanel />
+        </Panel>
+        <Panel title="Order ticket">
+          <OrderTicket />
+        </Panel>
+      </div>
 
       <Panel title="Positions / Orders" className="col-span-2">
         <div className="mb-1 text-xs text-amber" aria-label="Account">
           {account}
         </div>
-        <div className="grid grid-cols-2 gap-4 text-xs">
-          <div>
-            <div className="text-phosphor-dim">SYMBOL QTY AVG UPNL RPNL</div>
-            <div className="text-phosphor-faint">no positions</div>
-          </div>
-          <div>
-            <div className="text-phosphor-dim">ID SIDE TYPE QTY PRICE</div>
-            <div className="text-phosphor-faint">no open orders</div>
-          </div>
+        <div className="grid h-[calc(100%-1.25rem)] grid-cols-[1fr_1.4fr_11rem] gap-4 text-xs">
+          <PositionsPanel />
+          <OpenOrdersPanel />
+          <PnlPanel />
         </div>
       </Panel>
 
@@ -74,13 +83,12 @@ export default function Home() {
         <TradesTape />
       </Panel>
 
-      <footer aria-label="Command bar" className="crt-panel col-span-3 flex items-center gap-2 px-2 py-1">
-        <span className="text-amber">&gt;</span>
-        <span className="text-phosphor-faint">BUY BTC 0.1 LMT 64000</span>
-        <span className="crt-cursor" aria-hidden="true">
-          █
-        </span>
-      </footer>
+      <CommandBar />
+
+      <OrderHotkeys />
+      <PreviewDialog />
+      <ConfirmDialog />
+      <RejectionToast />
     </main>
     </TerminalSocketContext.Provider>
   );

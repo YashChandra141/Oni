@@ -30,6 +30,20 @@ Requirements 34.3, 34.4, 35, 36.3, 36.4.
 - [ ] Quit with Ctrl-C: same result as `q`.
 - [ ] Panic restore: temporarily add `panic!("manual check");` at the top of `fn draw` in `rust/crates/tui/src/ui.rs`, run the TUI, and confirm the terminal is restored first and the panic message is readable on the normal screen. **Remove the line afterwards.**
 
+## Order entry (Task 12.4)
+
+Use a terminal at least 120 columns by 45 rows for the panel strip, and one 60 columns by 20 rows
+for the narrow layout. Requirements 22, 28, 30, 31.
+
+- [ ] `:` focuses the command bar; typing `q` or `p` types text instead of quitting or pairing; Esc leaves it.
+- [ ] `BUY BTC 0.1 LMT 64000` then Enter shows the preview dialog with a countdown; Enter or Y confirms, Esc or N discards; the dialog closes by itself at 0 s.
+- [ ] `BUY XYZ 1` then Enter keeps the text and shows a caret under `XYZ` with the message below.
+- [ ] Up and Down in the command bar walk the history.
+- [ ] Book: Down, Enter fills the limit price and focuses the ticket quantity; type `0.1`, then B sends a preview; Esc leaves the ticket. `M` makes it a market order.
+- [ ] F and X open a yes/no dialog; only Enter or Y sends. Clicking Confirm and Cancel works too.
+- [ ] Click the orders panel, use Up, Down, Delete; click ✕ on a row; an order the server rejects shows a red reason for 10 s.
+- [ ] Switch accounts (pair a wallet, or sign out): positions, orders, and dialogs clear.
+
 ## Result log
 
 | Terminal | OS and version | Pass or fail | Notes |

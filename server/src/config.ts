@@ -94,6 +94,12 @@ const EXPECTED: Record<ConfigVar, string> = {
   NODE_ENV: '"development", "production", or "test"',
 };
 
+/**
+ * Default model for plain-English orders (Task 13.1). Verified as a listed model with
+ * structured outputs on the Responses API at https://developers.openai.com/api/docs/models/gpt-5.4-mini
+ */
+export const DEFAULT_OPENAI_MODEL = "gpt-5.4-mini";
+
 const DEFAULT_ENGINE_PATH = "rust/target/release/engine";
 const FIXTURE_NAME = /^[a-z0-9-]+\.jsonl$/;
 /** Replay speed bounds (Req 6.3, 6.4; `MIN_REPLAY_SPEED`/`MAX_REPLAY_SPEED` in the protocol crate). */
@@ -233,7 +239,8 @@ export class Config {
   /** Normalized web UI origin, always one of `allowedOrigins` (Req 16.9). SIWS domain and pair URL base. */
   readonly webUrl: string;
   readonly killSwitch: boolean;
-  readonly openaiModel: string | undefined;
+  /** OPENAI_MODEL, or DEFAULT_OPENAI_MODEL when unset. */
+  readonly openaiModel: string;
   readonly dbAdapter: "pg" | undefined;
   readonly nodeEnv: "development" | "production" | "test" | undefined;
   // Private, so the secrets are not own enumerable properties (spread, Object.keys,
@@ -250,7 +257,7 @@ export class Config {
     this.allowedOrigins = Object.freeze([...parsed.ALLOWED_ORIGINS]);
     this.webUrl = resolved.webUrl;
     this.killSwitch = parsed.KILL_SWITCH;
-    this.openaiModel = parsed.OPENAI_MODEL;
+    this.openaiModel = parsed.OPENAI_MODEL ?? DEFAULT_OPENAI_MODEL;
     this.dbAdapter = parsed.DB_ADAPTER;
     this.nodeEnv = parsed.NODE_ENV;
     this.#secrets = Object.freeze({
@@ -296,7 +303,7 @@ export class Config {
       allowedOrigins: [...this.allowedOrigins],
       webUrl: this.webUrl,
       killSwitch: this.killSwitch,
-      openaiModel: this.openaiModel ?? null,
+      openaiModel: this.openaiModel,
       dbAdapter: this.dbAdapter ?? null,
       nodeEnv: this.nodeEnv ?? null,
       openaiApiKey: mask(this.openaiApiKey),

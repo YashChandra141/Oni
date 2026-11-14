@@ -12,6 +12,7 @@
 //! because dropping the runtime waits for blocking tasks and the thread may still be parked
 //! in `read` when the user quits; a std thread is simply left behind and ends with the process.
 
+mod account_model;
 mod app;
 mod auth;
 mod book_model;
@@ -26,8 +27,12 @@ mod http;
 mod indicator_model;
 mod indicator_widget;
 mod keymap;
+mod line_editor;
 mod mouse;
 mod net;
+mod order_input;
+mod order_model;
+mod order_widget;
 mod pairing;
 mod pairing_dialog;
 mod tape_widget;
@@ -60,6 +65,7 @@ use crate::indicator_model::Indicator;
 use crate::keymap::{Action, Context, Keymap, chord_from_crossterm, resolve};
 use crate::mouse::{DragState, MouseAction, mouse_action};
 use crate::net::Subscription;
+use crate::order_input::Focus;
 use crate::pairing::{PairingEvent, PairingHandle, PairingKind, PairingMsg, PairingState};
 use crate::terminal::TerminalGuard;
 use crate::watchlist_model::{
@@ -176,8 +182,12 @@ async fn run_async(server: &str, keymap: &Keymap, guest: bool) -> io::Result<()>
         tokio::select! {
             key = input.recv() => match key {
                 // While the pairing dialog is open only Ctrl-C quits; `q` is ignored.
+                // `q` quits, except while a dialog or the command bar has the keys (Req 31.1).
                 Some(Ok(Event::Key(key)))
-                    if is_hard_exit(&key) || (!app.pairing.is_open() && is_quit(keymap, &key)) =>
+                    if is_hard_exit(&key)
+                        || (!app.pairing.is_open()
+                            && !order_input::blocks_global_keys(&app)
+                            && is_quit(keymap, &key)) =>
                 {
                     break;
                 }
@@ -193,6 +203,24 @@ async fn run_async(server: &str, keymap: &Keymap, guest: bool) -> io::Result<()>
                     {
                         start_pairing(&mut app, &mut pairing_task, &mut pairing_id, &pair_tx);
                         limiter.mark_dirty();
+                    }
+                }
+                // Order entry (Task 12.4): B, S, F, X, `:`, the dialog keys, the command bar, the
+                // ticket quantity, and the orders panel. The decision is pure; see order_input.
+                Some(Ok(Event::Key(key)))
+                    if key.kind != KeyEventKind::Release
+                        && order_input::decide_key(&app, keymap, &key).is_some() =>
+                {
+                    app.now_ms = wall_ms();
+                    let now = app.now_ms;
+                    if let Some(command) = order_input::decide_key(&app, keymap, &key) {
+                        let outcome = order_input::apply_key_command(&mut app, command, now);
+                        for message in outcome.messages {
+                            let _ = net_tx.try_send(message);
+                        }
+                        if outcome.changed {
+                            limiter.mark_dirty();
+                        }
                     }
                 }
                 Some(Ok(Event::Key(key)))
@@ -237,13 +265,12 @@ async fn run_async(server: &str, keymap: &Keymap, guest: bool) -> io::Result<()>
                         }
                     }
                 }
-                // TODO(6.5, 12.4): the chart, book, and indicator actions above are the
-                // only keymap actions handled besides `app.quit` and `auth.pair`. Dispatch the
-                // others once their panels and focus exist: 6.5 focus and mouse, 12.4 order
-                // entry and command bar.
+                // The order entry actions (B, S, F, X, `:`, the dialog, command, and orders
+                // keys) are decided by `order_input::decide_key` in the arm above.
                 // The mouse is ignored while the pairing dialog is open.
                 Some(Ok(Event::Mouse(mouse))) if !app.pairing.is_open() => {
                     if let Some(action) = mouse_action(&hits, &mut drag, mouse) {
+                        app.now_ms = wall_ms();
                         let (changed, messages) = apply_mouse_action(&mut app, action);
                         for message in messages {
                             let _ = net_tx.try_send(message);
@@ -268,6 +295,8 @@ async fn run_async(server: &str, keymap: &Keymap, guest: bool) -> io::Result<()>
                     if !guest && app::forgets_token(&event) && let Some(store) = &store {
                         let _ = store.delete();
                     }
+                    // The reducers read the clock from the app (preview deadlines, rejections).
+                    app.now_ms = wall_ms();
                     if app::update(&mut app, event) {
                         limiter.mark_dirty();
                     }
@@ -300,6 +329,11 @@ async fn run_async(server: &str, keymap: &Keymap, guest: bool) -> io::Result<()>
                 // The scheduled tick time, not the time after drawing, so consecutive
                 // checks are never closer than the interval and 33 ms ticks are not skipped.
                 let now = scheduled.into_std();
+                // A preview countdown second, an expired preview, or the end of the rejection
+                // line needs a redraw even though no event arrived.
+                if app.tick(wall_ms()) {
+                    limiter.mark_dirty();
+                }
                 if limiter.should_draw(now) {
                     terminal.draw(|frame| ui::draw(frame, &app, &mut hits))?;
                     limiter.drew(now);
@@ -428,6 +462,9 @@ fn apply_book_action(app: &mut App, action: Action) -> bool {
                 Some(price) => {
                     let symbol = app.symbol.clone();
                     app.prefill_limit(&symbol, price);
+                    // Keyboard flow: pick the price, then type the quantity (Req 30.2). Esc
+                    // gives the keys back.
+                    app.focus = Focus::Ticket;
                     true
                 }
                 None => false,
@@ -532,6 +569,12 @@ fn apply_symbol_action(app: &mut App, action: Action) -> (bool, Vec<ClientMessag
 /// Applies a mouse action to the chart. Returns whether the screen changed and the messages to
 /// send (Req 25.3, 25.4).
 fn apply_mouse_action(app: &mut App, action: MouseAction) -> (bool, Vec<ClientMessage>) {
+    // Order entry clicks (✕, ticket buttons, dialog buttons, panel focus). While a dialog is
+    // open it takes every action, so the dialog is modal for the mouse too (Task 12.4).
+    let now = app.now_ms;
+    if let Some(outcome) = order_input::apply_order_mouse(app, &action, now) {
+        return (outcome.changed, outcome.messages);
+    }
     match action {
         MouseAction::ZoomIn => app.chart_view.zoom_in(),
         MouseAction::ZoomOut => app.chart_view.zoom_out(),
@@ -563,8 +606,28 @@ fn apply_mouse_action(app: &mut App, action: MouseAction) -> (bool, Vec<ClientMe
             app.crosshair = None;
             return (changed, Vec::new());
         }
+        // Handled by `apply_order_mouse` above.
+        MouseAction::CancelOrder(_)
+        | MouseAction::SelectOrder(_)
+        | MouseAction::TicketBuy
+        | MouseAction::TicketSell
+        | MouseAction::FocusTicket
+        | MouseAction::FocusCommand
+        | MouseAction::FocusOrders
+        | MouseAction::DialogConfirm
+        | MouseAction::DialogCancel => return (false, Vec::new()),
     }
     (true, Vec::new())
+}
+
+/// The wall clock in epoch milliseconds. The reducers never read the clock themselves: the loop
+/// stores this in `App::now_ms` before each event, key, click, and tick.
+fn wall_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|elapsed| i64::try_from(elapsed.as_millis()).ok())
+        .unwrap_or(0)
 }
 
 /// Ctrl-C (which arrives as a key event in raw mode). Always quits, whatever the keymap says.
@@ -1002,5 +1065,105 @@ mod tests {
         assert_eq!(app.chart_view.offset_from_right, 0);
         let (changed, _) = apply_chart_action(&mut app, Action::AppQuit);
         assert!(!changed);
+    }
+}
+
+#[cfg(test)]
+mod order_routing_tests {
+    use super::*;
+    use crate::net::NetEvent;
+    use protocol::client::{OrderPreview, PreviewAction, ServerMessage};
+    use protocol::{OrderKind, Price, Qty, Side};
+
+    fn preview_app() -> App {
+        let mut app = App::new("ws://x/ws");
+        app.account.command_sent("r1");
+        app::update(
+            &mut app,
+            NetEvent::Message(ServerMessage::Preview {
+                request_id: "r1".into(),
+                preview: OrderPreview {
+                    preview_id: "p1".into(),
+                    text: "BUY BTC-USD 0.1".into(),
+                    action: PreviewAction::Place {
+                        symbol: "BTC-USD".into(),
+                        side: Side::Buy,
+                        qty: Qty(10_000_000),
+                        kind: OrderKind::Market,
+                    },
+                    expires_at: 30_000,
+                },
+            }),
+        );
+        app
+    }
+
+    // Req 31.1: letters are text in the command bar, so `q` must not quit.
+    #[test]
+    fn quit_is_blocked_by_the_command_bar_and_by_dialogs() {
+        let mut app = App::new("ws://x/ws");
+        assert!(!order_input::blocks_global_keys(&app));
+        app.focus = Focus::Command;
+        assert!(order_input::blocks_global_keys(&app));
+        app.focus = Focus::Orders;
+        assert!(!order_input::blocks_global_keys(&app));
+        assert!(order_input::blocks_global_keys(&preview_app()));
+    }
+
+    // Req 30.2: the keyboard flow is book price, then quantity.
+    #[test]
+    fn prefilling_from_the_book_hands_the_keys_to_the_ticket() {
+        let mut app = App::new("ws://x/ws");
+        app.apply_book(
+            "BTC-USD".to_owned(),
+            crate::book_model::BookState {
+                asks: vec![protocol::Level {
+                    price: Price(6_400_100),
+                    qty: Qty(1),
+                }],
+                bids: Vec::new(),
+                spread: None,
+                imbalance_bps: 0,
+                ts: 0,
+            },
+        );
+        assert!(apply_book_action(&mut app, Action::BookDown));
+        assert!(apply_book_action(&mut app, Action::BookPrefill));
+        assert_eq!(app.ticket.limit_price, Some(Price(6_400_100)));
+        assert_eq!(app.focus, Focus::Ticket);
+    }
+
+    // Req 22.2, 22.3: while a preview is open a click anywhere else does nothing.
+    #[test]
+    fn a_dialog_takes_the_mouse_and_its_buttons_send() {
+        let mut app = preview_app();
+        let (changed, messages) = apply_mouse_action(&mut app, MouseAction::ZoomIn);
+        assert!(!changed && messages.is_empty());
+        let (changed, messages) = apply_mouse_action(&mut app, MouseAction::DialogConfirm);
+        assert!(changed);
+        assert!(matches!(
+            messages.as_slice(),
+            [ClientMessage::Confirm { preview_id, .. }] if preview_id == "p1"
+        ));
+        // Without a dialog the chart actions work again.
+        let (changed, _) = apply_mouse_action(&mut app, MouseAction::ZoomIn);
+        assert!(changed);
+    }
+
+    #[test]
+    fn the_cross_of_an_order_row_sends_a_cancel() {
+        let mut app = App::new("ws://x/ws");
+        let (changed, messages) =
+            apply_mouse_action(&mut app, MouseAction::CancelOrder("o-1".into()));
+        assert!(changed);
+        assert!(matches!(
+            messages.as_slice(),
+            [ClientMessage::Cancel { order_id, .. }] if order_id.as_str() == "o-1"
+        ));
+    }
+
+    #[test]
+    fn the_wall_clock_is_after_2020() {
+        assert!(wall_ms() > 1_577_836_800_000);
     }
 }

@@ -17,6 +17,7 @@ import { RateLimiter } from "./auth/ratelimit.ts";
 import { createAuthRoutes, socketAddressFromEnv } from "./auth/routes.ts";
 import { TokenService } from "./auth/token.ts";
 import { type Config, type SecretSource, loadConfigOrExit, redactSecrets } from "./config.ts";
+import { PreviewStore } from "./commands/previews.ts";
 import { classifyPrismaError } from "./journal/classify.ts";
 import { createLazyPrismaStore } from "./journal/lazy.ts";
 import { fromFillEvent, fromRejectedEvent, fromRouterRecord } from "./journal/map.ts";
@@ -208,6 +209,17 @@ export function createApp(deps: AppDeps): App {
   });
   gateway.setRouter(router);
   gateway.onConnectionClosed((connectionId) => router.forgetConnection(connectionId));
+
+  // Command bar (Task 12.1, Req 21, 22.4, 46.4): pending previews are bound to a connection and
+  // its account, and are dropped on an account switch and on close.
+  const previews = new PreviewStore({ now });
+  gateway.setCommandBar({ previews, accounts, router });
+  gateway.onAccountChange((connectionId) => {
+    previews.discardForConnection(connectionId);
+  });
+  gateway.onConnectionClosed((connectionId) => {
+    previews.discardForConnection(connectionId);
+  });
 
   const stateRoutes =
     queue === undefined || deps.journalStore === undefined

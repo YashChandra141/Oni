@@ -1092,6 +1092,82 @@
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1794653688097
       }
+    ],
+    "12.1 Command_Parser and Command_Formatter; previews with expiry; confirm/discard handling": [
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794653869272
+      },
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794654406962
+      }
+    ],
+    "12.2 Property tests P20, P21, P22 and parser unit tests": [
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794654415301
+      },
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794654592838
+      }
+    ],
+    "12.3 Web: CommandBar with history, PreviewDialog, ConfirmDialog, Buy/Sell buttons, B/S/F/X, Positions, OpenOrders (✕), PnL, rejection display": [
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794654600092
+      },
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794655556329
+      }
+    ],
+    "12.4 TUI: the same panels and dialogs with keyboard and mouse; TestBackend tests": [
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794655564432
+      },
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794657263449
+      }
+    ],
+    "12. Command bar, order entry, and account panels": [
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794657263734
+      }
+    ],
+    "13.1 `LLM_Provider` interface, OpenAI structured-output implementation with 15 s timeout, model name verified": [
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794657275090
+      }
+    ],
+    "14.1 `server/src/mcp/main.ts` with the five tools, Zod argument validation, orders over the WS protocol": [
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794657275529
+      }
+    ],
+    "15.1 `Dockerfile` (rust:1.94-bookworm → oven/bun:1.4.4-debian, non-root)": [
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794657275869
+      }
     ]
   }
 }

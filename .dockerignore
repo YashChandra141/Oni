@@ -1,0 +1,15 @@
+.git
+.github
+.kiro
+**/node_modules
+rust/target
+web/*
+!web/package.json
+server/src/generated
+**/.env
+**/.env.*
+!**/.env.example
+*.log
+**/*.test.ts
+.DS_Store
+Thumbs.db

@@ -11,13 +11,14 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph};
 
 use crate::app::{App, ConnState};
-use crate::book_model::{BookRow, format_ticket, layout_rows};
+use crate::book_model::{BookRow, layout_rows};
 use crate::book_widget::BookWidget;
 use crate::chart_model::visible_bars;
 use crate::chart_widget::{AXIS_WIDTH, CandleChart, PlotGeometry};
 use crate::hitmap::{HitMap, HitTarget, PanelId};
 use crate::indicator_model::{Indicator, IndicatorSeries, legend_text, subpane_rows};
 use crate::indicator_widget::{draw_overlays, draw_subpane, indicator_color};
+use crate::order_widget;
 use crate::tape_widget::TapeWidget;
 use crate::watchlist_model::{Direction, WatchQuote, strip_segment, venue_label};
 use crate::watchlist_widget::{WatchlistWidget, direction_color, selected_style};
@@ -28,6 +29,17 @@ pub const TITLE: &str = "ONI";
 /// chart tests use widths up to 60, so they stay on the narrow layout (watchlist strip on row
 /// 0, chart panel below it).
 pub const WIDE_MIN_WIDTH: u16 = 100;
+
+/// Fewest terminal rows for a wide screen that reserves the bottom row for the command bar. The
+/// existing layout tests use 30 rows or fewer, so they keep their layouts. On shorter screens
+/// the bar appears over the bottom row only while it has the keyboard or shows an error.
+pub const BAR_MIN_HEIGHT_WIDE: u16 = 31;
+/// The same for narrow screens. The narrow layout tests use 14 rows or fewer.
+pub const BAR_MIN_HEIGHT_NARROW: u16 = 16;
+/// Fewest terminal rows for the Positions / Open orders / P&L strip (wide screens only).
+pub const STRIP_MIN_HEIGHT: u16 = 40;
+/// Rows of the strip: two borders, the header, and five rows.
+pub const STRIP_HEIGHT: u16 = 8;
 
 /// Timeframe buttons, left to right (Req 25.3).
 pub const TIMEFRAMES: [Timeframe; 5] = [
@@ -78,7 +90,50 @@ pub fn draw(frame: &mut Frame, app: &App, hits: &mut HitMap) {
 /// watchlist over the order book over the trades tape (Req 27.1–27.3). Narrower terminals show
 /// a one-line watchlist strip above the chart instead.
 fn draw_chart(frame: &mut Frame, app: &App, hits: &mut HitMap) {
-    let area = frame.area();
+    let full = frame.area();
+    let wide = full.width >= WIDE_MIN_WIDTH;
+    let bar_rows = order_widget::command_rows(app);
+    let min_height = if wide {
+        BAR_MIN_HEIGHT_WIDE
+    } else {
+        BAR_MIN_HEIGHT_NARROW
+    };
+    // The command bar is the bottom row (three rows under a parse error). On a short screen it
+    // is drawn over the bottom rows instead, but only while it is in use.
+    let reserved = full.height >= min_height;
+    let (rest, bar_area) = if reserved {
+        let [rest, bar] =
+            Layout::vertical([Constraint::Min(0), Constraint::Length(bar_rows)]).areas(full);
+        (rest, Some(bar))
+    } else if order_widget::bar_active(app) {
+        let rows = bar_rows.min(full.height);
+        let bar = Rect::new(full.x, full.y + (full.height - rows), full.width, rows);
+        (full, Some(bar))
+    } else {
+        (full, None)
+    };
+    // The strip sits above the bar on tall wide screens; elsewhere the bar shows a one-line
+    // P&L summary.
+    let with_strip = wide && reserved && full.height >= STRIP_MIN_HEIGHT;
+    let (main, strip_area) = if with_strip {
+        let [main, strip] =
+            Layout::vertical([Constraint::Min(0), Constraint::Length(STRIP_HEIGHT)]).areas(rest);
+        (main, Some(strip))
+    } else {
+        (rest, None)
+    };
+    draw_main(frame, app, hits, main);
+    if let Some(strip) = strip_area {
+        order_widget::draw_strip(frame, app, hits, strip);
+    }
+    if let Some(bar) = bar_area {
+        order_widget::draw_command_bar(frame, app, hits, bar, !with_strip);
+    }
+    order_widget::draw_dialogs(frame, app, hits);
+}
+
+/// The chart, watchlist, book, and tape inside `area`.
+fn draw_main(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect) {
     if area.width < WIDE_MIN_WIDTH {
         let [strip, chart_area] =
             Layout::vertical([Constraint::Length(1), Constraint::Min(0)]).areas(area);
@@ -192,13 +247,9 @@ fn draw_side_column(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect)
         }
     }
 
-    // Req 30.1: the limit ticket the book prefilled, for the selected symbol only.
-    let price = if app.ticket.symbol == app.symbol {
-        app.ticket.limit_price
-    } else {
-        None
-    };
-    frame.render_widget(Paragraph::new(format_ticket(price)), ticket_area);
+    // Req 30.1, 30.2: the ticket line with the book's limit price (selected symbol only), the
+    // quantity, and the BUY and SELL buttons.
+    order_widget::draw_ticket_line(frame, app, hits, ticket_area);
 
     hits.register(tape_area, HitTarget::Panel(PanelId::Tape));
     frame.render_widget(TapeWidget::new(&app.symbol, &app.tape), tape_area);
@@ -986,5 +1037,182 @@ mod tests {
         assert_eq!(seconds(Duration::from_millis(1_000)), "1.0");
         assert_eq!(seconds(Duration::from_secs(10)), "10.0");
         assert_eq!(seconds(Duration::ZERO), "0.0");
+    }
+}
+
+/// Layout of the order entry rows (Task 12.4): the command bar, the bottom strip, and the
+/// dialogs, at the heights the thresholds pick.
+#[cfg(test)]
+mod order_layout_tests {
+    use super::*;
+    use protocol::client::{OrderPreview, PreviewAction};
+    use protocol::{Bar, OrderKind, Price, Qty, Side};
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
+
+    fn app_with_candles() -> App {
+        let mut app = App::new("ws://localhost:8080/ws");
+        app.apply_candles(
+            true,
+            &[Bar {
+                t: 0,
+                open: Price(100),
+                high: Price(120),
+                low: Price(90),
+                close: Price(110),
+                volume: Qty(1),
+            }],
+        );
+        app
+    }
+
+    fn screen(width: u16, height: u16, app: &App) -> (Vec<String>, HitMap) {
+        let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+        let mut hits = HitMap::new();
+        terminal.draw(|f| draw(f, app, &mut hits)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let rows = (0..height)
+            .map(|y| {
+                (0..width)
+                    .map(|x| buffer[(x, y)].symbol().to_owned())
+                    .collect::<String>()
+            })
+            .collect();
+        (rows, hits)
+    }
+
+    fn open_preview(app: &mut App) {
+        app.account.command_sent("r1");
+        let preview = OrderPreview {
+            preview_id: "p1".into(),
+            text: "BUY BTC-USD 0.1 LMT 64000.00".into(),
+            action: PreviewAction::Place {
+                symbol: "BTC-USD".into(),
+                side: Side::Buy,
+                qty: Qty(10_000_000),
+                kind: OrderKind::Limit {
+                    price: Price(6_400_000),
+                },
+            },
+            expires_at: 30_000,
+        };
+        assert!(app.account.on_preview("r1", &preview, 0));
+    }
+
+    // Req 28.1, 28.2, 28.3, 31.1
+    #[test]
+    fn tall_wide_screens_show_the_strip_above_the_command_bar() {
+        let app = app_with_candles();
+        let (rows, hits) = screen(120, 45, &app);
+        // Main area 36 rows, strip rows 36..44, command bar row 44.
+        assert!(rows[36].contains("POSITIONS"), "{}", rows[36]);
+        assert!(rows[36].contains("OPEN ORDERS"), "{}", rows[36]);
+        assert!(rows[36].contains("P&L"), "{}", rows[36]);
+        assert!(rows[44].starts_with("> "), "{}", rows[44]);
+        assert!(!rows[44].contains("P&L"), "the strip already shows the P&L: {}", rows[44]);
+        assert_eq!(hits.resolve(10, 40), Some(&HitTarget::Panel(PanelId::Positions)));
+        assert_eq!(hits.resolve(60, 40), Some(&HitTarget::Panel(PanelId::Orders)));
+        assert_eq!(hits.resolve(10, 44), Some(&HitTarget::Panel(PanelId::CommandBar)));
+        // The chart still sits above the strip, and the tape ends above it.
+        assert_eq!(hits.resolve(0, 0), Some(&HitTarget::Panel(PanelId::Chart)));
+        assert_eq!(hits.resolve(115, 35), Some(&HitTarget::Panel(PanelId::Tape)));
+    }
+
+    #[test]
+    fn medium_wide_screens_reserve_the_bar_row_and_show_the_pnl_summary() {
+        let app = app_with_candles();
+        let (rows, hits) = screen(120, 35, &app);
+        assert!(!rows.join("\n").contains("POSITIONS"));
+        assert!(rows[34].starts_with("> "), "{}", rows[34]);
+        assert!(rows[34].contains("P&L 0.00"), "{}", rows[34]);
+        assert_eq!(hits.resolve(10, 34), Some(&HitTarget::Panel(PanelId::CommandBar)));
+        assert_eq!(hits.resolve(115, 33), Some(&HitTarget::Panel(PanelId::Tape)));
+    }
+
+    // The thresholds keep the existing fixed-size layouts: 120x30 has no bar row and no strip.
+    #[test]
+    fn the_existing_wide_layout_at_30_rows_is_unchanged() {
+        let app = app_with_candles();
+        let (rows, hits) = screen(120, 30, &app);
+        assert!(!rows.join("\n").contains("POSITIONS"));
+        assert_eq!(hits.resolve(115, 29), Some(&HitTarget::Panel(PanelId::Tape)));
+        assert!(rows[29].find("> ").is_none() || !rows[29].starts_with("> "), "{}", rows[29]);
+    }
+
+    #[test]
+    fn narrow_screens_keep_a_command_bar_row_with_a_pnl_summary() {
+        let app = app_with_candles();
+        let (rows, hits) = screen(60, 20, &app);
+        assert!(rows[19].starts_with("> "), "{}", rows[19]);
+        assert!(rows[19].contains("P&L 0.00"), "{}", rows[19]);
+        assert_eq!(hits.resolve(0, 19), Some(&HitTarget::Panel(PanelId::CommandBar)));
+        // The watchlist strip and the chart panel start where they did.
+        assert_eq!(hits.resolve(0, 1), Some(&HitTarget::Panel(PanelId::Chart)));
+        // 14 rows (the size of the existing narrow tests) keep the chart to the bottom row.
+        let (rows, hits) = screen(60, 14, &app);
+        assert!(!rows[13].starts_with("> "), "{}", rows[13]);
+        assert_eq!(hits.resolve(0, 13), Some(&HitTarget::Panel(PanelId::Chart)));
+    }
+
+    // Req 31.1: `:` shows the bar even on a short screen.
+    #[test]
+    fn a_focused_bar_is_drawn_over_the_bottom_row_of_a_short_screen() {
+        let mut app = app_with_candles();
+        app.focus = crate::order_input::Focus::Command;
+        app.command.editor.set("BUY BTC 1");
+        let (rows, hits) = screen(60, 14, &app);
+        assert!(rows[13].starts_with("> BUY BTC 1"), "{}", rows[13]);
+        assert_eq!(hits.resolve(5, 13), Some(&HitTarget::Panel(PanelId::CommandBar)));
+    }
+
+    // Req 31.4
+    #[test]
+    fn a_parse_error_shows_under_the_bar_with_a_caret() {
+        let mut app = app_with_candles();
+        app.focus = crate::order_input::Focus::Command;
+        app.command.editor.set("BUY XYZ 1");
+        app.account.command_sent("r1");
+        assert!(app.account.on_parse_error("r1", "unknown symbol XYZ", 4));
+        let (rows, _) = screen(60, 14, &app);
+        assert!(rows[11].starts_with("> BUY XYZ 1"), "{}", rows[11]);
+        assert_eq!(rows[12].find('^'), Some(6), "{}", rows[12]);
+        assert!(rows[13].contains("unknown symbol XYZ"), "{}", rows[13]);
+        // On a screen with a reserved bar row the layout grows by two rows instead.
+        let (rows, _) = screen(60, 20, &app);
+        assert!(rows[17].starts_with("> BUY XYZ 1"), "{}", rows[17]);
+        assert_eq!(rows[18].find('^'), Some(6), "{}", rows[18]);
+        assert!(rows[19].contains("unknown symbol XYZ"), "{}", rows[19]);
+    }
+
+    // Req 22.1
+    #[test]
+    fn the_preview_dialog_is_drawn_over_the_screen_with_clickable_buttons() {
+        let mut app = app_with_candles();
+        open_preview(&mut app);
+        let (rows, hits) = screen(120, 30, &app);
+        let text = rows.join("\n");
+        assert!(text.contains("PLACE PAPER ORDER"), "{text}");
+        assert!(text.contains("BUY BTC-USD 0.1 LMT 64000.00"), "{text}");
+        let confirm_row = rows
+            .iter()
+            .position(|r| r.contains("Confirm [Enter/Y]"))
+            .unwrap();
+        // The row holds multi-byte chart characters, so count characters, not bytes.
+        let byte = rows[confirm_row].find("Confirm [Enter/Y]").unwrap();
+        let x = rows[confirm_row][..byte].chars().count();
+        assert_eq!(
+            hits.resolve(u16::try_from(x).unwrap(), u16::try_from(confirm_row).unwrap()),
+            Some(&HitTarget::DialogConfirm)
+        );
+    }
+
+    // Req 30.4
+    #[test]
+    fn the_confirm_dialog_is_drawn_for_flatten_all() {
+        let mut app = app_with_candles();
+        app.account
+            .request_confirm(crate::order_model::ConfirmAction::FlattenAll);
+        let (rows, _) = screen(60, 14, &app);
+        assert!(rows.join("\n").contains("Flatten every position?"));
     }
 }

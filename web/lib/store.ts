@@ -17,6 +17,8 @@ import type {
   InstrumentInfo,
   Level,
   NoticeKind,
+  OrderPreview,
+  PreviewAction,
   ServerMessage,
   Side,
   Timeframe,
@@ -30,7 +32,17 @@ import {
   type IndicatorPoint,
   type IndicatorToggles,
 } from "./indicatorData";
+import { addUnits, pushHistory } from "./orderEntry";
 import type { SocketEvent } from "./socket";
+
+/** Most fills kept in the recent-fills list, newest first (Req 28.3). */
+export const MAX_FILLS = 100;
+/** Most rejections kept, newest first (Req 30.6). */
+export const MAX_REJECTIONS = 10;
+/** Most confirmed placements waiting for their order_ack. */
+export const MAX_PENDING_PLACEMENTS = 20;
+
+const INTEGER = /^-?\d+$/;
 
 /** Most candles kept per symbol and timeframe (matches the server's history snapshot, Req 8.7). */
 export const MAX_CANDLES = 500;
@@ -108,6 +120,78 @@ export interface NoticeEntry {
   readonly message: string;
 }
 
+/** One open Position of the session's account (Req 28.1). Flat positions are not kept. */
+export interface PositionRow {
+  readonly symbol: string;
+  /** Signed quantity in lots. */
+  readonly qty: string;
+  /** Average entry price in ticks. */
+  readonly avgEntry: string | null;
+  /** Realized P&L, Money (10^-10 USD). */
+  readonly realized: string;
+  /** Unrealized P&L, Money. */
+  readonly unrealized: string;
+}
+
+/**
+ * One open order (Req 28.2). `order_ack` carries only the order id, so symbol, side, type, and
+ * price come from the placement the user confirmed (see `PendingPlacement`) or, for `symbol` and
+ * `side`, from the first fill. They are null when neither is known.
+ */
+export interface OrderRow {
+  readonly orderId: string;
+  readonly symbol: string | null;
+  readonly side: Side | null;
+  readonly kind: "market" | "limit" | "stop" | null;
+  /** Limit or stop price in ticks. */
+  readonly price: string | null;
+  /** Original quantity in lots (filled + remaining when unknown at the ack). */
+  readonly qty: string;
+  readonly filled: string;
+  readonly remaining: string;
+}
+
+export interface FillRow {
+  readonly orderId: string;
+  readonly symbol: string;
+  readonly side: Side;
+  readonly price: string;
+  readonly qty: string;
+  readonly fee: string;
+  readonly ts: number;
+}
+
+/** A confirmed `place` preview that has not been acknowledged yet, oldest first. */
+export interface PendingPlacement {
+  readonly symbol: string;
+  readonly side: Side;
+  readonly kind: "market" | "limit" | "stop";
+  readonly price: string | null;
+  readonly qty: string;
+}
+
+/** The Order_Preview waiting for the user (Req 22.1), with the request it answers. */
+export interface PreviewState {
+  readonly requestId: string;
+  readonly preview: OrderPreview;
+}
+
+export interface ParseErrorState {
+  readonly requestId: string;
+  readonly message: string;
+  /** Character position of the first invalid token (Req 21.5). */
+  readonly position: number;
+}
+
+/** A rejection to show (Req 30.6): an order_rejected event or a failed confirm/cancel request. */
+export interface RejectionEntry {
+  readonly orderId: string | null;
+  readonly reason: string;
+}
+
+/** An action that needs a yes/no dialog before anything is sent (Req 30.4, 30.5). */
+export type ConfirmAction = "flatten_all" | "cancel_all";
+
 export interface TerminalState {
   readonly connection: ConnectionState;
   /** The `hello` of the current connection; cleared when a connection opens. */
@@ -133,6 +217,27 @@ export interface TerminalState {
   /** Keyboard cursor on the selected symbol's book; null when none. */
   readonly bookCursor: BookCursor | null;
   readonly notices: readonly NoticeEntry[];
+  /** The account whose data the panels below hold; survives reconnects, null before the first session. */
+  readonly dataAccountId: AccountId | null;
+  /** Open Positions by symbol, for the session's account (Req 28.1). */
+  readonly positions: Readonly<Record<string, PositionRow>>;
+  /** Latest realized P&L by symbol, kept for flat symbols too, so the P&L total survives a close. */
+  readonly realizedBySymbol: Readonly<Record<string, { readonly realized: string }>>;
+  /** Open orders by order id (Req 28.2). */
+  readonly openOrders: Readonly<Record<string, OrderRow>>;
+  /** Recent fills, newest first, at most `MAX_FILLS`. */
+  readonly fills: readonly FillRow[];
+  readonly pendingPlacements: readonly PendingPlacement[];
+  /** The request id of the last command text sent; only its preview or parse error is shown. */
+  readonly lastRequestId: string | null;
+  readonly preview: PreviewState | null;
+  readonly parseError: ParseErrorState | null;
+  /** Latest rejections, newest first, at most `MAX_REJECTIONS`. */
+  readonly rejections: readonly RejectionEntry[];
+  /** Submitted command texts, oldest first, at most 50 (Req 31.3). */
+  readonly commandHistory: readonly string[];
+  /** The F or X confirmation dialog, or null. */
+  readonly confirmAction: ConfirmAction | null;
   /** Frames that were not valid messages, over all connections. */
   readonly badFrames: number;
   readonly lastError: string | null;
@@ -149,6 +254,22 @@ export interface TerminalActions {
   setBookCursor(cursor: BookCursor | null): void;
   /** Flips one indicator toggle (Req 26.3: hotkey or click). */
   toggleIndicator(name: IndicatorName): void;
+  /** Sets the ticket quantity in lots (null clears it). */
+  setTicketQty(qtyLots: string | null): void;
+  /** Sets or clears the ticket's limit price (null = market). */
+  setTicketPrice(priceTicks: string | null): void;
+  /** Records a sent command text: remembers the request id and, when `text` is given, history. */
+  commandSent(requestId: string, text: string | null): void;
+  /** Closes the preview after the user confirmed it, remembering a `place` for its ack. */
+  previewConfirmed(): void;
+  /** Closes the preview (discarded, expired, or replaced). */
+  clearPreview(): void;
+  clearParseError(): void;
+  requestConfirm(action: ConfirmAction): void;
+  clearConfirm(): void;
+  dismissRejections(): void;
+  /** Shows a client-side problem in the rejection area. */
+  addRejection(reason: string): void;
 }
 
 export type TerminalStore = TerminalState & TerminalActions;
@@ -174,9 +295,245 @@ export function initialState(): TerminalState {
     ticket: { symbol: DEFAULT_SYMBOL, side: null, price: null, qty: null },
     bookCursor: null,
     notices: [],
+    dataAccountId: null,
+    positions: {},
+    realizedBySymbol: {},
+    openOrders: {},
+    fills: [],
+    pendingPlacements: [],
+    lastRequestId: null,
+    preview: null,
+    parseError: null,
+    rejections: [],
+    commandHistory: [],
+    confirmAction: null,
     badFrames: 0,
     lastError: null,
   };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Account panels and the command bar (Task 12.3, Req 22, 28, 30, 31)
+
+/** True when an account event belongs to the account this client shows. */
+function isOwnAccount(state: TerminalState, accountId: AccountId): boolean {
+  const expected = state.session?.accountId ?? state.dataAccountId;
+  return expected === null || expected === accountId;
+}
+
+/** Drops everything that belongs to one account: positions, orders, fills, previews, dialogs. */
+export function clearAccountData(state: TerminalState): TerminalState {
+  return {
+    ...state,
+    positions: {},
+    realizedBySymbol: {},
+    openOrders: {},
+    fills: [],
+    pendingPlacements: [],
+    preview: null,
+    parseError: null,
+    confirmAction: null,
+  };
+}
+
+function withRejection(state: TerminalState, entry: RejectionEntry): TerminalState {
+  return { ...state, rejections: [entry, ...state.rejections].slice(0, MAX_REJECTIONS) };
+}
+
+/** Shows a client-side problem (an incomplete ticket) the same way as a server rejection. */
+export function withRejectionAdded(state: TerminalState, reason: string): TerminalState {
+  return withRejection(state, { orderId: null, reason });
+}
+
+/** Applies a `position` event: replaces the symbol's row, or drops it when the position is flat. */
+export function applyPositionEvent(
+  state: TerminalState,
+  event: Extract<Event, { type: "position" }>,
+): TerminalState {
+  if (!isOwnAccount(state, event.account_id) || !INTEGER.test(event.qty)) return state;
+  const positions = { ...state.positions };
+  if (BigInt(event.qty) === 0n) {
+    delete positions[event.symbol];
+  } else {
+    positions[event.symbol] = {
+      symbol: event.symbol,
+      qty: event.qty,
+      avgEntry: event.avg_entry,
+      realized: event.realized,
+      unrealized: event.unrealized,
+    };
+  }
+  return {
+    ...state,
+    positions,
+    realizedBySymbol: { ...state.realizedBySymbol, [event.symbol]: { realized: event.realized } },
+  };
+}
+
+/** Applies an `order_ack`: accepted opens a row, canceled or filled removes it. */
+export function applyOrderAckEvent(
+  state: TerminalState,
+  event: Extract<Event, { type: "order_ack" }>,
+): TerminalState {
+  if (!isOwnAccount(state, event.account_id)) return state;
+  if (event.status !== "accepted") {
+    if (!(event.order_id in state.openOrders)) return state;
+    const openOrders = { ...state.openOrders };
+    delete openOrders[event.order_id];
+    return { ...state, openOrders };
+  }
+  if (event.order_id in state.openOrders) return state;
+  const [pending, ...rest] = state.pendingPlacements;
+  const row: OrderRow =
+    pending === undefined
+      ? {
+          orderId: event.order_id,
+          symbol: null,
+          side: null,
+          kind: null,
+          price: null,
+          qty: "0",
+          filled: "0",
+          remaining: "0",
+        }
+      : {
+          orderId: event.order_id,
+          symbol: pending.symbol,
+          side: pending.side,
+          kind: pending.kind,
+          price: pending.price,
+          qty: pending.qty,
+          filled: "0",
+          remaining: pending.qty,
+        };
+  return {
+    ...state,
+    pendingPlacements: pending === undefined ? state.pendingPlacements : rest,
+    openOrders: { ...state.openOrders, [event.order_id]: row },
+  };
+}
+
+/** Applies a `fill`: adds it to the recent list and updates the order's filled and remaining. */
+export function applyFillEvent(
+  state: TerminalState,
+  event: Extract<Event, { type: "fill" }>,
+): TerminalState {
+  if (!isOwnAccount(state, event.account_id)) return state;
+  const fill: FillRow = {
+    orderId: event.order_id,
+    symbol: event.symbol,
+    side: event.side,
+    price: event.price,
+    qty: event.qty,
+    fee: event.fee,
+    ts: event.ts,
+  };
+  const fills = [fill, ...state.fills].slice(0, MAX_FILLS);
+  const order = state.openOrders[event.order_id];
+  if (order === undefined) return { ...state, fills };
+  const filled = addUnits(order.filled, event.qty);
+  const updated: OrderRow = {
+    ...order,
+    symbol: order.symbol ?? event.symbol,
+    side: order.side ?? event.side,
+    filled,
+    remaining: event.remaining,
+    qty: order.qty === "0" ? addUnits(filled, event.remaining) : order.qty,
+  };
+  return { ...state, fills, openOrders: { ...state.openOrders, [event.order_id]: updated } };
+}
+
+/**
+ * Applies an `order_rejected`: shows the reason (Req 30.6). A rejection of an order that is not
+ * open is a rejected new order, so it also drops the oldest confirmed placement that is still
+ * waiting for an ack. (A rejected cancel of an order that just filled drops one by mistake; the
+ * only effect is a missing label on the next open order.)
+ */
+export function applyOrderRejectedEvent(
+  state: TerminalState,
+  event: Extract<Event, { type: "order_rejected" }>,
+): TerminalState {
+  if (!isOwnAccount(state, event.account_id)) return state;
+  const next = withRejection(state, { orderId: event.order_id, reason: event.reason });
+  if (event.order_id in state.openOrders || state.pendingPlacements.length === 0) return next;
+  return { ...next, pendingPlacements: state.pendingPlacements.slice(1) };
+}
+
+/** Adds a placement to the queue that `order_ack` reads, from a confirmed preview action. */
+export function placementFromAction(action: PreviewAction): PendingPlacement | null {
+  if (action.type !== "place") return null;
+  return {
+    symbol: action.symbol,
+    side: action.side,
+    kind: action.kind.type,
+    price:
+      action.kind.type === "limit"
+        ? action.kind.price
+        : action.kind.type === "stop"
+          ? action.kind.stop_price
+          : null,
+    qty: action.qty,
+  };
+}
+
+/** Remembers a sent command text (history gets `text` unless it is null) and its request id. */
+export function withCommandSent(
+  state: TerminalState,
+  requestId: string,
+  text: string | null,
+): TerminalState {
+  return {
+    ...state,
+    lastRequestId: requestId,
+    preview: null,
+    parseError: null,
+    commandHistory: text === null ? state.commandHistory : pushHistory(state.commandHistory, text),
+  };
+}
+
+/** The user confirmed the preview: close it and queue a `place` for its ack. */
+export function withPreviewConfirmed(state: TerminalState): TerminalState {
+  if (state.preview === null) return state;
+  const placement = placementFromAction(state.preview.preview.action);
+  return {
+    ...state,
+    preview: null,
+    pendingPlacements:
+      placement === null
+        ? state.pendingPlacements
+        : [...state.pendingPlacements, placement].slice(-MAX_PENDING_PLACEMENTS),
+  };
+}
+
+export function withPreviewCleared(state: TerminalState): TerminalState {
+  return state.preview === null ? state : { ...state, preview: null };
+}
+
+export function withParseErrorCleared(state: TerminalState): TerminalState {
+  return state.parseError === null ? state : { ...state, parseError: null };
+}
+
+export function withConfirmRequested(state: TerminalState, action: ConfirmAction): TerminalState {
+  // A pending preview is dropped (the server lets it expire) so only one dialog is ever open.
+  return { ...state, confirmAction: action, preview: null };
+}
+
+export function withConfirmCleared(state: TerminalState): TerminalState {
+  return state.confirmAction === null ? state : { ...state, confirmAction: null };
+}
+
+export function withRejectionsCleared(state: TerminalState): TerminalState {
+  return state.rejections.length === 0 ? state : { ...state, rejections: [] };
+}
+
+/** Sets or clears (null = market order) the ticket's limit price in ticks. */
+export function withTicketPrice(state: TerminalState, price: string | null): TerminalState {
+  return state.ticket.price === price ? state : { ...state, ticket: { ...state.ticket, price } };
+}
+
+/** Sets the ticket quantity in lots. */
+export function withTicketQty(state: TerminalState, qty: string | null): TerminalState {
+  return state.ticket.qty === qty ? state : { ...state, ticket: { ...state.ticket, qty } };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -184,7 +541,13 @@ export function initialState(): TerminalState {
 
 export function withSymbol(state: TerminalState, symbol: string): TerminalState {
   if (state.selection.symbol === symbol) return state;
-  return { ...state, selection: { ...state.selection, symbol }, bookCursor: null };
+  // The ticket follows the selection: a price from another symbol's book and a quantity counted
+  // in that symbol's lots must not carry over (Req 30.1, 30.2).
+  const ticket =
+    state.ticket.symbol === symbol
+      ? state.ticket
+      : { symbol, side: state.ticket.side, price: null, qty: null };
+  return { ...state, selection: { ...state.selection, symbol }, bookCursor: null, ticket };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -343,8 +706,13 @@ export function applyEvent(state: TerminalState, event: Event): TerminalState {
         tape: [entry, ...state.tape].slice(0, MAX_TAPE),
       };
     }
-    case "error":
-      return { ...state, lastError: `server error ${event.code}: ${event.message}` };
+    case "error": {
+      const next = { ...state, lastError: `server error ${event.code}: ${event.message}` };
+      // A refused confirm, cancel, cancel-all, or flatten-all arrives as invalid_command (Req 30.6).
+      return event.code === "invalid_command"
+        ? withRejection(next, { orderId: null, reason: event.message })
+        : next;
+    }
     case "book":
       return {
         ...state,
@@ -362,11 +730,13 @@ export function applyEvent(state: TerminalState, event: Event): TerminalState {
     case "indicators":
       return applyIndicatorsEvent(state, event);
     case "order_ack":
+      return applyOrderAckEvent(state, event);
     case "order_rejected":
+      return applyOrderRejectedEvent(state, event);
     case "fill":
+      return applyFillEvent(state, event);
     case "position":
-      // TODO(Task 12): keep open orders, fills, and positions for the account panels.
-      return state;
+      return applyPositionEvent(state, event);
     case "heartbeat":
     case "pong":
       return state;
@@ -389,20 +759,44 @@ export function applyServerMessage(state: TerminalState, message: ServerMessage)
         instruments: Object.fromEntries(list.map((info): [string, InstrumentInfo] => [info.symbol, info])),
       };
     }
-    case "session":
-      return { ...state, session: { accountId: message.account_id, address: message.address } };
+    case "session": {
+      const changed = state.dataAccountId !== null && state.dataAccountId !== message.account_id;
+      const next: TerminalState = {
+        ...state,
+        session: { accountId: message.account_id, address: message.address },
+        dataAccountId: message.account_id,
+      };
+      // A different account: nothing of the old one stays on screen (Req 46.4).
+      return changed ? { ...clearAccountData(next), rejections: [] } : next;
+    }
     case "event":
       return applyEvent(state, message.event);
     case "notice": {
       // The stored token is cleared on auth_failed, session_expired, and signed_out by the socket
       // layer (socket.ts), not here, so this reducer stays pure.
       const notices = [...state.notices, { kind: message.kind, message: message.message }];
-      return { ...state, notices: tail(notices, MAX_NOTICES) };
+      const base = { ...state, notices: tail(notices, MAX_NOTICES) };
+      // The engine restarted: every paper account is flat again (Req 15.7).
+      return message.kind === "account_reset" ? clearAccountData(base) : base;
     }
     case "preview":
+      if (state.lastRequestId !== message.request_id) return state;
+      return {
+        ...state,
+        preview: { requestId: message.request_id, preview: message.preview },
+        parseError: null,
+      };
     case "parse_error":
-      // TODO(Task 12): hold the pending Order_Preview and parse errors for the command bar.
-      return state;
+      if (state.lastRequestId !== message.request_id) return state;
+      return {
+        ...state,
+        preview: null,
+        parseError: {
+          requestId: message.request_id,
+          message: message.message,
+          position: message.position,
+        },
+      };
     case "pong":
       return state;
   }
@@ -424,7 +818,17 @@ export function applySocketEvent(state: TerminalState, event: SocketEvent): Term
       };
     case "open":
       // Req 33.3: candles stay; the resubscribe brings a fresh snapshot that replaces them.
-      return { ...state, connection: { kind: "connected" }, hello: null, session: null };
+      // A preview and a dialog belong to the old connection (the server drops its previews on close).
+      return {
+        ...state,
+        connection: { kind: "connected" },
+        hello: null,
+        session: null,
+        preview: null,
+        parseError: null,
+        confirmAction: null,
+        pendingPlacements: [],
+      };
     case "closed":
       return {
         ...state,
@@ -455,4 +859,14 @@ export const useTerminalStore = create<TerminalStore>()((set) => ({
   moveBookCursor: (direction) => set((state) => withBookCursorMoved(state, direction)),
   setBookCursor: (cursor) => set({ bookCursor: cursor }),
   toggleIndicator: (name) => set((state) => withIndicatorToggled(state, name)),
+  setTicketQty: (qtyLots) => set((state) => withTicketQty(state, qtyLots)),
+  setTicketPrice: (priceTicks) => set((state) => withTicketPrice(state, priceTicks)),
+  commandSent: (requestId, text) => set((state) => withCommandSent(state, requestId, text)),
+  previewConfirmed: () => set((state) => withPreviewConfirmed(state)),
+  clearPreview: () => set((state) => withPreviewCleared(state)),
+  clearParseError: () => set((state) => withParseErrorCleared(state)),
+  requestConfirm: (action) => set((state) => withConfirmRequested(state, action)),
+  clearConfirm: () => set((state) => withConfirmCleared(state)),
+  dismissRejections: () => set((state) => withRejectionsCleared(state)),
+  addRejection: (reason) => set((state) => withRejectionAdded(state, reason)),
 }));

@@ -197,19 +197,19 @@ Scope change (approved after 4.3): per-wallet paper accounts plus a shared guest
     - **Property 35: router account derivation** — generate Connection_Sessions and Client_Message JSON (some with extra `account_id`/`accountId` keys), parse with the Zod schemas, submit through the Router with a fake engine sender, and check every sent Command's `account_id` equals the session's
     - _Requirements: 18.5, 18.6_
 
-- [ ] 12. Command bar, order entry, and account panels
-  - [ ] 12.1 Command_Parser and Command_Formatter; previews with expiry; confirm/discard handling
+- [x] 12. Command bar, order entry, and account panels
+  - [x] 12.1 Command_Parser and Command_Formatter; previews with expiry; confirm/discard handling
     - `%` amounts resolve against the requester's account position; each preview stores the connection id and account id; the gateway's account-change hook (19.1) discards that connection's pending previews; a confirm whose preview account differs from the current session is rejected
     - _Requirements: 4.3, 4.4, 21.1–21.6, 22.4, 46.4_
-  - [ ] 12.2 Property tests P20, P21, P22 and parser unit tests
+  - [x] 12.2 Property tests P20, P21, P22 and parser unit tests
     - _Requirements: 21.7, 21.8, 21.9_
-  - [ ] 12.3 Web: CommandBar with history, PreviewDialog, ConfirmDialog, Buy/Sell buttons, B/S/F/X, Positions, OpenOrders (✕), PnL, rejection display
+  - [x] 12.3 Web: CommandBar with history, PreviewDialog, ConfirmDialog, Buy/Sell buttons, B/S/F/X, Positions, OpenOrders (✕), PnL, rejection display
     - _Requirements: 22.1, 22.2, 22.3, 28.1, 28.2, 28.3, 30.2–30.6, 31.1–31.4_
-  - [ ] 12.4 TUI: the same panels and dialogs with keyboard and mouse; TestBackend tests
+  - [x] 12.4 TUI: the same panels and dialogs with keyboard and mouse; TestBackend tests
     - _Requirements: 22.1, 22.2, 22.3, 28.1, 28.2, 28.3, 30.2–30.6, 31.1–31.4_
 
 - [ ] 13. Plain-English orders (LLM)
-  - [ ] 13.1 `LLM_Provider` interface, OpenAI structured-output implementation with 15 s timeout, model name verified
+  - [-] 13.1 `LLM_Provider` interface, OpenAI structured-output implementation with 15 s timeout, model name verified
     - _Requirements: 23.1, 23.5_
   - [ ] 13.2 `LLM_Order_Parser`: Zod intent schema → formatter → parser → preview; disabled without key
     - _Requirements: 23.2, 23.3, 23.4, 23.6, 23.7_
@@ -217,7 +217,7 @@ Scope change (approved after 4.3): per-wallet paper accounts plus a shared guest
     - _Requirements: 23.4, 23.5_
 
 - [ ] 14. MCP server
-  - [ ] 14.1 `server/src/mcp/main.ts` with the five tools, Zod argument validation, orders over the WS protocol
+  - [-] 14.1 `server/src/mcp/main.ts` with the five tools, Zod argument validation, orders over the WS protocol
     - _Requirements: 24.1–24.7_
   - [ ] 14.2 Register in `.kiro/settings/mcp.json`; tests against a mock server
     - _Requirements: 24.8_
@@ -228,7 +228,7 @@ Scope change (approved after 4.3): per-wallet paper accounts plus a shared guest
     - _Requirements: 24.4, 24.9, 24.10, 24.11_
 
 - [ ] 15. Release binaries and Render deploy
-  - [ ] 15.1 `Dockerfile` (rust:1.94-bookworm → oven/bun:1.4.4-debian, non-root)
+  - [-] 15.1 `Dockerfile` (rust:1.94-bookworm → oven/bun:1.4.4-debian, non-root)
     - Runtime stage installs production server dependencies, which include the pinned `prisma` CLI
     - Copies `server/` with `prisma.config.ts`, `prisma/schema.prisma`, `prisma/migrations/`, and `scripts/start.ts`; runs `bun run db:generate` during the build, before switching to the non-root user
     - Checks that the Prisma CLI's migration engine runs on the Debian runtime image (for example, that OpenSSL is present)

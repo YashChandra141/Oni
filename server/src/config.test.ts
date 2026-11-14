@@ -4,6 +4,7 @@ import { inspect } from "node:util";
 import {
   Config,
   ConfigError,
+  DEFAULT_OPENAI_MODEL,
   REDACTED,
   exitOnInvalidConfig,
   loadConfig,
@@ -67,7 +68,7 @@ describe("loadConfig defaults (Req 16.1)", () => {
     expect(config.allowedOrigins).toEqual(["http://localhost:3000"]);
     expect(config.killSwitch).toBe(false);
     expect(config.openaiApiKey).toBeUndefined();
-    expect(config.openaiModel).toBeUndefined();
+    expect(config.openaiModel).toBe(DEFAULT_OPENAI_MODEL);
     expect(config.databaseUrl).toBeUndefined();
     expect(config.directUrl).toBeUndefined();
     expect(config.dbAdapter).toBeUndefined();

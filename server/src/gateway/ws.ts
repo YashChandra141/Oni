@@ -30,8 +30,11 @@
 // - Cancel, CancelAll, FlattenAll, and ResetAccount messages go to the injected Router
 //   (`setRouter`) with `{ connectionId, session: ws.data.session, source: "web" }`. A failed
 //   result becomes `Error { invalid_command }` with "<action> rejected: <reason>"; a throwing
-//   Router becomes `Error { internal }`. Without a Router they are refused. CommandText,
-//   Confirm, and Discard are refused until Task 12.1.
+//   Router becomes `Error { internal }`. Without a Router they are refused.
+// - CommandText, Confirm, and Discard use the CommandBar set with `setCommandBar` (Task 12.1):
+//   CommandText → `Preview` or `ParseError` (`?` text → `Notice llm_disabled` until Task 13);
+//   Confirm → `PreviewStore.take` for this connection and its current account, then the Router;
+//   Discard → `PreviewStore.discard`. Without a CommandBar they are refused.
 // - `sendTo(connectionId, message)` and `onConnectionClosed(listener)` serve the Router wiring
 //   (OrderRejected delivery, rate-window cleanup).
 //
@@ -53,6 +56,9 @@ import {
   type Timeframe,
   parseClientMessage,
 } from "../protocol.ts";
+import { formatCommand } from "../commands/formatter.ts";
+import { type ParsedCommand, parseCommand } from "../commands/parser.ts";
+import type { PreviewStore } from "../commands/previews.ts";
 import type { OrderOrigin, Router } from "../router.ts";
 import { MarketState } from "../state/market.ts";
 import { type SubscriptionKey, SubscriptionRegistry } from "./clients.ts";
@@ -135,6 +141,18 @@ export type AccountChangeListener = (
 
 /** The Router surface the gateway calls for Cancel, CancelAll, FlattenAll, and ResetAccount. */
 export type GatewayRouter = Pick<Router, "cancel" | "cancelAll" | "flattenAll" | "resetAccount">;
+
+/**
+ * What the command bar needs (Task 12.1): the preview store, the account positions that `%`
+ * amounts resolve against, and the Router calls a confirmed preview makes. Set with
+ * `setCommandBar`. The owner also subscribes `previews.discardForConnection` to
+ * `onAccountChange` and `onConnectionClosed` (Req 46.4).
+ */
+export interface CommandBar {
+  readonly previews: PreviewStore;
+  readonly accounts: { positionLots(accountId: AccountId, symbol: string): bigint };
+  readonly router: Pick<Router, "submit" | "cancelAll" | "flattenAll">;
+}
 
 /** Called when a connection closes, with its connection id. */
 export type ConnectionClosedListener = (connectionId: string) => void;
@@ -222,6 +240,7 @@ export class Gateway {
   readonly #closedListeners = new Set<ConnectionClosedListener>();
   #publisher: Publisher | null = null;
   #router: GatewayRouter | null = null;
+  #commandBar: CommandBar | null = null;
 
   constructor(options: GatewayOptions) {
     this.#supervisor = options.supervisor;
@@ -256,6 +275,11 @@ export class Gateway {
     this.#router = router;
   }
 
+  /** Enables CommandText, Confirm, and Discard. Without it they are refused. */
+  setCommandBar(bar: CommandBar | null): void {
+    this.#commandBar = bar;
+  }
+
   /** Sends one message to one open connection. Returns false when it is not open. */
   sendTo(connectionId: string, message: ServerMessage): boolean {
     const ws = this.#sockets.get(connectionId);
@@ -277,6 +301,7 @@ export class Gateway {
     for (const unlisten of this.#unlisten.splice(0)) unlisten();
     this.#publisher = null;
     this.#router = null;
+    this.#commandBar = null;
   }
 
   /**
@@ -497,17 +522,103 @@ export class Gateway {
         if (mapped !== null) this.#orderAction(ws, clientId, mapped.action, mapped.run);
         return;
       }
-      // TODO(Task 12.1): the command parser, previews, and confirmation. Refused until then.
+      // Command bar (Req 21, 22). Refused until `setCommandBar` is called.
       case "command_text":
       case "confirm":
-      case "discard":
-        ws.send(errorMessage("internal", ORDER_ENTRY_UNAVAILABLE));
+      case "discard": {
+        const bar = this.#commandBar;
+        if (bar === null) {
+          ws.send(errorMessage("internal", ORDER_ENTRY_UNAVAILABLE));
+          return;
+        }
+        if (msg.type === "command_text") this.#commandText(ws, clientId, bar, msg.request_id, msg.text);
+        else if (msg.type === "confirm") this.#confirm(ws, clientId, bar, msg.preview_id);
+        else bar.previews.discard(msg.preview_id, clientId);
         return;
+      }
       case "authenticate":
         this.#authenticate(ws, clientId, msg.token).catch(() => {
           this.#log.error(`[gateway] client ${clientId} authenticate failed unexpectedly`);
         });
         return;
+    }
+  }
+
+  /**
+   * Command bar text (Req 21, 22.1). Text starting with `?` is a plain-English order: Task 13
+   * replaces the notice below with the LLM_Order_Parser, which must also end in a preview.
+   * Anything else is parsed here. The account for `%` amounts is the session's, never the message's.
+   */
+  #commandText(ws: GatewaySocket, clientId: string, bar: CommandBar, requestId: string, text: string): void {
+    if (text.trimStart().startsWith("?")) {
+      // TODO(Task 13): hand `text.trimStart().slice(1)` to the LLM_Order_Parser and send its preview.
+      ws.send(
+        encode({ type: "notice", kind: "llm_disabled", message: "Plain-English orders are disabled." }),
+      );
+      return;
+    }
+    const accountId = (ws.data.session ?? GUEST_SESSION).accountId;
+    const result = parseCommand(text, { positionLots: (symbol) => bar.accounts.positionLots(accountId, symbol) });
+    if (!result.ok) {
+      ws.send(
+        encode({
+          type: "parse_error",
+          request_id: requestId,
+          message: result.error.message,
+          position: result.error.position,
+        }),
+      );
+      return;
+    }
+    const preview = bar.previews.create(clientId, accountId, result.command, formatCommand(result.command));
+    ws.send(encode({ type: "preview", request_id: requestId, preview }));
+  }
+
+  /**
+   * Confirm (Req 22.4, trading-safety rule 3): the preview must be this connection's, unexpired,
+   * and for the connection's current account. Then it goes to the Router, which applies the
+   * Risk_Engine. A rejected order reaches the requester through the Router's `onRejected`.
+   */
+  #confirm(ws: GatewaySocket, clientId: string, bar: CommandBar, previewId: string): void {
+    const session = ws.data.session ?? GUEST_SESSION;
+    const taken = bar.previews.take(previewId, clientId, session.accountId);
+    if (!taken.ok) {
+      ws.send(errorMessage("invalid_command", `confirm rejected: ${taken.error}`));
+      return;
+    }
+    const origin: OrderOrigin = { connectionId: clientId, session, source: "web" };
+    try {
+      this.#runConfirmed(ws, taken.command, bar.router, origin);
+    } catch {
+      this.#log.error(`[gateway] client ${clientId} confirm failed unexpectedly`);
+      ws.send(errorMessage("internal", "confirm failed"));
+    }
+  }
+
+  #runConfirmed(
+    ws: GatewaySocket,
+    command: ParsedCommand,
+    router: CommandBar["router"],
+    origin: OrderOrigin,
+  ): void {
+    switch (command.kind) {
+      case "place":
+        // A rejection is already delivered as an OrderRejected event (Req 19.7).
+        router.submit(
+          { symbol: command.symbol, side: command.side, qty: command.qty, kind: command.order },
+          origin,
+        );
+        return;
+      case "cancel_all": {
+        const result = router.cancelAll(origin);
+        if (!result.ok) ws.send(errorMessage("invalid_command", `cancel all rejected: ${result.reason}`));
+        return;
+      }
+      case "flatten_all": {
+        const result = router.flattenAll(origin);
+        if (!result.ok) ws.send(errorMessage("invalid_command", `flatten all rejected: ${result.reason}`));
+        return;
+      }
     }
   }
 

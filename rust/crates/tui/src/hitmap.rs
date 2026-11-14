@@ -44,9 +44,21 @@ pub enum HitTarget {
     IndicatorToggle(Indicator),
     /// A watchlist row (wide layout) or strip segment (narrow layout), by symbol (Req 27.4).
     WatchlistSymbol(String),
-    // NOTE: `OpenOrder` is registered by the orders panel in a later task (12.x).
     BookLevel { side: BookSide, index: usize },
+    /// The ✕ cell of an open order row: a click cancels the order (Req 30.3).
     OpenOrder(String),
+    /// An open order row, by order id: a click selects it (Req 30.3).
+    OrderRow(String),
+    /// The BUY button of the ticket line (Req 30.2).
+    TicketBuy,
+    /// The SELL button of the ticket line (Req 30.2).
+    TicketSell,
+    /// The quantity field of the ticket line (Req 30.2).
+    TicketQty,
+    /// The Confirm button of the preview or confirm dialog (Req 22.2, 30.4).
+    DialogConfirm,
+    /// The Discard or Cancel button of the preview or confirm dialog (Req 22.3).
+    DialogCancel,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

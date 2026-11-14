@@ -9,10 +9,14 @@ use std::time::Duration;
 use protocol::client::{DataMode, NoticeKind, ServerMessage};
 use protocol::{AccountId, Bar, Event, IndicatorValues, Price, Qty, Side, Timeframe, Venue};
 
+use crate::account_model::AccountState;
 use crate::book_model::{BookCursor, BookState, MAX_TAPE, TapeEntry};
-use crate::chart_model::{ChartView, Crosshair, MAX_BARS};
+use crate::chart_model::{ChartView, Crosshair, MAX_BARS, QTY_DECIMALS};
 use crate::indicator_model::{IndicatorPoint, IndicatorSeries, Toggles};
+use crate::line_editor::LineEditor;
 use crate::net::NetEvent;
+use crate::order_input::{CommandLine, Focus};
+use crate::order_model::{RequestIds, parse_qty};
 use crate::pairing::PairingState;
 use crate::watchlist_model::{WatchQuote, default_watchlist, watchlist_symbols};
 
@@ -129,6 +133,19 @@ pub struct App {
     pub quotes: HashMap<String, WatchQuote>,
     /// The pairing dialog (Task 21.2). While it is open it takes over the keys.
     pub pairing: PairingState,
+    /// Positions, open orders, previews, dialogs, and rejections of the account (Task 12.4).
+    pub account: AccountState,
+    /// Which part of the screen has the keyboard. Never `Book` or `Dialog`: those come from
+    /// the book cursor and the open dialogs (see `order_input::effective_focus`).
+    pub focus: Focus,
+    /// The command bar: text, history, and the request it last sent (Req 31).
+    pub command: CommandLine,
+    /// The quantity text of the ticket line (Req 30.2). `ticket.qty` is its parsed value.
+    pub ticket_qty: LineEditor,
+    /// The wall clock in epoch ms at the last event, key, or tick. The reducers read it for
+    /// preview deadlines and rejection times, so they stay free of clock reads.
+    pub now_ms: i64,
+    pub request_ids: RequestIds,
 }
 
 impl App {
@@ -155,7 +172,37 @@ impl App {
             watchlist: default_watchlist(),
             quotes: HashMap::new(),
             pairing: PairingState::Idle,
+            account: AccountState::new(),
+            focus: Focus::Chart,
+            command: CommandLine::default(),
+            ticket_qty: LineEditor::new(),
+            now_ms: 0,
+            request_ids: RequestIds::default(),
         }
+    }
+
+    /// Records the wall clock and closes an expired preview. Returns whether the screen changed
+    /// (a countdown second passed, a preview expired, or the rejection line ended).
+    pub fn tick(&mut self, now_ms: i64) -> bool {
+        self.now_ms = now_ms;
+        self.account.tick(now_ms)
+    }
+
+    /// The limit price of the ticket, for the selected symbol only (Req 30.1).
+    pub fn ticket_limit_price(&self) -> Option<Price> {
+        if self.ticket.symbol == self.symbol {
+            self.ticket.limit_price
+        } else {
+            None
+        }
+    }
+
+    /// Sets `ticket.qty` from the quantity text and puts the ticket on the selected symbol.
+    pub fn sync_ticket_qty(&mut self) {
+        if self.ticket.symbol.is_empty() {
+            self.ticket.symbol = self.symbol.clone();
+        }
+        self.ticket.qty = parse_qty(self.ticket_qty.text(), QTY_DECIMALS);
     }
 
     /// The indicator series of the selected symbol and timeframe.
@@ -217,10 +264,18 @@ impl App {
     /// Prefills the limit ticket with `price` for `symbol` (Req 30.1).
     pub fn prefill_limit(&mut self, symbol: &str, price: Price) {
         if self.ticket.symbol != symbol {
+            // A ticket that never had a symbol keeps a quantity typed before the first prefill;
+            // a quantity counted in another symbol's lots does not carry over.
+            let had_symbol = !self.ticket.symbol.is_empty();
+            let qty = if had_symbol { None } else { self.ticket.qty };
             self.ticket = Ticket {
                 symbol: symbol.to_owned(),
+                qty,
                 ..Ticket::default()
             };
+            if had_symbol {
+                self.ticket_qty.clear();
+            }
         }
         self.ticket.limit_price = Some(price);
     }
@@ -242,6 +297,9 @@ impl App {
         self.book_cursor = None;
         self.ticket.symbol = symbol.to_owned();
         self.ticket.limit_price = None;
+        // A quantity counted in the old symbol's lots does not carry over (Req 30.2).
+        self.ticket.qty = None;
+        self.ticket_qty.clear();
         Some(previous)
     }
 
@@ -347,6 +405,8 @@ fn apply_message(app: &mut App, message: ServerMessage) -> bool {
             account_id,
             address,
         } => {
+            // Another account: nothing of the old one stays on screen (Req 46.4).
+            app.account.on_session(&account_id);
             app.session = Some(SessionInfo {
                 account_id,
                 address,
@@ -405,14 +465,48 @@ fn apply_message(app: &mut App, message: ServerMessage) -> bool {
                     side,
                     ts,
                 }),
+                account_event @ (Event::OrderAck { .. }
+                | Event::OrderRejected { .. }
+                | Event::Fill { .. }
+                | Event::Position { .. }) => {
+                    app.account.apply_event(&account_event, app.now_ms);
+                }
                 _ => {}
             }
             true
         }
-        ServerMessage::Notice { .. }
-        | ServerMessage::Preview { .. }
-        | ServerMessage::ParseError { .. }
-        | ServerMessage::Pong { .. } => false,
+        // The engine restarted: every paper account is flat again (Req 15.7).
+        ServerMessage::Notice {
+            kind: NoticeKind::AccountReset,
+            ..
+        } => {
+            app.account.on_account_reset();
+            true
+        }
+        // The server's preview of the last command (Req 22.1). A preview of the text typed in the
+        // command bar clears the bar, and the dialog takes the keys from it (Req 31.4).
+        ServerMessage::Preview {
+            request_id,
+            preview,
+        } => {
+            let applied = app.account.on_preview(&request_id, &preview, app.now_ms);
+            if applied {
+                if app.command.submitted.as_deref() == Some(request_id.as_str()) {
+                    app.command.after_preview();
+                }
+                if app.focus == Focus::Command {
+                    app.focus = Focus::Chart;
+                }
+            }
+            applied
+        }
+        // The text is kept so the user can fix it (Req 21.5, 31.4).
+        ServerMessage::ParseError {
+            request_id,
+            message,
+            position,
+        } => app.account.on_parse_error(&request_id, &message, position),
+        ServerMessage::Notice { .. } | ServerMessage::Pong { .. } => false,
     }
 }
 
@@ -928,5 +1022,227 @@ mod tests {
             }),
         );
         assert_eq!(app.watchlist, ["BTC-USD", "ETH-USD", "SOL-USD"]);
+    }
+}
+
+#[cfg(test)]
+mod order_reducer_tests {
+    use super::*;
+    use protocol::client::{OrderPreview, PreviewAction};
+    use protocol::{Money, OrderId, OrderKind, OrderStatus};
+
+    fn guest() -> AccountId {
+        AccountId::new("guest").unwrap()
+    }
+
+    fn event(event: Event) -> NetEvent {
+        NetEvent::Message(ServerMessage::Event { event })
+    }
+
+    fn session(account: &str, address: Option<&str>) -> NetEvent {
+        NetEvent::Message(ServerMessage::Session {
+            account_id: AccountId::new(account).unwrap(),
+            address: address.map(str::to_owned),
+        })
+    }
+
+    fn position(qty: i64) -> NetEvent {
+        event(Event::Position {
+            account_id: guest(),
+            symbol: "BTC-USD".into(),
+            qty: Qty(qty),
+            avg_entry: Some(Price(6_400_000)),
+            realized: Money(10_000_000_000),
+            unrealized: Money(-5_000_000_000),
+        })
+    }
+
+    fn ack(id: &str, status: OrderStatus) -> NetEvent {
+        event(Event::OrderAck {
+            account_id: guest(),
+            order_id: OrderId::new(id).unwrap(),
+            status,
+        })
+    }
+
+    fn preview(request_id: &str) -> NetEvent {
+        NetEvent::Message(ServerMessage::Preview {
+            request_id: request_id.into(),
+            preview: OrderPreview {
+                preview_id: "p1".into(),
+                text: "BUY BTC-USD 0.1 LMT 64000.00".into(),
+                action: PreviewAction::Place {
+                    symbol: "BTC-USD".into(),
+                    side: Side::Buy,
+                    qty: Qty(10_000_000),
+                    kind: OrderKind::Limit {
+                        price: Price(6_400_000),
+                    },
+                },
+                expires_at: 30_000,
+            },
+        })
+    }
+
+    // Req 28.1
+    #[test]
+    fn position_events_fill_the_positions_table() {
+        let mut app = App::new("ws://x/ws");
+        assert!(update(&mut app, session("guest", None)));
+        assert!(update(&mut app, position(10_000_000)));
+        let row = &app.account.positions["BTC-USD"];
+        assert_eq!(row.qty, Qty(10_000_000));
+        assert_eq!(row.avg_entry, Some(Price(6_400_000)));
+        assert_eq!(app.account.realized_total(), 10_000_000_000);
+        assert_eq!(app.account.unrealized_total(), -5_000_000_000);
+        // A flat position leaves the table and keeps the realized P&L.
+        update(&mut app, position(0));
+        assert!(app.account.positions.is_empty());
+        assert_eq!(app.account.realized_total(), 10_000_000_000);
+    }
+
+    // Req 28.2
+    #[test]
+    fn order_acks_open_and_close_rows_through_the_net_path() {
+        let mut app = App::new("ws://x/ws");
+        update(&mut app, session("guest", None));
+        // The confirmed placement labels the row of the next accepted ack.
+        app.account.command_sent("r1");
+        update(&mut app, preview("r1"));
+        assert_eq!(app.account.take_preview_for_confirm().as_deref(), Some("p1"));
+        update(&mut app, ack("o-1", OrderStatus::Accepted));
+        assert_eq!(app.account.orders.len(), 1);
+        assert_eq!(app.account.orders[0].symbol.as_deref(), Some("BTC-USD"));
+        update(&mut app, event(Event::Fill {
+            account_id: guest(),
+            order_id: OrderId::new("o-1").unwrap(),
+            symbol: "BTC-USD".into(),
+            side: Side::Buy,
+            price: Price(6_400_000),
+            qty: Qty(4_000_000),
+            fee: Money(0),
+            remaining: Qty(6_000_000),
+            ts: 1,
+        }));
+        assert_eq!(app.account.orders[0].filled, 4_000_000);
+        assert_eq!(app.account.orders[0].remaining, 6_000_000);
+        update(&mut app, ack("o-1", OrderStatus::Canceled));
+        assert!(app.account.orders.is_empty());
+    }
+
+    // Req 30.6
+    #[test]
+    fn an_order_rejection_becomes_the_rejection_line() {
+        let mut app = App::new("ws://x/ws");
+        update(&mut app, session("guest", None));
+        app.now_ms = 5_000;
+        assert!(update(&mut app, event(Event::OrderRejected {
+            account_id: guest(),
+            order_id: OrderId::new("o-7").unwrap(),
+            reason: "kill_switch".into(),
+        })));
+        let latest = app.account.latest_rejection(5_000).unwrap();
+        assert_eq!(latest.reason, "kill_switch");
+        assert!(app.account.latest_rejection(15_000).is_none());
+    }
+
+    // Req 22.1
+    #[test]
+    fn a_preview_answers_the_last_request_only() {
+        let mut app = App::new("ws://x/ws");
+        assert!(!update(&mut app, preview("r1")));
+        app.account.command_sent("r1");
+        assert!(update(&mut app, preview("r1")));
+        assert_eq!(app.account.preview.as_ref().map(|p| p.deadline_ms), Some(30_000));
+        assert!(app.account.dialog_open());
+    }
+
+    // Req 21.5, 31.4
+    #[test]
+    fn a_parse_error_is_stored_with_its_position() {
+        let mut app = App::new("ws://x/ws");
+        app.account.command_sent("r1");
+        let error = NetEvent::Message(ServerMessage::ParseError {
+            request_id: "r1".into(),
+            message: "unknown symbol".into(),
+            position: 4,
+        });
+        assert!(update(&mut app, error));
+        assert_eq!(app.account.parse_error.as_ref().map(|e| e.position), Some(4));
+    }
+
+    // Req 46.4
+    #[test]
+    fn a_session_for_another_account_clears_the_account_state() {
+        let mut app = App::new("ws://x/ws");
+        update(&mut app, session("guest", None));
+        update(&mut app, position(5));
+        update(&mut app, ack("o-1", OrderStatus::Accepted));
+        app.account.command_sent("r1");
+        update(&mut app, preview("r1"));
+        // The same account on a reconnect keeps the data.
+        update(&mut app, NetEvent::Connected);
+        update(&mut app, session("guest", None));
+        assert_eq!(app.account.positions.len(), 1);
+        assert_eq!(app.account.orders.len(), 1);
+        assert!(app.account.preview.is_some());
+        // Another account clears positions, orders, and the preview.
+        update(&mut app, session("w_abc", Some("abc")));
+        assert!(app.account.positions.is_empty());
+        assert!(app.account.orders.is_empty());
+        assert!(app.account.preview.is_none());
+        // Events of the old account are ignored from now on.
+        assert!(update(&mut app, position(5)));
+        assert!(app.account.positions.is_empty());
+    }
+
+    // Req 15.7
+    #[test]
+    fn an_account_reset_notice_clears_the_account_state() {
+        let mut app = App::new("ws://x/ws");
+        update(&mut app, session("guest", None));
+        update(&mut app, position(5));
+        update(&mut app, ack("o-1", OrderStatus::Accepted));
+        let notice = NetEvent::Message(ServerMessage::Notice {
+            kind: NoticeKind::AccountReset,
+            message: "reset".into(),
+        });
+        assert!(update(&mut app, notice));
+        assert!(app.account.positions.is_empty() && app.account.orders.is_empty());
+        // Other notices change nothing on screen.
+        let engine_down = NetEvent::Message(ServerMessage::Notice {
+            kind: NoticeKind::EngineDown,
+            message: "down".into(),
+        });
+        assert!(!update(&mut app, engine_down));
+    }
+
+    #[test]
+    fn the_ticket_quantity_follows_the_symbol() {
+        let mut app = App::new("ws://x/ws");
+        app.ticket_qty.set("0.5");
+        app.sync_ticket_qty();
+        assert_eq!(app.ticket.qty, Some(Qty(50_000_000)));
+        assert_eq!(app.ticket.symbol, "BTC-USD");
+        assert_eq!(app.ticket_limit_price(), None);
+        app.prefill_limit("BTC-USD", Price(6_400_000));
+        assert_eq!(app.ticket_limit_price(), Some(Price(6_400_000)));
+        // Another symbol starts a fresh ticket without a price or a quantity.
+        app.select_symbol("ETH-USD");
+        assert_eq!(app.ticket.qty, None);
+        assert!(app.ticket_qty.is_empty());
+        assert_eq!(app.ticket_limit_price(), None);
+    }
+
+    #[test]
+    fn tick_records_the_clock_and_expires_the_preview() {
+        let mut app = App::new("ws://x/ws");
+        app.account.command_sent("r1");
+        update(&mut app, preview("r1"));
+        assert!(app.tick(0));
+        assert_eq!(app.now_ms, 0);
+        assert!(app.tick(31_000));
+        assert!(app.account.preview.is_none());
+        assert_eq!(app.now_ms, 31_000);
     }
 }

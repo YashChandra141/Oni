@@ -27,6 +27,22 @@ pub enum MouseAction {
     SelectTimeframe(Timeframe),
     /// Left click on an indicator toggle button (Req 26.3).
     ToggleIndicator(Indicator),
+    /// Left click on the ✕ of an open order: cancel it (Req 30.3).
+    CancelOrder(String),
+    /// Left click on an open order row: select it and focus the orders panel.
+    SelectOrder(String),
+    /// Left click on the ticket's BUY or SELL button (Req 30.2).
+    TicketBuy,
+    TicketSell,
+    /// Left click on the ticket quantity: type the quantity.
+    FocusTicket,
+    /// Left click on the command bar (Req 31.1).
+    FocusCommand,
+    /// Left click on the open orders panel.
+    FocusOrders,
+    /// Left click on a dialog button (Req 22.2, 22.3).
+    DialogConfirm,
+    DialogCancel,
     /// Crosshair position relative to the chart area.
     SetCrosshair(Crosshair),
     ClearCrosshair,
@@ -69,6 +85,15 @@ pub fn mouse_action(map: &HitMap, drag: &mut DragState, ev: MouseEvent) -> Optio
                 Some((_, HitTarget::WatchlistSymbol(symbol))) => {
                     Some(MouseAction::SelectSymbol(symbol.clone()))
                 }
+                Some((_, HitTarget::OpenOrder(id))) => Some(MouseAction::CancelOrder(id.clone())),
+                Some((_, HitTarget::OrderRow(id))) => Some(MouseAction::SelectOrder(id.clone())),
+                Some((_, HitTarget::TicketBuy)) => Some(MouseAction::TicketBuy),
+                Some((_, HitTarget::TicketSell)) => Some(MouseAction::TicketSell),
+                Some((_, HitTarget::TicketQty)) => Some(MouseAction::FocusTicket),
+                Some((_, HitTarget::DialogConfirm)) => Some(MouseAction::DialogConfirm),
+                Some((_, HitTarget::DialogCancel)) => Some(MouseAction::DialogCancel),
+                Some((_, HitTarget::Panel(PanelId::Orders))) => Some(MouseAction::FocusOrders),
+                Some((_, HitTarget::Panel(PanelId::CommandBar))) => Some(MouseAction::FocusCommand),
                 _ => None,
             }
         }
@@ -348,5 +373,68 @@ mod tests {
             run(&mut d, MouseEventKind::Moved, 90, 40),
             Some(MouseAction::ClearCrosshair)
         );
+    }
+}
+
+#[cfg(test)]
+mod order_click_tests {
+    use super::*;
+    use crossterm::event::KeyModifiers;
+    use ratatui::layout::Rect;
+
+    fn click(map: &HitMap, x: u16, y: u16) -> Option<MouseAction> {
+        let event = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: x,
+            row: y,
+            modifiers: KeyModifiers::NONE,
+        };
+        mouse_action(map, &mut DragState::default(), event)
+    }
+
+    /// The orders panel at x 0..40 with one row at y 2 whose first three cells are the ✕.
+    fn orders_map() -> HitMap {
+        let mut map = HitMap::new();
+        map.register(Rect::new(0, 0, 40, 6), HitTarget::Panel(PanelId::Orders));
+        map.register(Rect::new(1, 2, 38, 1), HitTarget::OrderRow("o-1".into()));
+        map.register(Rect::new(1, 2, 3, 1), HitTarget::OpenOrder("o-1".into()));
+        map.register(Rect::new(0, 20, 60, 1), HitTarget::Panel(PanelId::CommandBar));
+        map.register(Rect::new(50, 8, 5, 1), HitTarget::TicketBuy);
+        map.register(Rect::new(56, 8, 6, 1), HitTarget::TicketSell);
+        map.register(Rect::new(40, 8, 8, 1), HitTarget::TicketQty);
+        map.register(Rect::new(10, 12, 10, 1), HitTarget::DialogConfirm);
+        map.register(Rect::new(22, 12, 10, 1), HitTarget::DialogCancel);
+        map
+    }
+
+    // Req 30.3
+    #[test]
+    fn the_cross_cancels_and_the_rest_of_the_row_selects() {
+        let map = orders_map();
+        assert_eq!(click(&map, 2, 2), Some(MouseAction::CancelOrder("o-1".into())));
+        assert_eq!(click(&map, 20, 2), Some(MouseAction::SelectOrder("o-1".into())));
+        // The panel border and the empty rows focus the panel.
+        assert_eq!(click(&map, 20, 4), Some(MouseAction::FocusOrders));
+        assert_eq!(click(&map, 0, 2), Some(MouseAction::FocusOrders));
+    }
+
+    // Req 30.2, 31.1, 22.2, 22.3
+    #[test]
+    fn ticket_buttons_the_command_bar_and_dialog_buttons_are_clickable() {
+        let map = orders_map();
+        assert_eq!(click(&map, 51, 8), Some(MouseAction::TicketBuy));
+        assert_eq!(click(&map, 57, 8), Some(MouseAction::TicketSell));
+        assert_eq!(click(&map, 41, 8), Some(MouseAction::FocusTicket));
+        assert_eq!(click(&map, 30, 20), Some(MouseAction::FocusCommand));
+        assert_eq!(click(&map, 12, 12), Some(MouseAction::DialogConfirm));
+        assert_eq!(click(&map, 25, 12), Some(MouseAction::DialogCancel));
+        // A right click does nothing.
+        let event = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Right),
+            column: 2,
+            row: 2,
+            modifiers: KeyModifiers::NONE,
+        };
+        assert_eq!(mouse_action(&map, &mut DragState::default(), event), None);
     }
 }
