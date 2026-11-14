@@ -208,44 +208,44 @@ Scope change (approved after 4.3): per-wallet paper accounts plus a shared guest
   - [x] 12.4 TUI: the same panels and dialogs with keyboard and mouse; TestBackend tests
     - _Requirements: 22.1, 22.2, 22.3, 28.1, 28.2, 28.3, 30.2–30.6, 31.1–31.4_
 
-- [ ] 13. Plain-English orders (LLM)
-  - [-] 13.1 `LLM_Provider` interface, OpenAI structured-output implementation with 15 s timeout, model name verified
+- [x] 13. Plain-English orders (LLM)
+  - [x] 13.1 `LLM_Provider` interface, OpenAI structured-output implementation with 15 s timeout, model name verified
     - _Requirements: 23.1, 23.5_
-  - [ ] 13.2 `LLM_Order_Parser`: Zod intent schema → formatter → parser → preview; disabled without key
+  - [x] 13.2 `LLM_Order_Parser`: Zod intent schema → formatter → parser → preview; disabled without key
     - _Requirements: 23.2, 23.3, 23.4, 23.6, 23.7_
-  - [ ] 13.3 Tests with a mock provider and prompt fixtures
+  - [x] 13.3 Tests with a mock provider and prompt fixtures
     - _Requirements: 23.4, 23.5_
 
-- [ ] 14. MCP server
-  - [-] 14.1 `server/src/mcp/main.ts` with the five tools, Zod argument validation, orders over the WS protocol
+- [x] 14. MCP server
+  - [x] 14.1 `server/src/mcp/main.ts` with the five tools, Zod argument validation, orders over the WS protocol
     - _Requirements: 24.1–24.7_
-  - [ ] 14.2 Register in `.kiro/settings/mcp.json`; tests against a mock server
+  - [x] 14.2 Register in `.kiro/settings/mcp.json`; tests against a mock server
     - _Requirements: 24.8_
-  - [ ] 14.3 `TERMINAL_TOKEN` support
+  - [x] 14.3 `TERMINAL_TOKEN` support
     - Read `TERMINAL_TOKEN` from the environment with Zod (optional, never logged); when set, send `Authenticate` after each WS connect and `Authorization: Bearer` on REST calls; when unset, guest; a rejected token gives a tool error without the token value
     - Check whether Kiro's `mcp.json` `env` block can reference a variable from the user's environment; never write a token value into `.kiro/settings/mcp.json`
     - Tests against the mock server: Authenticate and Bearer sent with the token, nothing sent without it, captured logs and tool results never contain the token
     - _Requirements: 24.4, 24.9, 24.10, 24.11_
 
 - [ ] 15. Release binaries and Render deploy
-  - [-] 15.1 `Dockerfile` (rust:1.94-bookworm → oven/bun:1.4.4-debian, non-root)
+  - [x] 15.1 `Dockerfile` (rust:1.94-bookworm → oven/bun:1.4.4-debian, non-root)
     - Runtime stage installs production server dependencies, which include the pinned `prisma` CLI
     - Copies `server/` with `prisma.config.ts`, `prisma/schema.prisma`, `prisma/migrations/`, and `scripts/start.ts`; runs `bun run db:generate` during the build, before switching to the non-root user
     - Checks that the Prisma CLI's migration engine runs on the Debian runtime image (for example, that OpenSSL is present)
     - Sets `ENV NODE_ENV=production`; `CMD` runs the Start_Script (`bun server/scripts/start.ts`), which applies Migrations with `prisma migrate deploy` before starting the server
     - _Requirements: 16.5, 20.15, 39.1, 39.2, 39.3_
-  - [ ] 15.2 `render.yaml` as agreed
+  - [x] 15.2 `render.yaml` as agreed
     - `oni-server`: no `JOURNAL_PATH`; `DATABASE_URL` (Neon pooled URL) and `DIRECT_URL` (Neon direct URL, used only by Prisma Migrate) both with `sync: false`, values set only in the Render dashboard; `DB_ADAPTER` left unset so the Neon adapter is chosen from the host; no `preDeployCommand` (migrations run in the Start_Script); `buildFilter` includes `server/prisma/**`
     - `SESSION_SECRET` with `generateValue: true` (design Decision A12); `LIVE_VENUE: backpack`; `DATA_MODE: replay`; `WEB_URL` set to the static site URL, which is also listed in `ALLOWED_ORIGINS`
     - _Requirements: 16.1, 16.7, 16.9, 20.16, 38.1, 38.2, 38.4, 38.5_
-  - [ ] 15.3 CI: Docker smoke test, Postgres journal job, and render.yaml schema validation
+  - [x] 15.3 CI: Docker smoke test, Postgres journal job, and render.yaml schema validation
     - New `journal-pg` job on `ubuntu-latest` with a `postgres:17` service container (health check `pg_isready`): `bun install`, `bun run db:generate`, then `bunx prisma migrate deploy` in `server/` with `DIRECT_URL=postgres://postgres:postgres@localhost:5432/postgres`, then the journal contract tests with `TEST_DATABASE_URL` set to the same URL and `DB_ADAPTER=pg` (`bun test server`)
     - `docker-smoke` job gets the same `postgres:17` service; run the image with `--network host` and that URL as both `DATABASE_URL` and `DIRECT_URL`; `smoke.ts` waits for `/health` `db: "up"` (Migrations applied by the Start_Script), places an order, receives a Fill, and polls `/journal` for the order and fill rows
     - These throwaway container URLs are not secrets
     - _Requirements: 38.3, 41.3, 41.4, 41.5, 41.6_
-  - [ ] 15.4 `release.yml`: Windows MSVC zip, macOS universal tar.gz via lipo, SHA-256, smoke checks
+  - [x] 15.4 `release.yml`: Windows MSVC zip, macOS universal tar.gz via lipo, SHA-256, smoke checks
     - _Requirements: 40.1, 40.2, 40.3_
-  - [ ] 15.5 README: Render setup, free-plan limits (sleeps after 15 min idle, about 1 min to wake; the journal persists in Neon while the paper account resets), downloads, Gatekeeper/SmartScreen, build from source
+  - [-] 15.5 README: Render setup, free-plan limits (sleeps after 15 min idle, about 1 min to wake; the journal persists in Neon while the paper account resets), downloads, Gatekeeper/SmartScreen, build from source
     - _Requirements: 40.4, 42.6_
   - [ ] 15.6 README: Neon setup
     - Create a Neon Free project; copy the pooled connection string (`-pooler` host) as `DATABASE_URL` and the direct connection string as `DIRECT_URL`, keeping `sslmode=require` in both; paste both into a local `.env` and into the Render dashboard; never commit either

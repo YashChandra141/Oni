@@ -41,3 +41,123 @@ jobs:
 
       - name: Check (fmt, clippy, tests, typecheck)
         run: bun run check
+
+  # Req 41.5: journal tests against a real Postgres. The service credentials are throwaway.
+  journal-pg:
+    name: journal (postgres 17)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DIRECT_URL: postgres://postgres:postgres@localhost:5432/postgres
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      DB_ADAPTER: pg
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate Prisma Client
+        run: bun run db:generate
+
+      - name: Apply Migrations
+        working-directory: server
+        run: bunx prisma migrate deploy
+
+      - name: Journal tests against Postgres
+        run: bun test server
+
+  # Req 41.3, 41.6: build the Server_Image, run it against the Postgres service, place a paper order.
+  docker-smoke:
+    name: docker smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Install dependencies (smoke script)
+        run: bun install --frozen-lockfile
+
+      - name: Build Server_Image
+        run: docker build -t oni-server .
+
+      - name: Start Server_Image
+        # Throwaway values for a container that lives for this job only; none are real secrets.
+        # The image sets NODE_ENV=production, PORT=10000 and ENGINE_PATH itself.
+        run: |
+          docker run -d --name oni-smoke --network host \
+            -e DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres \
+            -e DIRECT_URL=postgres://postgres:postgres@localhost:5432/postgres \
+            -e DB_ADAPTER=pg \
+            -e SESSION_SECRET=ci-smoke-throwaway-session-secret-0123456789abcdef \
+            -e ALLOWED_ORIGINS=http://localhost:3000 \
+            -e WEB_URL=http://localhost:3000 \
+            -e DATA_MODE=replay \
+            -e PORT=10000 \
+            oni-server
+
+      - name: Smoke test
+        run: bun server/scripts/smoke.ts
+        env:
+          SMOKE_BASE_URL: http://localhost:10000
+          SMOKE_ORIGIN: http://localhost:3000
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: docker logs oni-smoke || true
+
+      - name: Stop container
+        if: always()
+        run: docker rm -f oni-smoke || true
+
+  # Req 38.3, 41.4: validate render.yaml against Render's published Blueprint JSON schema.
+  render-blueprint:
+    name: render.yaml schema
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - name: Fetch Render Blueprint schema
+        run: curl -fsSL --retry 3 -o "$RUNNER_TEMP/render.schema.json" https://render.com/schema/render.yaml.json
+
+      - name: Validate render.yaml
+        run: bunx ajv-cli@5.0.0 validate --strict=false -s "$RUNNER_TEMP/render.schema.json" -d render.yaml

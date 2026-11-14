@@ -32,7 +32,7 @@
 //   result becomes `Error { invalid_command }` with "<action> rejected: <reason>"; a throwing
 //   Router becomes `Error { internal }`. Without a Router they are refused.
 // - CommandText, Confirm, and Discard use the CommandBar set with `setCommandBar` (Task 12.1):
-//   CommandText → `Preview` or `ParseError` (`?` text → `Notice llm_disabled` until Task 13);
+//   CommandText → `Preview` or `ParseError` (`?` text → LLM_Order_Parser → `Preview` or `ParseError`, or `Notice llm_disabled` without a key, Req 23);
 //   Confirm → `PreviewStore.take` for this connection and its current account, then the Router;
 //   Discard → `PreviewStore.discard`. Without a CommandBar they are refused.
 // - `sendTo(connectionId, message)` and `onConnectionClosed(listener)` serve the Router wiring
@@ -59,6 +59,7 @@ import {
 import { formatCommand } from "../commands/formatter.ts";
 import { type ParsedCommand, parseCommand } from "../commands/parser.ts";
 import type { PreviewStore } from "../commands/previews.ts";
+import { LLM_DISABLED_MESSAGE, type LlmOrderParser } from "../llm/parser.ts";
 import type { OrderOrigin, Router } from "../router.ts";
 import { MarketState } from "../state/market.ts";
 import { type SubscriptionKey, SubscriptionRegistry } from "./clients.ts";
@@ -152,6 +153,12 @@ export interface CommandBar {
   readonly previews: PreviewStore;
   readonly accounts: { positionLots(accountId: AccountId, symbol: string): bigint };
   readonly router: Pick<Router, "submit" | "cancelAll" | "flattenAll">;
+  /**
+   * The LLM_Order_Parser (Task 13.2, Req 23). Absent or disabled: `?` text gets
+   * `Notice llm_disabled` (Req 23.7). It yields commands only; they become previews here and
+   * reach the Router only through Confirm.
+   */
+  readonly llm?: Pick<LlmOrderParser, "parse">;
 }
 
 /** Called when a connection closes, with its connection id. */
@@ -238,6 +245,8 @@ export class Gateway {
   readonly #byJti = new Map<string, Set<string>>();
   readonly #accountListeners = new Set<AccountChangeListener>();
   readonly #closedListeners = new Set<ConnectionClosedListener>();
+  /** Connections with a plain-English order in flight. */
+  readonly #llmBusy = new Set<string>();
   #publisher: Publisher | null = null;
   #router: GatewayRouter | null = null;
   #commandBar: CommandBar | null = null;
@@ -545,16 +554,13 @@ export class Gateway {
   }
 
   /**
-   * Command bar text (Req 21, 22.1). Text starting with `?` is a plain-English order: Task 13
-   * replaces the notice below with the LLM_Order_Parser, which must also end in a preview.
+   * Command bar text (Req 21, 22.1). Text starting with `?` is a plain-English order and goes
+   * to `#llmText`, which also ends in a preview.
    * Anything else is parsed here. The account for `%` amounts is the session's, never the message's.
    */
   #commandText(ws: GatewaySocket, clientId: string, bar: CommandBar, requestId: string, text: string): void {
     if (text.trimStart().startsWith("?")) {
-      // TODO(Task 13): hand `text.trimStart().slice(1)` to the LLM_Order_Parser and send its preview.
-      ws.send(
-        encode({ type: "notice", kind: "llm_disabled", message: "Plain-English orders are disabled." }),
-      );
+      this.#llmText(ws, clientId, bar, requestId, text.trimStart().slice(1));
       return;
     }
     const accountId = (ws.data.session ?? GUEST_SESSION).accountId;
@@ -572,6 +578,56 @@ export class Gateway {
     }
     const preview = bar.previews.create(clientId, accountId, result.command, formatCommand(result.command));
     ws.send(encode({ type: "preview", request_id: requestId, preview }));
+  }
+
+  /**
+   * Plain-English order (Req 23). The LLM_Order_Parser returns a command; it is stored as an
+   * Order_Preview for this connection and its account, exactly like typed text (Req 23.3), and
+   * needs Confirm (Req 23.6). Failure sends `ParseError` and no preview (Req 23.4, 23.5).
+   * One request per connection at a time, to bound model calls. The account is read from the
+   * session before the call and checked again after it: a switch in between drops the result.
+   */
+  #llmText(ws: GatewaySocket, clientId: string, bar: CommandBar, requestId: string, text: string): void {
+    const llm = bar.llm;
+    const disabled = (message: string): void => {
+      ws.send(encode({ type: "notice", kind: "llm_disabled", message }));
+    };
+    if (llm === undefined) {
+      disabled(LLM_DISABLED_MESSAGE);
+      return;
+    }
+    const fail = (message: string): void => {
+      ws.send(encode({ type: "parse_error", request_id: requestId, message, position: 0 }));
+    };
+    if (this.#llmBusy.has(clientId)) {
+      fail("A plain-English order is already being interpreted. Wait for it to finish.");
+      return;
+    }
+    const accountId = (ws.data.session ?? GUEST_SESSION).accountId;
+    this.#llmBusy.add(clientId);
+    llm
+      .parse(text, accountId)
+      .then((result) => {
+        if (this.#sockets.get(clientId) !== ws) return; // closed while waiting
+        if ((ws.data.session ?? GUEST_SESSION).accountId !== accountId) {
+          fail("Your account changed while the order was being interpreted. Try again.");
+          return;
+        }
+        if (!result.ok) {
+          if (result.kind === "disabled") disabled(result.message);
+          else fail(result.message);
+          return;
+        }
+        const preview = bar.previews.create(clientId, accountId, result.command, formatCommand(result.command));
+        ws.send(encode({ type: "preview", request_id: requestId, preview }));
+      })
+      .catch(() => {
+        this.#log.error(`[gateway] client ${clientId} plain-English order failed unexpectedly`);
+        if (this.#sockets.get(clientId) === ws) fail("Plain-English order failed.");
+      })
+      .finally(() => {
+        this.#llmBusy.delete(clientId);
+      });
   }
 
   /**

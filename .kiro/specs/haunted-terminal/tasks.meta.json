@@ -1153,6 +1153,11 @@
         "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1794657275090
+      },
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794658286973
       }
     ],
     "14.1 `server/src/mcp/main.ts` with the five tools, Zod argument validation, orders over the WS protocol": [
@@ -1160,6 +1165,11 @@
         "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1794657275529
+      },
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794658289304
       }
     ],
     "15.1 `Dockerfile` (rust:1.94-bookworm → oven/bun:1.4.4-debian, non-root)": [
@@ -1167,6 +1177,116 @@
         "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1794657275869
+      },
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794658290100
+      }
+    ],
+    "13.2 `LLM_Order_Parser`: Zod intent schema → formatter → parser → preview; disabled without key": [
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794658310739
+      },
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794658549438
+      }
+    ],
+    "14.2 Register in `.kiro/settings/mcp.json`; tests against a mock server": [
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794658311796
+      },
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794658662002
+      }
+    ],
+    "15.2 `render.yaml` as agreed": [
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794658312264
+      },
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794658549882
+      }
+    ],
+    "13.3 Tests with a mock provider and prompt fixtures": [
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794658669604
+      },
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794659112121
+      }
+    ],
+    "14.3 `TERMINAL_TOKEN` support": [
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794658671512
+      },
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794659115300
+      }
+    ],
+    "15.3 CI: Docker smoke test, Postgres journal job, and render.yaml schema validation": [
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794658673035
+      },
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794659115833
+      }
+    ],
+    "13. Plain-English orders (LLM)": [
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794659112994
+      }
+    ],
+    "14. MCP server": [
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794659115540
+      }
+    ],
+    "15.4 `release.yml`: Windows MSVC zip, macOS universal tar.gz via lipo, SHA-256, smoke checks": [
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794659123431
+      },
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794659191263
+      }
+    ],
+    "15.5 README: Render setup, free-plan limits (sleeps after 15 min idle, about 1 min to wake; the journal persists in Neon while the paper account resets), downloads, Gatekeeper/SmartScreen, build from source": [
+      {
+        "executionId": "838f6239-19e3-4c4e-a95d-e048acace703",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794659198625
       }
     ]
   }

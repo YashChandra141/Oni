@@ -18,6 +18,9 @@ import { createAuthRoutes, socketAddressFromEnv } from "./auth/routes.ts";
 import { TokenService } from "./auth/token.ts";
 import { type Config, type SecretSource, loadConfigOrExit, redactSecrets } from "./config.ts";
 import { PreviewStore } from "./commands/previews.ts";
+import { createOpenAiProvider } from "./llm/openai.ts";
+import { LlmOrderParser } from "./llm/parser.ts";
+import type { LlmProvider } from "./llm/provider.ts";
 import { classifyPrismaError } from "./journal/classify.ts";
 import { createLazyPrismaStore } from "./journal/lazy.ts";
 import { fromFillEvent, fromRejectedEvent, fromRouterRecord } from "./journal/map.ts";
@@ -74,6 +77,8 @@ export interface AppDeps {
   readonly journalQueue?: JournalQueue;
   readonly journalStore?: Pick<JournalStore, "listOrders" | "listJournal">;
   readonly registry?: SubscriptionRegistry;
+  /** LLM_Provider for `?` orders. Null or unset disables them (Req 23.7). `startServer` builds it from OPENAI_API_KEY. */
+  readonly llm?: LlmProvider | null;
   /** Defaults to a new MarketState. */
   readonly market?: MarketState;
   /** Defaults to a new AccountState. */
@@ -213,7 +218,15 @@ export function createApp(deps: AppDeps): App {
   // Command bar (Task 12.1, Req 21, 22.4, 46.4): pending previews are bound to a connection and
   // its account, and are dropped on an account switch and on close.
   const previews = new PreviewStore({ now });
-  gateway.setCommandBar({ previews, accounts, router });
+  // Plain-English orders (Task 13.2, Req 23): disabled without a provider (Req 23.7). The parser
+  // yields commands only; they become previews and need Confirm like typed ones (Req 23.6).
+  const prices = marketPrices(market);
+  const llm = new LlmOrderParser({
+    provider: deps.llm ?? null,
+    positionLots: (accountId, symbol) => accounts.positionLots(accountId, symbol),
+    lastPrice: (symbol) => prices.lastPrice(symbol),
+  });
+  gateway.setCommandBar({ previews, accounts, router, llm });
   gateway.onAccountChange((connectionId) => {
     previews.discardForConnection(connectionId);
   });
@@ -329,9 +342,21 @@ export function startServer(options: StartServerOptions): RunningServer {
     migrated: options.journalMigrated ?? databaseUrl === undefined,
   });
 
+  // Req 23.7: no OPENAI_API_KEY, no provider, no plain-English orders.
+  const openaiApiKey = config.openaiApiKey;
+  const llm =
+    openaiApiKey === undefined
+      ? null
+      : createOpenAiProvider({
+          apiKey: openaiApiKey,
+          model: config.openaiModel,
+          fetch: (input, init) => globalThis.fetch(input, init),
+        });
+
   const app = createApp({
     config,
     supervisor,
+    llm,
     orderSender,
     journalQueue: journal,
     journalStore: store,
