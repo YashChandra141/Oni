@@ -1,0 +1,17 @@
+{
+  "_source": "https://docs.backpack.exchange/#tag/Streams (public stream depth.<symbol>); continuity rule per https://apis.io/channels/backpack/depth-symbol/",
+  "_note": "Documented example written by hand, NOT a live capture. Fields e,E,s,a,b,U,u,T as recalled from the Backpack docs; verify against a real capture (Task 7.7). a = asks, b = bids, each [price, quantity] string pairs with absolute quantity; quantity \"0\" removes the level. E and T are microseconds. U and u are integers on the wire (the REST snapshot's lastUpdateId is a string).",
+  "sample": {
+    "stream": "depth.SOL_USDC",
+    "data": {
+      "e": "depth",
+      "E": 1794633182150001,
+      "s": "SOL_USDC",
+      "a": [["75.47", "198.5"], ["75.62", "0"]],
+      "b": [["75.46", "304.72"]],
+      "U": 4686272931,
+      "u": 4686272933,
+      "T": 1794633182149870
+    }
+  }
+}

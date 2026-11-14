@@ -1,0 +1,27 @@
+{
+  "_source": "https://api.backpack.exchange/api/v1/markets (public REST; single market: /api/v1/market?symbol=<sym>)",
+  "_note": "Hand-written subset of the documented market object, NOT a live capture. tickSize and stepSize values were read once from the public /api/v1/market endpoint during Task 7.1 (no auth). Unused filter fields are omitted. Replace with a real capture in Task 7.7.",
+  "sample": [
+    {
+      "symbol": "BTC_USDC", "baseSymbol": "BTC", "quoteSymbol": "USDC", "marketType": "SPOT", "orderBookState": "Open", "visible": true,
+      "filters": {
+        "price": { "minPrice": "0.1", "maxPrice": null, "tickSize": "0.1" },
+        "quantity": { "minQuantity": "0.00001", "maxQuantity": null, "stepSize": "0.00001" }
+      }
+    },
+    {
+      "symbol": "ETH_USDC", "baseSymbol": "ETH", "quoteSymbol": "USDC", "marketType": "SPOT", "orderBookState": "Open", "visible": true,
+      "filters": {
+        "price": { "minPrice": "0.01", "maxPrice": null, "tickSize": "0.01" },
+        "quantity": { "minQuantity": "0.0001", "maxQuantity": null, "stepSize": "0.0001" }
+      }
+    },
+    {
+      "symbol": "SOL_USDC", "baseSymbol": "SOL", "quoteSymbol": "USDC", "marketType": "SPOT", "orderBookState": "Open", "visible": true,
+      "filters": {
+        "price": { "minPrice": "0.01", "maxPrice": null, "tickSize": "0.01" },
+        "quantity": { "minQuantity": "0.01", "maxQuantity": null, "stepSize": "0.01" }
+      }
+    }
+  ]
+}

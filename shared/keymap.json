@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "contexts": {
+    "global": {
+      "1": "timeframe.1m",
+      "2": "timeframe.5m",
+      "3": "timeframe.15m",
+      "4": "timeframe.1h",
+      "5": "timeframe.1d",
+      "Tab": "symbol.next",
+      "Shift+Tab": "symbol.prev",
+      "B": "order.buy",
+      "S": "order.sell",
+      "F": "account.flatten",
+      "X": "orders.cancel_all",
+      "E": "indicator.ema",
+      "W": "indicator.vwap",
+      "O": "indicator.bollinger",
+      "R": "indicator.rsi",
+      "T": "indicator.atr",
+      ":": "command.focus",
+      "P": "auth.pair",
+      "Q": "app.quit"
+    },
+    "chart": {
+      "+": "chart.zoom_in",
+      "-": "chart.zoom_out",
+      "Left": "chart.pan_back",
+      "Right": "chart.pan_forward"
+    },
+    "book": {
+      "Up": "book.up",
+      "Down": "book.down",
+      "Enter": "book.prefill"
+    },
+    "orders": {
+      "Up": "orders.up",
+      "Down": "orders.down",
+      "Delete": "order.cancel"
+    },
+    "command": {
+      "Up": "history.prev",
+      "Down": "history.next",
+      "Enter": "command.submit",
+      "Escape": "command.blur"
+    },
+    "dialog": {
+      "Enter": "dialog.confirm",
+      "Y": "dialog.confirm",
+      "Escape": "dialog.cancel",
+      "N": "dialog.cancel"
+    }
+  }
+}

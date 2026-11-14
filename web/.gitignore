@@ -1,0 +1,7 @@
+# Next.js regenerates next-env.d.ts on every `next build` / `next dev`, and it
+# imports generated files under .next/ (types/routes.d.ts, types/root-params.d.ts,
+# or .next/dev/types/... in dev). Committing it would make `tsc --noEmit -p web`
+# fail on a clean checkout, where .next/ does not exist yet. Next's own global
+# types (CSS side-effect imports, NodeJS env) still load through the
+# `import ... from "next"` in app/layout.tsx.
+next-env.d.ts

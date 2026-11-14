@@ -1,0 +1,1080 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "2.1 Numeric newtypes `Price`, `Qty`, `Money` (JSON strings), `Timeframe`, `Side`, `OrderKind`, `OrderId`, and the instrument table with `notional()`": [
+      {
+        "executionId": "c9f4eab5-5f56-4a64-aced-f2536abaa402",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794511368399
+      },
+      {
+        "executionId": "7f5557fc-0d2d-4900-b12f-03547401cf5a",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794544337993
+      },
+      {
+        "executionId": "daace91d-3116-4e10-bae9-c31b2a49d8ec",
+        "chatSessionId": "sess_9aa60ab6-6c58-4fa4-bc93-a2e60532e55b",
+        "timestamp": 1794545166625
+      },
+      {
+        "executionId": "467bd9cf-ef1c-440b-ae71-35d7affd6b2c",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794554510258
+      }
+    ],
+    "2.2 `Command`, `Event`, `ClientMessage`, `ServerMessage` enums with serde tags and ts-rs exports to `shared/protocol/`; `bun run gen:protocol`": [
+      {
+        "executionId": "467bd9cf-ef1c-440b-ae71-35d7affd6b2c",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794555187548
+      },
+      {
+        "executionId": "467bd9cf-ef1c-440b-ae71-35d7affd6b2c",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794556334769
+      }
+    ],
+    "2.3 JSON-lines codec with range validation (`decode_command`) mapping failures to `Error` events": [
+      {
+        "executionId": "3dcaa91d-5d28-4efc-bac3-a855e6fc8af1",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794556433515
+      },
+      {
+        "executionId": "5699cb46-ca80-4647-9217-c8dc2108fddc",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794559459743
+      },
+      {
+        "executionId": "5699cb46-ca80-4647-9217-c8dc2108fddc",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794560345082
+      }
+    ],
+    "2.4 Property tests P1 (round-trip) and P2 (no panic on arbitrary input)": [
+      {
+        "executionId": "5699cb46-ca80-4647-9217-c8dc2108fddc",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794560351792
+      },
+      {
+        "executionId": "8280db8b-446e-4135-ac45-6f4c2e818e0f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794563605777
+      }
+    ],
+    "2.5 Engine binary: clap `run`, tokio runtime, stdin reader, stdout writer, Ping → Pong, 1 s Heartbeat, stderr tracing, exit 0 on EOF": [
+      {
+        "executionId": "6dff2341-6d31-402f-8466-be640efadff0",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794563690334
+      },
+      {
+        "executionId": "965ca009-55ee-4fa8-9f8e-fcf74b3cc386",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794575031888
+      }
+    ],
+    "2.6 Demo: pipe a ping into the engine; generated TS types exist": [
+      {
+        "executionId": "965ca009-55ee-4fa8-9f8e-fcf74b3cc386",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794575047882
+      },
+      {
+        "executionId": "965ca009-55ee-4fa8-9f8e-fcf74b3cc386",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794575053417
+      }
+    ],
+    "2. Protocol crate and engine echo loop": [
+      {
+        "executionId": "965ca009-55ee-4fa8-9f8e-fcf74b3cc386",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794575053607
+      }
+    ],
+    "3.1 `config.ts` Zod env schema with secret redaction; `.env.example`": [
+      {
+        "executionId": "a7c701c2-4a22-46ce-8d36-f98e99c048d6",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794575164807
+      },
+      {
+        "executionId": "a7c701c2-4a22-46ce-8d36-f98e99c048d6",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794575517464
+      }
+    ],
+    "3.2 `lines.ts` splitter, `protocol.ts` Zod schemas, `backoff.ts`": [
+      {
+        "executionId": "a7c701c2-4a22-46ce-8d36-f98e99c048d6",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794575523097
+      },
+      {
+        "executionId": "d51aaff9-ac1e-4928-a051-ac3760dbc068",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794579631781
+      }
+    ],
+    "3.3 Property test P25 (backoff) and unit tests for lines and schemas": [
+      {
+        "executionId": "d51aaff9-ac1e-4928-a051-ac3760dbc068",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794579639836
+      },
+      {
+        "executionId": "d51aaff9-ac1e-4928-a051-ac3760dbc068",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794580471816
+      }
+    ],
+    "3.4 `supervisor.ts`: spawn, stdin writer, stdout/stderr readers, restart, resend subscriptions, `account_reset` notice": [
+      {
+        "executionId": "d51aaff9-ac1e-4928-a051-ac3760dbc068",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794580477092
+      },
+      {
+        "executionId": "d51aaff9-ac1e-4928-a051-ac3760dbc068",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794580953215
+      }
+    ],
+    "3.5 Gateway: origin check, `Hello`, Zod validation of client messages, subscription ref-counting, Bun topics; `/health`": [
+      {
+        "executionId": "d51aaff9-ac1e-4928-a051-ac3760dbc068",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794580958721
+      },
+      {
+        "executionId": "d51aaff9-ac1e-4928-a051-ac3760dbc068",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794581615809
+      }
+    ],
+    "3.6 Integration test: real engine heartbeat reaches a WS client; killing the engine restarts it": [
+      {
+        "executionId": "d51aaff9-ac1e-4928-a051-ac3760dbc068",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794581620857
+      },
+      {
+        "executionId": "d51aaff9-ac1e-4928-a051-ac3760dbc068",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794582425835
+      }
+    ],
+    "3. Bun server, engine supervision, and WebSocket gateway": [
+      {
+        "executionId": "d51aaff9-ac1e-4928-a051-ac3760dbc068",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794582426315
+      }
+    ],
+    "4.1 `MarketMsg`, fixture encode/decode, property test P3": [
+      {
+        "executionId": "b9310d51-fb53-4066-a30e-38a2f635ec3b",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794582497848
+      },
+      {
+        "executionId": "b9310d51-fb53-4066-a30e-38a2f635ec3b",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794583061795
+      }
+    ],
+    "4.2 `engine synth` seeded fixture generator; commit `fixtures/demo.jsonl` (BTC, ETH, SOL)": [
+      {
+        "executionId": "b9310d51-fb53-4066-a30e-38a2f635ec3b",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794583067997
+      },
+      {
+        "executionId": "b9310d51-fb53-4066-a30e-38a2f635ec3b",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794584444825
+      }
+    ],
+    "4.3 Replay feed: `StartReplay` with speed 1–50, fixture name validation, looping, errors": [
+      {
+        "executionId": "b9310d51-fb53-4066-a30e-38a2f635ec3b",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794584451235
+      },
+      {
+        "executionId": "b9310d51-fb53-4066-a30e-38a2f635ec3b",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794585831794
+      }
+    ],
+    "4.4 Candle_Builder with 500-bar rings, snapshot on subscribe, live updates": [
+      {
+        "executionId": "b9310d51-fb53-4066-a30e-38a2f635ec3b",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794585840562
+      },
+      {
+        "executionId": "f3ad4ed0-7064-4dcd-a3f1-271fb69e0ceb",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794588153208
+      },
+      {
+        "executionId": "f3ad4ed0-7064-4dcd-a3f1-271fb69e0ceb",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794588696912
+      }
+    ],
+    "4.5 Property tests P4, P5, P6, P7": [
+      {
+        "executionId": "f3ad4ed0-7064-4dcd-a3f1-271fb69e0ceb",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794588703089
+      },
+      {
+        "executionId": "f3ad4ed0-7064-4dcd-a3f1-271fb69e0ceb",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794589260860
+      }
+    ],
+    "4.6 Server sends `StartReplay` on engine start; candle cache in `state/market.ts`; demo: WS subscribe streams candles": [
+      {
+        "executionId": "f3ad4ed0-7064-4dcd-a3f1-271fb69e0ceb",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794589267485
+      },
+      {
+        "executionId": "f3ad4ed0-7064-4dcd-a3f1-271fb69e0ceb",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794590529579
+      }
+    ],
+    "4. Replay feed and candle builder": [
+      {
+        "executionId": "f3ad4ed0-7064-4dcd-a3f1-271fb69e0ceb",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794590530675
+      }
+    ],
+    "17.1 Protocol crate changes and regenerated TS types": [
+      {
+        "executionId": "81548f64-e270-4dec-b990-f4e72c77d237",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794591054938
+      },
+      {
+        "executionId": "81548f64-e270-4dec-b990-f4e72c77d237",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794592803075
+      }
+    ],
+    "5.1 Next.js 16 app (App Router, TS, Tailwind, `output: 'export'`), pinned versions, green-screen theme": [
+      {
+        "executionId": "81548f64-e270-4dec-b990-f4e72c77d237",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794591055205
+      },
+      {
+        "executionId": "e53dfc62-ea43-4d31-838c-8e4703d534a2",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794594655083
+      }
+    ],
+    "6.1 `tui` crate: clap `--server`/`--version`, terminal guard, panic hook, default server URL": [
+      {
+        "executionId": "81548f64-e270-4dec-b990-f4e72c77d237",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794591055486
+      },
+      {
+        "executionId": "81548f64-e270-4dec-b990-f4e72c77d237",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794592802715
+      }
+    ],
+    "5.2 `shared/keymap.json` + TS loader with duplicate-key validation; property test P24 (TS)": [
+      {
+        "executionId": "0a5c86a6-2f33-4c2b-8046-ecf33bfaeb98",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794594753517
+      },
+      {
+        "executionId": "a454900f-de83-41a8-b10b-e4124bf52df6",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794623668494
+      }
+    ],
+    "6.2 `net.rs` WS client with reconnect ≤ 10 s, resubscribe, \"waking server\" status": [
+      {
+        "executionId": "0a5c86a6-2f33-4c2b-8046-ecf33bfaeb98",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794594755354
+      },
+      {
+        "executionId": "a454900f-de83-41a8-b10b-e4124bf52df6",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794624580510
+      }
+    ],
+    "17.2 Server schemas and call sites": [
+      {
+        "executionId": "0a5c86a6-2f33-4c2b-8046-ecf33bfaeb98",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794594756191
+      },
+      {
+        "executionId": "a454900f-de83-41a8-b10b-e4124bf52df6",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794623669221
+      }
+    ],
+    "5.3 `useTerminalSocket` with capped backoff, \"waking server\" status, resubscribe; zustand store with pure reducers and tests": [
+      {
+        "executionId": "a454900f-de83-41a8-b10b-e4124bf52df6",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794624595703
+      },
+      {
+        "executionId": "93fdda21-d4b3-4752-b0c6-4e266f7ca73e",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794625348384
+      },
+      {
+        "executionId": "93fdda21-d4b3-4752-b0c6-4e266f7ca73e",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794625879335
+      }
+    ],
+    "6.3 Embedded keymap with validation; property test P24 (Rust)": [
+      {
+        "executionId": "a454900f-de83-41a8-b10b-e4124bf52df6",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794624596401
+      },
+      {
+        "executionId": "590fd68c-35de-475e-9c1b-57eef71a11a3",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794624842452
+      },
+      {
+        "executionId": "93fdda21-d4b3-4752-b0c6-4e266f7ca73e",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794625349307
+      },
+      {
+        "executionId": "93fdda21-d4b3-4752-b0c6-4e266f7ca73e",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794625880137
+      }
+    ],
+    "17.3 Tests for the new shapes": [
+      {
+        "executionId": "a454900f-de83-41a8-b10b-e4124bf52df6",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794624597028
+      },
+      {
+        "executionId": "93fdda21-d4b3-4752-b0c6-4e266f7ca73e",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794625350689
+      },
+      {
+        "executionId": "93fdda21-d4b3-4752-b0c6-4e266f7ca73e",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794625880478
+      }
+    ],
+    "18.1 Config: `SESSION_SECRET`, `LIVE_VENUE`, `WEB_URL`": [
+      {
+        "executionId": "a454900f-de83-41a8-b10b-e4124bf52df6",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794624597381
+      },
+      {
+        "executionId": "590fd68c-35de-475e-9c1b-57eef71a11a3",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794624841761
+      },
+      {
+        "executionId": "93fdda21-d4b3-4752-b0c6-4e266f7ca73e",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794625337863
+      }
+    ],
+    "17. Protocol v2: accounts, Authenticate, Session, venue (scheduled right after 4.6, alongside 5.1–5.3 and 6.1–6.3, before Tasks 10 and 19)": [
+      {
+        "executionId": "93fdda21-d4b3-4752-b0c6-4e266f7ca73e",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794625880773
+      }
+    ],
+    "5.4 `ChartPanel` (Lightweight Charts via `next/dynamic`, ssr false): candles, volume, timeframe buttons and keys 1–5, wheel zoom, drag pan, keyboard zoom/pan, crosshair": [
+      {
+        "executionId": "93fdda21-d4b3-4752-b0c6-4e266f7ca73e",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794625887585
+      },
+      {
+        "executionId": "a788b620-5779-4c0e-92e1-18fbdd9fd3e6",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794626424830
+      },
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794631810737
+      }
+    ],
+    "6.4 `CandleChart_Widget` (block candles, volume, price axis, zoom/pan window, crosshair) with TestBackend tests": [
+      {
+        "executionId": "93fdda21-d4b3-4752-b0c6-4e266f7ca73e",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794625888385
+      },
+      {
+        "executionId": "a788b620-5779-4c0e-92e1-18fbdd9fd3e6",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794626426096
+      },
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794632197252
+      }
+    ],
+    "18.2 SIWS and Ed25519": [
+      {
+        "executionId": "93fdda21-d4b3-4752-b0c6-4e266f7ca73e",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794625889028
+      },
+      {
+        "executionId": "a788b620-5779-4c0e-92e1-18fbdd9fd3e6",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794626425196
+      },
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794631809162
+      }
+    ],
+    "5. Next.js web UI with a live candle chart": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794631810985
+      }
+    ],
+    "6.5 `HitMap` and mouse handling; property test P23": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794632205110
+      },
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794632423547
+      }
+    ],
+    "18.3 Property tests P30 and P31, plus SIWS examples": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794632205426
+      },
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794632427242
+      }
+    ],
+    "6.6 Event loop with 30 fps cap; manual check on Windows Terminal, PowerShell, Terminal.app, iTerm2": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794632436407
+      },
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794632692763
+      }
+    ],
+    "18.4 Token, nonce, pairing, and rate-limit stores": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794632440489
+      },
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794632697720
+      }
+    ],
+    "6. TUI with a candle chart and mouse support": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794632693774
+      }
+    ],
+    "7.1 Verify both venues' public endpoints and metadata": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794632706979
+      },
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794633380318
+      }
+    ],
+    "8.1 Order_Book: snapshot, deltas, negative-delta error, crossed-book rule, top 20, spread, imbalance, 100 ms market-time throttle; Trade events": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794632707962
+      },
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794633381037
+      }
+    ],
+    "18.5 Property tests P29 and P32, plus store unit tests": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794632708862
+      },
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794633384020
+      }
+    ],
+    "7.2 Venue layer": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794633396806
+      },
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794633706710
+      }
+    ],
+    "8.2 Property tests P8, P9, P10": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794633397124
+      },
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794633707514
+      }
+    ],
+    "9.1 EMA, SMA, VWAP, Bollinger, RSI, ATR with committed state + `peek`; Indicators events": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794633397511
+      },
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794633708368
+      }
+    ],
+    "7.3 Property test P33 (venue decimal round-trip and `Inexact`) and Venue_Symbol_Map table test": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794633718252
+      },
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794633979523
+      }
+    ],
+    "8.3 Book panel with depth bars and trades tape in both clients; click or arrows+Enter prefills a limit ticket": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794633719345
+      },
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794634457079
+      }
+    ],
+    "9.2 Property tests P11, P12, P13 and golden tests": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794633720017
+      },
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794633977342
+      }
+    ],
+    "18.6 Auth routes and Bearer helper": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794633721780
+      },
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794633978447
+      }
+    ],
+    "8. Order book and trades tape": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794634458194
+      }
+    ],
+    "7.4 Coinbase_Adapter (rustls + ring), normalization to `MarketMsg` through the venue layer, reconnect with backoff, REST backfill": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794634470762
+      },
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794635191114
+      }
+    ],
+    "9.3 Overlays and RSI/ATR pane in web (line series) and TUI (braille canvas + Chart sub-pane); toggles by hotkey and click": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794634471212
+      },
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794635813579
+      }
+    ],
+    "10.1 Matcher: market, limit, stop; level walking; partial fills; fees; OrderAck/Fill events; cancel and cancel-all; unknown cancel → OrderRejected": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794634471645
+      },
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794635189963
+      }
+    ],
+    "18.7 Route tests": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794634472017
+      },
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794635187464
+      }
+    ],
+    "18. Server Auth_Service: SIWS, sessions, pairing, rate limits": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794635187864
+      }
+    ],
+    "9. Indicators": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794635813902
+      }
+    ],
+    "7.5 Backpack_Adapter (rustls + ring): subscribe to trade and depth streams for the three `_USDC` symbols, dispatch on `{\"stream\",\"data\"}`, REST depth snapshot + update-id continuity with resync on a gap, trade normalization (aggressor from the maker flag, timestamp to ms), REST kline backfill on subscribe, reconnect with backoff and an `Error` event; no API key, signature, or auth header anywhere": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794635821395
+      },
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794636577076
+      }
+    ],
+    "10.2 Paper_Account: cost basis, realized/unrealized P&L, Position events, ResetAccount": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794635822343
+      },
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794636575779
+      }
+    ],
+    "19.1 Connection_Session and account routing": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794635822862
+      },
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794636576444
+      }
+    ],
+    "7.6 Adapter tests": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794636584648
+      },
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794637203109
+      }
+    ],
+    "10.3 Property tests P14, P15, P16, P17": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794636585128
+      },
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794637199936
+      }
+    ],
+    "19.2 Property test P34 and gateway tests": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794636585595
+      },
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794637201149
+      }
+    ],
+    "19. Gateway authentication and per-account topics": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794637201595
+      }
+    ],
+    "7.7 `engine record --venue coinbase|backpack --symbols … --out <fixture>` writing normalized `MarketMsg` fixture lines; test against a mock WS for each venue": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794637212848
+      },
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794638068854
+      }
+    ],
+    "10.4 Property test P28 (account isolation) and account unit tests": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794637214920
+      },
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794638062344
+      }
+    ],
+    "10. Paper matcher and P&L": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794638065467
+      }
+    ],
+    "7.8 Watchlist panel in web and TUI (click, Tab, arrows); status bar shows `REPLAY` or `LIVE · <venue>` (Backpack shown with \"(USDC)\") from `Hello`": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794638086088
+      },
+      {
+        "executionId": "4622f70d-ffaf-4b81-84e5-27b2a10a46cd",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794639471029
+      },
+      {
+        "executionId": "4622f70d-ffaf-4b81-84e5-27b2a10a46cd",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794640575728
+      }
+    ],
+    "11.1 `risk.ts` pure check with default limits and kill switch; property tests P18, P19": [
+      {
+        "executionId": "43d35620-cf90-473b-b252-6dd349deec2f",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794638089879
+      },
+      {
+        "executionId": "a4f701c4-65a3-4c86-abeb-cca2e689d2f5",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794638687705
+      },
+      {
+        "executionId": "4622f70d-ffaf-4b81-84e5-27b2a10a46cd",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794639013222
+      },
+      {
+        "executionId": "4622f70d-ffaf-4b81-84e5-27b2a10a46cd",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794639460873
+      }
+    ],
+    "7. Live feeds (Coinbase and Backpack), venue switch, recorder, and watchlist": [
+      {
+        "executionId": "4622f70d-ffaf-4b81-84e5-27b2a10a46cd",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794640577665
+      }
+    ],
+    "11.2 `router.ts` as the only sender of order commands; `engine_unavailable`; test that no other module imports the sender": [
+      {
+        "executionId": "4622f70d-ffaf-4b81-84e5-27b2a10a46cd",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794640586469
+      },
+      {
+        "executionId": "fb86863e-af49-498a-9a86-9d8591cd8e42",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794643883319
+      },
+      {
+        "executionId": "cbf8024e-653c-4af6-b80b-8b5fd4fc9b61",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794644544082
+      },
+      {
+        "executionId": "cbf8024e-653c-4af6-b80b-8b5fd4fc9b61",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794645193730
+      },
+      {
+        "executionId": "cbf8024e-653c-4af6-b80b-8b5fd4fc9b61",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794645726224
+      }
+    ],
+    "20.1 Wallet discovery and sign-in flow": [
+      {
+        "executionId": "cbf8024e-653c-4af6-b80b-8b5fd4fc9b61",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794644564423
+      },
+      {
+        "executionId": "cbf8024e-653c-4af6-b80b-8b5fd4fc9b61",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794644954061
+      }
+    ],
+    "11.3 `state/account.ts` position and open-order cache": [
+      {
+        "executionId": "cbf8024e-653c-4af6-b80b-8b5fd4fc9b61",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794644962751
+      },
+      {
+        "executionId": "cbf8024e-653c-4af6-b80b-8b5fd4fc9b61",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794645192664
+      }
+    ],
+    "20.2 `WalletMenu` UI": [
+      {
+        "executionId": "cbf8024e-653c-4af6-b80b-8b5fd4fc9b61",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794644963368
+      },
+      {
+        "executionId": "cbf8024e-653c-4af6-b80b-8b5fd4fc9b61",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794645193050
+      }
+    ],
+    "20.3 `/pair` page": [
+      {
+        "executionId": "cbf8024e-653c-4af6-b80b-8b5fd4fc9b61",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794645727064
+      },
+      {
+        "executionId": "d320dccd-d5f1-4dc7-921b-8d6e01afeda8",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794649965805
+      }
+    ],
+    "11.4 Journal on Neon Postgres via Prisma ORM 7, with write queue, Prisma Migrate, sessions, and an in-memory fake; REST endpoints": [
+      {
+        "executionId": "cbf8024e-653c-4af6-b80b-8b5fd4fc9b61",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794645727620
+      },
+      {
+        "executionId": "d320dccd-d5f1-4dc7-921b-8d6e01afeda8",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794650017842
+      },
+      {
+        "executionId": "d320dccd-d5f1-4dc7-921b-8d6e01afeda8",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794650018725
+      },
+      {
+        "executionId": "d320dccd-d5f1-4dc7-921b-8d6e01afeda8",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794650081310
+      },
+      {
+        "executionId": "d320dccd-d5f1-4dc7-921b-8d6e01afeda8",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794650089922
+      },
+      {
+        "executionId": "00dbef7f-cd7a-48ad-ab9c-55f641e5855d",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794650575800
+      },
+      {
+        "executionId": "084c83e4-d818-493b-b31f-f5ed9f9e21f7",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794651119855
+      }
+    ],
+    "21.1 Token_Store and flags": [
+      {
+        "executionId": "cbf8024e-653c-4af6-b80b-8b5fd4fc9b61",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794645731613
+      },
+      {
+        "executionId": "d320dccd-d5f1-4dc7-921b-8d6e01afeda8",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794650080115
+      },
+      {
+        "executionId": "d320dccd-d5f1-4dc7-921b-8d6e01afeda8",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794650089000
+      },
+      {
+        "executionId": "5fe84e28-46b5-41b1-979e-a439019f842e",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794651482694
+      },
+      {
+        "executionId": "5fe84e28-46b5-41b1-979e-a439019f842e",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794651787879
+      }
+    ],
+    "11.5 Journal tests and order-path integration test": [
+      {
+        "executionId": "5fe84e28-46b5-41b1-979e-a439019f842e",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794651795790
+      },
+      {
+        "executionId": "5fe84e28-46b5-41b1-979e-a439019f842e",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794652573633
+      }
+    ],
+    "20.4 Web auth tests": [
+      {
+        "executionId": "5fe84e28-46b5-41b1-979e-a439019f842e",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794651796960
+      },
+      {
+        "executionId": "5fe84e28-46b5-41b1-979e-a439019f842e",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794652575683
+      }
+    ],
+    "21.2 Pairing dialog": [
+      {
+        "executionId": "5fe84e28-46b5-41b1-979e-a439019f842e",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794651797809
+      },
+      {
+        "executionId": "5fe84e28-46b5-41b1-979e-a439019f842e",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794652578550
+      }
+    ],
+    "20. Web wallet sign-in and the /pair page": [
+      {
+        "executionId": "5fe84e28-46b5-41b1-979e-a439019f842e",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794652576984
+      }
+    ],
+    "11.6 Property test P35 (router account derivation)": [
+      {
+        "executionId": "5fe84e28-46b5-41b1-979e-a439019f842e",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794652590598
+      }
+    ],
+    "21.3 TUI auth tests": [
+      {
+        "executionId": "5fe84e28-46b5-41b1-979e-a439019f842e",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794652594189
+      },
+      {
+        "executionId": "82e59cdb-c167-400f-894a-89362c624af5",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794652840029
+      }
+    ],
+    "21. TUI pairing and token storage": [
+      {
+        "executionId": "82e59cdb-c167-400f-894a-89362c624af5",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1794652840914
+      }
+    ]
+  }
+}

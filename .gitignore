@@ -1,0 +1,21 @@
+# NOTE: never add .kiro/ here. The Kiroween rules require it to be committed.
+
+# Rust
+rust/target/
+
+# Bun / Node
+node_modules/
+
+# Next.js
+web/.next/
+web/out/
+
+# Prisma generated client
+server/src/generated/
+
+# Environment and secrets
+.env
+
+# OS / editor
+.DS_Store
+Thumbs.db

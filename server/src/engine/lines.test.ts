@@ -1,0 +1,123 @@
+// Tests for the engine stdout line splitter (design §3 Engine_Supervisor).
+import { describe, expect, test } from "bun:test";
+import { LineSplitter, MAX_LINE_BYTES } from "./lines.ts";
+
+const enc = new TextEncoder();
+
+/** Feeds `input` to a splitter `size` bytes at a time, then flushes. */
+function splitAll(input: Uint8Array, size: number, maxBytes?: number): { lines: string[]; oversized: number[] } {
+  const oversized: number[] = [];
+  const splitter = new LineSplitter({ maxBytes, onOversized: (n) => oversized.push(n) });
+  const lines: string[] = [];
+  for (let i = 0; i < input.length; i += size) lines.push(...splitter.push(input.subarray(i, i + size)));
+  lines.push(...splitter.flush());
+  return { lines, oversized };
+}
+
+const CHUNK_SIZES = [1, 2, 3, 5, 7, 64, 1 << 20];
+
+describe("LineSplitter", () => {
+  test("uses the Rust MAX_LINE_BYTES of 64 KiB", () => {
+    expect(MAX_LINE_BYTES).toBe(65_536);
+  });
+
+  test("splits LF and CRLF lines at every chunk boundary", () => {
+    const input = enc.encode('{"a":1}\r\n{"b":2}\n{"c":3}\r\n');
+    for (const size of CHUNK_SIZES) {
+      expect(splitAll(input, size).lines).toEqual(['{"a":1}', '{"b":2}', '{"c":3}']);
+    }
+  });
+
+  test("rejoins multi-byte UTF-8 characters split across chunks", () => {
+    // 2-, 3-, and 4-byte sequences: é, €, 👻.
+    const text = '{"m":"é€👻"}\n{"m":"👻👻"}\r\n';
+    const input = enc.encode(text);
+    for (const size of CHUNK_SIZES) {
+      expect(splitAll(input, size).lines).toEqual(['{"m":"é€👻"}', '{"m":"👻👻"}']);
+    }
+  });
+
+  test("skips empty lines, including a bare CRLF", () => {
+    const input = enc.encode("\n\r\na\n\n\r\nb\n");
+    for (const size of CHUNK_SIZES) expect(splitAll(input, size).lines).toEqual(["a", "b"]);
+  });
+
+  test("strips only one CR before LF", () => {
+    expect(splitAll(enc.encode("a\r\r\n"), 1).lines).toEqual(["a\r"]);
+  });
+
+  test("returns lines as soon as their LF arrives", () => {
+    const splitter = new LineSplitter();
+    expect(splitter.push(enc.encode("ab"))).toEqual([]);
+    expect(splitter.push(enc.encode("c\nde"))).toEqual(["abc"]);
+    expect(splitter.push(enc.encode("\r"))).toEqual([]);
+    expect(splitter.push(enc.encode("\n"))).toEqual(["de"]);
+    expect(splitter.flush()).toEqual([]);
+  });
+
+  test("flush returns a final line without a terminator, then resets", () => {
+    const splitter = new LineSplitter();
+    expect(splitter.push(enc.encode("x\nlast"))).toEqual(["x"]);
+    expect(splitter.flush()).toEqual(["last"]);
+    expect(splitter.flush()).toEqual([]);
+    expect(splitter.push(enc.encode("again\n"))).toEqual(["again"]);
+  });
+
+  test("flush strips a trailing CR, as the Rust reader does at EOF", () => {
+    const splitter = new LineSplitter();
+    splitter.push(enc.encode("tail\r"));
+    expect(splitter.flush()).toEqual(["tail"]);
+  });
+
+  test("drops an oversized line, reports its byte length, and recovers", () => {
+    // Same cases as rust/crates/engine/src/lines.rs with a limit of 8.
+    const input = enc.encode("12345678\n123456789\r\n0123456789abcdef\nok\r\n12345678\r\n");
+    for (const size of CHUNK_SIZES) {
+      const { lines, oversized } = splitAll(input, size, 8);
+      expect(lines).toEqual(["12345678", "ok", "12345678"]);
+      expect(oversized).toEqual([9, 16]);
+    }
+  });
+
+  test("the limit counts bytes, not characters", () => {
+    // "€€€" is 3 characters but 9 bytes.
+    const { lines, oversized } = splitAll(enc.encode("€€€\n€€\n"), 2, 8);
+    expect(lines).toEqual(["€€"]);
+    expect(oversized).toEqual([9]);
+  });
+
+  test("an oversized final line without a terminator is reported by flush", () => {
+    const { lines, oversized } = splitAll(enc.encode("ok\n0123456789"), 4, 8);
+    expect(lines).toEqual(["ok"]);
+    expect(oversized).toEqual([10]);
+  });
+
+  test("a full 64 KiB line passes and one byte more is dropped", () => {
+    const max = "x".repeat(MAX_LINE_BYTES);
+    const input = enc.encode(`${max}\r\n${max}y\nnext\n`);
+    const { lines, oversized } = splitAll(input, 4096);
+    expect(lines.map((l) => l.length)).toEqual([MAX_LINE_BYTES, 4]);
+    expect(lines[1]).toBe("next");
+    expect(oversized).toEqual([MAX_LINE_BYTES + 1]);
+  });
+
+  test("does not buffer a line once it passes the limit", () => {
+    const splitter = new LineSplitter({ maxBytes: 8 });
+    for (let i = 0; i < 100; i++) {
+      splitter.push(enc.encode("x".repeat(1000)));
+      expect(splitter.bufferedBytes).toBeLessThanOrEqual(9);
+    }
+  });
+
+  test("copies retained bytes, so the caller may reuse its chunk buffer", () => {
+    const splitter = new LineSplitter();
+    const buf = enc.encode("abc");
+    splitter.push(buf);
+    buf.set(enc.encode("zzz"));
+    expect(splitter.push(enc.encode("\n"))).toEqual(["abc"]);
+  });
+
+  test("rejects a non-positive maxBytes", () => {
+    expect(() => new LineSplitter({ maxBytes: 0 })).toThrow(RangeError);
+  });
+});

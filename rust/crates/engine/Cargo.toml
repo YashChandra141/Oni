@@ -1,0 +1,31 @@
+[package]
+name = "engine"
+description = "Haunted Terminal engine sidecar: market data, order book, candles, indicators, paper matcher"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+clap = { version = "4.6.7", features = ["derive"] }
+protocol = { version = "0.1.0", path = "../protocol" }
+serde = { version = "1.0.229", features = ["derive"] }
+# Same features as the protocol crate, so both crates parse JSON identically.
+serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
+tokio = { version = "1.54.1", features = ["rt", "macros", "io-std", "io-util", "time", "sync", "net"] }
+# Live feed (Task 7.4). Versions and features match crates/tui and rust/Cargo.lock.
+futures-util = "0.3.34"
+# TLS is rustls with the ring provider only; never aws-lc (see .kiro/steering/rust.md).
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+webpki-roots = "1.0.12"
+tracing = "0.1.44"
+tracing-subscriber = "0.3.23"
+
+[dev-dependencies]
+proptest = "1.12.0"

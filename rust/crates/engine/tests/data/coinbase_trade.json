@@ -1,0 +1,18 @@
+{
+  "_source": "https://docs.cdp.coinbase.com/api-reference/advanced-trade-api/websocket/market-trades (wss://advanced-trade-ws.coinbase.com, channel market_trades, no JWT)",
+  "_note": "Documented example written by hand from the AsyncAPI schema (the docs page lists 'No examples found'), NOT a live capture. 'side' is documented as the MAKER's side, so the aggressor is the opposite side; verify against a real capture (Task 7.7). Updates batch the last 250 ms and may hold many trades. 'snapshot' events carry recent trades on subscribe.",
+  "sample": {
+    "channel": "market_trades",
+    "client_id": "",
+    "timestamp": "2026-11-14T04:53:10.274Z",
+    "sequence_num": 2,
+    "events": [
+      {
+        "type": "update",
+        "trades": [
+          { "trade_id": "412893715", "product_id": "BTC-USD", "price": "67168.13", "size": "0.00150000", "side": "SELL", "time": "2026-11-14T04:53:10.141234Z" }
+        ]
+      }
+    ]
+  }
+}

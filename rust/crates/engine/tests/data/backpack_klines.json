@@ -1,0 +1,8 @@
+{
+  "_source": "https://api.backpack.exchange/api/v1/klines?symbol=SOL_USDC&interval=1m&startTime=<unix seconds> (public REST; docs https://docs.backpack.exchange/#tag/Markets/operation/get_klines)",
+  "_note": "Shape cross-checked by a one-off read-only fetch during Task 7.1; values are hand-written, NOT a recorded capture. start and end are UTC strings 'YYYY-MM-DD HH:MM:SS' (no timezone suffix, no numeric timestamp). All numbers are strings. Request startTime/endTime are Unix SECONDS. Replace with a real capture in Task 7.7.",
+  "sample": [
+    { "start": "2026-11-14 04:53:00", "end": "2026-11-14 04:54:00", "open": "75.46", "high": "75.46", "low": "75.46", "close": "75.46", "volume": "0.02", "quoteVolume": "1.5092", "trades": "1" },
+    { "start": "2026-11-14 04:54:00", "end": "2026-11-14 04:55:00", "open": "75.6", "high": "75.6", "low": "75.6", "close": "75.6", "volume": "0.02", "quoteVolume": "1.512", "trades": "1" }
+  ]
+}

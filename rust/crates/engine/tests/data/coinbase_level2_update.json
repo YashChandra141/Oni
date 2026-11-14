@@ -1,0 +1,20 @@
+{
+  "_source": "https://docs.cdp.coinbase.com/api-reference/advanced-trade-api/websocket/level2 (wss://advanced-trade-ws.coinbase.com, channel level2, message channel l2_data, no JWT)",
+  "_note": "Documented example written by hand from the AsyncAPI schema, NOT a live capture. new_quantity is an absolute size, not a delta; \"0\" removes the level. Verify against a real capture (Task 7.7).",
+  "sample": {
+    "channel": "l2_data",
+    "client_id": "",
+    "timestamp": "2026-11-14T04:53:09.350Z",
+    "sequence_num": 1,
+    "events": [
+      {
+        "type": "update",
+        "product_id": "ETH-USD",
+        "updates": [
+          { "side": "bid", "event_time": "2026-11-14T04:53:09.341Z", "price_level": "1899.25", "new_quantity": "0" },
+          { "side": "offer", "event_time": "2026-11-14T04:53:09.341Z", "price_level": "1899.26", "new_quantity": "2.10000000" }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,35 @@
+[package]
+name = "tui"
+description = "Haunted Terminal terminal client (Ratatui)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "tui"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+clap = { version = "4.6.7", features = ["derive"] }
+crossterm = "0.29.0"
+futures-util = "0.3.34"
+protocol = { version = "0.1.0", path = "../protocol" }
+ratatui = "0.30.2"
+# Pairing_Secret CSPRNG and SHA-256 verifier (Task 21.2). Same ring 0.17.14 that rustls already uses.
+ring = "0.17.14"
+rustls = { version = "0.23.46", default-features = false, features = ["ring", "std", "tls12"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
+tokio = { version = "1.54.1", features = ["rt", "macros", "time", "sync", "net", "io-util"] }
+# HTTPS client for /auth/logout and pairing (Task 21); same versions as the engine crate.
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+webpki-roots = "1.0.12"
+
+[dev-dependencies]
+proptest = "1.12.0"

@@ -1,0 +1,9 @@
+{
+  "_source": "https://docs.cdp.coinbase.com/api-reference/advanced-trade-api/rest-api/public/get-public-product (GET https://api.coinbase.com/api/v3/brokerage/market/products/{product_id}, no JWT)",
+  "_note": "Hand-written subset of the product object, NOT a live capture. Increments were read once from the public endpoint during Task 7.1 (no auth). price_increment and quote_increment are the tick; base_increment is the size step. Replace with a real capture in Task 7.7.",
+  "sample": [
+    { "product_id": "BTC-USD", "price": "67168.13", "base_increment": "0.00000001", "quote_increment": "0.01", "price_increment": "0.01", "base_min_size": "0.00000001", "status": "online", "trading_disabled": false, "product_type": "SPOT" },
+    { "product_id": "ETH-USD", "price": "1899.26", "base_increment": "0.00000001", "quote_increment": "0.01", "price_increment": "0.01", "base_min_size": "0.00000001", "status": "online", "trading_disabled": false, "product_type": "SPOT" },
+    { "product_id": "SOL-USD", "price": "75.47", "base_increment": "0.00000001", "quote_increment": "0.01", "price_increment": "0.01", "base_min_size": "0.00000001", "status": "online", "trading_disabled": false, "product_type": "SPOT" }
+  ]
+}

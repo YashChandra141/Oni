@@ -1,0 +1,70 @@
+// Journal schema (design Decision J5). Prices, quantities, money, and times are BIGINT (Req 20.22).
+// `seq` comes from one shared sequence, so it follows enqueue order across the three tables.
+// The sequence is created by the init Migration (`CREATE SEQUENCE journal_seq;`).
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model JournalOrder {
+  id         BigInt  @id @default(autoincrement())
+  seq        BigInt  @default(dbgenerated("nextval('journal_seq'::regclass)"))
+  record_id  String  @unique @db.Uuid
+  account_id String
+  session_id String
+  ts         BigInt
+  order_id   String
+  source     String
+  symbol     String
+  side       String
+  kind       String
+  qty        BigInt
+  price      BigInt?
+
+  @@index([account_id, session_id, ts, seq])
+  @@index([account_id, ts, seq])
+  @@map("orders")
+}
+
+model JournalFill {
+  id         BigInt @id @default(autoincrement())
+  seq        BigInt @default(dbgenerated("nextval('journal_seq'::regclass)"))
+  record_id  String @unique @db.Uuid
+  account_id String
+  session_id String
+  ts         BigInt
+  market_ts  BigInt
+  order_id   String
+  symbol     String
+  side       String
+  price      BigInt
+  qty        BigInt
+  fee        BigInt
+  remaining  BigInt
+
+  @@index([account_id, session_id, ts, seq])
+  @@index([account_id, ts, seq])
+  @@map("fills")
+}
+
+model JournalRejection {
+  id         BigInt  @id @default(autoincrement())
+  seq        BigInt  @default(dbgenerated("nextval('journal_seq'::regclass)"))
+  record_id  String  @unique @db.Uuid
+  account_id String
+  session_id String
+  ts         BigInt
+  order_id   String
+  source     String
+  reason     String
+  detail     String?
+
+  @@index([account_id, session_id, ts, seq])
+  @@index([account_id, ts, seq])
+  @@map("rejections")
+}

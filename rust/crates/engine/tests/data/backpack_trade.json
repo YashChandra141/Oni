@@ -1,0 +1,19 @@
+{
+  "_source": "https://docs.backpack.exchange/#tag/Streams (public stream trade.<symbol>); envelope per https://apis.io/asyncapis/backpack/backpack-asyncapi/",
+  "_note": "Documented example written by hand, NOT a live capture. Field list (e,E,T,s,p,q,b,a,t,m) is from the Backpack docs as recalled during Task 7.1 and could not be re-read from the official page by the research tool; verify against a real capture (Task 7.7). Timestamps E and T are microseconds.",
+  "sample": {
+    "stream": "trade.SOL_USDC",
+    "data": {
+      "e": "trade",
+      "E": 1794633085618437,
+      "s": "SOL_USDC",
+      "p": "75.41",
+      "q": "0.02",
+      "b": "113392053149171712",
+      "a": "113392054083780608",
+      "t": 382067453,
+      "T": 1794633085618112,
+      "m": true
+    }
+  }
+}

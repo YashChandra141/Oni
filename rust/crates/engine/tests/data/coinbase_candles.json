@@ -1,0 +1,11 @@
+{
+  "_source": "https://docs.cdp.coinbase.com/api-reference/advanced-trade-api/rest-api/public/get-public-product-candles (GET https://api.coinbase.com/api/v3/brokerage/market/products/{product_id}/candles, no JWT)",
+  "_note": "Shape cross-checked by a one-off read-only fetch during Task 7.1; values are hand-written, NOT a recorded capture. 'start' is Unix SECONDS as a string. Candles come back NEWEST FIRST. All numbers are strings. Replace with a real capture in Task 7.7.",
+  "sample": {
+    "candles": [
+      { "start": "1794632280", "low": "75.46", "high": "75.6", "open": "75.56", "close": "75.46", "volume": "444.12863447" },
+      { "start": "1794632220", "low": "75.53", "high": "75.58", "open": "75.53", "close": "75.57", "volume": "213.74598111" },
+      { "start": "1794632160", "low": "75.5", "high": "75.55", "open": "75.52", "close": "75.54", "volume": "158.88661853" }
+    ]
+  }
+}

@@ -1,0 +1,121 @@
+@import "tailwindcss";
+
+/*
+ * Green-screen CRT theme. Colours are Tailwind theme tokens, so utilities such
+ * as `text-phosphor`, `bg-crt`, `text-amber`, `text-buy`, and `text-sell` work.
+ */
+@theme {
+  --color-crt: #000000;
+  --color-crt-panel: #020a04;
+  --color-crt-line: #0f3d1c;
+  --color-phosphor: #33ff66;
+  --color-phosphor-dim: #1f9e40;
+  --color-phosphor-faint: #146b2b;
+  --color-amber: #ffb000;
+  --color-buy: #33ff66;
+  --color-sell: #ff4d4d;
+
+  --font-mono: ui-monospace, "Cascadia Mono", "Cascadia Code", "SF Mono", Menlo, Consolas,
+    "Liberation Mono", "DejaVu Sans Mono", monospace;
+}
+
+@layer base {
+  html,
+  body {
+    height: 100%;
+  }
+
+  body {
+    background-color: var(--color-crt);
+    color: var(--color-phosphor);
+    font-family: var(--font-mono);
+    font-variant-numeric: tabular-nums;
+    text-shadow: 0 0 2px rgb(51 255 102 / 0.55), 0 0 6px rgb(51 255 102 / 0.2);
+  }
+
+  ::selection {
+    background-color: var(--color-phosphor);
+    color: var(--color-crt);
+    text-shadow: none;
+  }
+
+  :focus-visible {
+    outline: 1px solid var(--color-amber);
+    outline-offset: 1px;
+  }
+}
+
+@layer components {
+  .crt-panel {
+    border: 1px solid var(--color-crt-line);
+    background-color: var(--color-crt-panel);
+    box-shadow: inset 0 0 12px rgb(51 255 102 / 0.06);
+  }
+
+  .crt-title {
+    color: var(--color-phosphor-dim);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+}
+
+/* Scanlines and vignette drawn over the whole screen; they never catch pointer events. */
+.crt-screen {
+  position: relative;
+  isolation: isolate;
+}
+
+.crt-screen::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 50;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgb(0 0 0 / 0) 0px,
+    rgb(0 0 0 / 0) 2px,
+    rgb(0 0 0 / 0.18) 3px,
+    rgb(0 0 0 / 0) 4px
+  );
+}
+
+.crt-screen::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 51;
+  background: radial-gradient(ellipse at center, rgb(0 0 0 / 0) 60%, rgb(0 0 0 / 0.45) 100%);
+  animation: crt-flicker 6s infinite steps(1, end);
+}
+
+@keyframes crt-flicker {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  48% {
+    opacity: 0.94;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.crt-cursor {
+  animation: crt-blink 1s steps(1, end) infinite;
+}
+
+@keyframes crt-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .crt-screen::after,
+  .crt-cursor {
+    animation: none;
+  }
+}

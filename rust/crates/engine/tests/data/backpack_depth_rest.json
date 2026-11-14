@@ -1,0 +1,10 @@
+{
+  "_source": "https://api.backpack.exchange/api/v1/depth?symbol=SOL_USDC (public REST; docs https://docs.backpack.exchange/#tag/Markets/operation/get_order_book_depth)",
+  "_note": "Shape cross-checked by a one-off read-only fetch of the public endpoint during Task 7.1; levels here are trimmed and hand-written, NOT a recorded capture. Both sides are sorted ASCENDING by price (best bid is the LAST bid, best ask is the FIRST ask). lastUpdateId is a STRING. timestamp is microseconds. Replace with a real capture in Task 7.7.",
+  "sample": {
+    "asks": [["75.47", "202.8"], ["75.48", "266.31"], ["75.49", "312.6"]],
+    "bids": [["75.44", "307.41"], ["75.45", "261.09"], ["75.46", "304.72"]],
+    "lastUpdateId": "4686272930",
+    "timestamp": 1794633182147424
+  }
+}

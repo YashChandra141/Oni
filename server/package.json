@@ -1,0 +1,23 @@
+{
+  "name": "@haunted/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "bun test",
+    "start": "bun scripts/start.ts",
+    "start:direct": "bun src/main.ts",
+    "db:generate": "prisma generate"
+  },
+  "dependencies": {
+    "@prisma/adapter-neon": "7.10.1",
+    "@prisma/adapter-pg": "7.10.1",
+    "@prisma/client": "7.10.1",
+    "hono": "4.13.18",
+    "prisma": "7.10.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "fast-check": "4.10.2"
+  }
+}

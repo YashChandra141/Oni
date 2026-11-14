@@ -1,0 +1,22 @@
+[package]
+name = "protocol"
+description = "Shared Command and Event message types for Haunted Terminal"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+# float_roundtrip: the default float parser can be off by one ULP, which breaks the JSON
+# round trip of indicator values (Req 2.3, property P1).
+serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
+thiserror = "2.0.21"
+ts-rs = "12.0.1"
+
+[dev-dependencies]
+proptest = "1.12.0"
