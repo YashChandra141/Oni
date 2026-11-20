@@ -188,12 +188,12 @@ export default function ChartPanel() {
         vertLine: {
           color: CHART_THEME.crosshair,
           style: LineStyle.Dashed,
-          labelBackgroundColor: CHART_THEME.grid,
+          labelBackgroundColor: CHART_THEME.label,
         },
         horzLine: {
           color: CHART_THEME.crosshair,
           style: LineStyle.Dashed,
-          labelBackgroundColor: CHART_THEME.grid,
+          labelBackgroundColor: CHART_THEME.label,
         },
       },
       rightPriceScale: { borderColor: CHART_THEME.grid },

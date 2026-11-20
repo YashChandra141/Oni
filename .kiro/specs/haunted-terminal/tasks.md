@@ -263,7 +263,7 @@ Scope change (approved after 4.3): per-wallet paper accounts plus a shared guest
     - _Requirements: 42.9_
 
 - [ ] 16. Polish and submission
-  - [ ] 16.1 CRT polish in both clients
+  - [x] 16.1 CRT polish in both clients
   - [ ] 16.2 Kiro write-up (specs, steering, hooks, PBT in Rust and TS, MCP) and final README
     - _Requirements: 42.7_
   - [ ] 16.3 Demo video under 3 minutes; Devpost submission drafted by Dec 3

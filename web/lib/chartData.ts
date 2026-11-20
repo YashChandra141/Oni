@@ -39,21 +39,24 @@ export function bucketStartMs(ts: number, tf: Timeframe): number {
   return Math.floor(ts / size) * size;
 }
 
-/** CRT colours, the same values as the theme tokens in app/globals.css. */
+/** Oni colours, the same values as the theme tokens in app/globals.css and styles/oni-theme.css. */
 export const CHART_THEME = {
-  background: "#000000",
-  /** --color-phosphor-dim */
-  text: "#1f9e40",
-  /** --color-crt-line */
-  grid: "#0f3d1c",
-  /** --color-phosphor-dim */
-  crosshair: "#1f9e40",
-  /** --color-buy / --color-phosphor */
-  up: "#33ff66",
+  /** Transparent so the panel (and the page background) shows through. */
+  background: "rgba(0, 0, 0, 0)",
+  /** --oni-text-muted */
+  text: "#8a8a8f",
+  /** Very faint red-grey. */
+  grid: "rgba(139, 90, 94, 0.14)",
+  /** Red crosshair. */
+  crosshair: "#c1121f",
+  /** Label background of the crosshair axis tags. */
+  label: "#5a0b0f",
+  /** --color-buy */
+  up: "#22c55e",
   /** --color-sell */
-  down: "#ff4d4d",
-  volumeUp: "rgba(51, 255, 102, 0.35)",
-  volumeDown: "rgba(255, 77, 77, 0.35)",
+  down: "#ef4444",
+  volumeUp: "rgba(34, 197, 94, 0.35)",
+  volumeDown: "rgba(239, 68, 68, 0.35)",
   fontFamily: 'ui-monospace, "Cascadia Mono", "Cascadia Code", Menlo, Consolas, monospace',
 } as const;
 

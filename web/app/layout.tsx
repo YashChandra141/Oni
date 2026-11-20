@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
 import "./globals.css";
+import "../styles/oni-theme.css";
 
 export const metadata: Metadata = {
   title: "Oni",
@@ -9,13 +10,13 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
-  themeColor: "#000000",
+  themeColor: "#050507",
   colorScheme: "dark",
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" data-theme="oni">
       <body className="crt-screen h-dvh overflow-hidden antialiased">{children}</body>
     </html>
   );

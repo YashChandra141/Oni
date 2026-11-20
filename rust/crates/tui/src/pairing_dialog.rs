@@ -7,7 +7,7 @@ use ratatui::Frame;
 use ratatui::layout::{Alignment, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
+use ratatui::widgets::{Clear, Paragraph, Wrap};
 
 use crate::pairing::{EXPIRED_TEXT, PairingState, format_code, format_countdown};
 
@@ -21,7 +21,9 @@ const MAX_FAILURE_CHARS: usize = 120;
 
 /// The dialog text for `state`, or `None` when no dialog is shown.
 pub fn dialog_lines(state: &PairingState) -> Option<Vec<Line<'static>>> {
-    let code_style = Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+    let code_style = Style::new()
+        .fg(crate::brand::AMBER)
+        .add_modifier(Modifier::BOLD);
     let link_style = Style::new().fg(Color::Cyan);
     match state {
         PairingState::Idle | PairingState::Done { .. } => None,
@@ -51,7 +53,7 @@ pub fn dialog_lines(state: &PairingState) -> Option<Vec<Line<'static>>> {
         ]),
         PairingState::Expired => Some(vec![
             Line::from(""),
-            Line::styled(EXPIRED_TEXT, Style::new().fg(Color::Yellow)),
+            Line::styled(EXPIRED_TEXT, Style::new().fg(crate::brand::AMBER)),
             Line::from(""),
             Line::from("Esc to close"),
         ]),
@@ -61,7 +63,7 @@ pub fn dialog_lines(state: &PairingState) -> Option<Vec<Line<'static>>> {
                 Line::from(""),
                 Line::styled(
                     format!("Pairing failed: {shown}"),
-                    Style::new().fg(Color::Red),
+                    Style::new().fg(crate::brand::SELL),
                 ),
                 Line::from(""),
                 Line::from("Press P to retry, Esc to close"),
@@ -89,7 +91,7 @@ pub fn draw(frame: &mut Frame, state: &PairingState) {
     };
     let area = dialog_area(frame.area());
     frame.render_widget(Clear, area);
-    let block = Block::bordered().title(" Sign in with your wallet ");
+    let block = crate::brand::block().title(" Sign in with your wallet ");
     let paragraph = Paragraph::new(lines)
         .block(block)
         .alignment(Alignment::Center)

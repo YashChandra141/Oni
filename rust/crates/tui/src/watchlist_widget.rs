@@ -14,9 +14,9 @@ use ratatui::widgets::{Block, Widget};
 
 use crate::watchlist_model::{Direction, WatchQuote, price_text};
 
-pub const UP_COLOR: Color = Color::Green;
-pub const DOWN_COLOR: Color = Color::Red;
-pub const FLAT_COLOR: Color = Color::Gray;
+pub const UP_COLOR: Color = crate::brand::BUY;
+pub const DOWN_COLOR: Color = crate::brand::SELL;
+pub const FLAT_COLOR: Color = crate::brand::MUTED;
 
 /// The price color of a direction.
 pub fn direction_color(direction: Direction) -> Color {
@@ -65,7 +65,7 @@ impl<'a> WatchlistWidget<'a> {
 
 impl Widget for WatchlistWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let block = Block::bordered().title(" WATCHLIST ");
+        let block = crate::brand::block().title(" WATCHLIST ");
         let inner = block.inner(area);
         block.render(area, buf);
         if inner.width == 0 || inner.height == 0 {

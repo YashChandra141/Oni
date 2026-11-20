@@ -1,5 +1,5 @@
 /**
- * Oni design tokens (asset pack). Not imported anywhere yet; opt-in for the later restyle.
+ * Oni design tokens (asset pack). Applied through app/globals.css and styles/oni-theme.css.
  * Mirrors web/styles/oni-theme.css.
  */
 

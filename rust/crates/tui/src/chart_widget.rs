@@ -20,13 +20,13 @@ use crate::chart_model::{
 /// Width of the price axis column at the right edge, in cells.
 pub const AXIS_WIDTH: u16 = 10;
 
-pub const UP_COLOR: Color = Color::Green;
-pub const DOWN_COLOR: Color = Color::Red;
+pub const UP_COLOR: Color = crate::brand::BUY;
+pub const DOWN_COLOR: Color = crate::brand::SELL;
 /// Dim volume colors (a darker shade of the candle colors).
-pub const VOLUME_UP_COLOR: Color = Color::Rgb(0, 90, 0);
-pub const VOLUME_DOWN_COLOR: Color = Color::Rgb(110, 0, 0);
-const CROSSHAIR_COLOR: Color = Color::DarkGray;
-const AXIS_COLOR: Color = Color::Gray;
+pub const VOLUME_UP_COLOR: Color = crate::brand::VOLUME_UP;
+pub const VOLUME_DOWN_COLOR: Color = crate::brand::VOLUME_DOWN;
+const CROSSHAIR_COLOR: Color = crate::brand::ACCENT;
+const AXIS_COLOR: Color = crate::brand::MUTED;
 
 /// Where the price plot is, handed to the overlay hook.
 #[derive(Debug, Clone, Copy)]
@@ -300,7 +300,7 @@ fn draw_readout(
         l.readout.x,
         l.readout.y,
         text,
-        Style::default().fg(Color::White),
+        Style::default().fg(crate::brand::TEXT),
     );
 }
 
@@ -382,12 +382,12 @@ mod tests {
         assert_eq!(sym(&buf, 28, 0), "│");
         assert_eq!(sym(&buf, 28, 1), "│");
         assert_eq!(sym(&buf, 28, 2), "█");
-        assert_eq!(fg(&buf, 28, 2), Some(Color::Green));
+        assert_eq!(fg(&buf, 28, 2), Some(UP_COLOR));
         assert_eq!(sym(&buf, 28, 3), "█");
         assert_eq!(sym(&buf, 28, 4), "▀");
         assert_eq!(sym(&buf, 28, 5), "│");
         assert_eq!(sym(&buf, 28, 6), "╿");
-        assert_eq!(fg(&buf, 28, 6), Some(Color::Green));
+        assert_eq!(fg(&buf, 28, 6), Some(UP_COLOR));
         assert_eq!(sym(&buf, 28, 7), " ");
     }
 
@@ -396,9 +396,9 @@ mod tests {
         let buf = render(&two_bars(), Timeframe::M1, None, 40, 12);
         assert_eq!(sym(&buf, 29, 0), " ");
         assert_eq!(sym(&buf, 29, 1), "│");
-        assert_eq!(fg(&buf, 29, 1), Some(Color::Red));
+        assert_eq!(fg(&buf, 29, 1), Some(DOWN_COLOR));
         assert_eq!(sym(&buf, 29, 2), "█");
-        assert_eq!(fg(&buf, 29, 2), Some(Color::Red));
+        assert_eq!(fg(&buf, 29, 2), Some(DOWN_COLOR));
         assert_eq!(sym(&buf, 29, 7), "▀");
         assert_eq!(sym(&buf, 29, 8), "╿");
     }
@@ -445,7 +445,7 @@ mod tests {
         let flat = vec![bar(T0, 500, 500, 500, 500, 1)];
         let buf = render(&flat, Timeframe::M1, None, 40, 12);
         assert_eq!(sym(&buf, 29, 4), "▀");
-        assert_eq!(fg(&buf, 29, 4), Some(Color::Green));
+        assert_eq!(fg(&buf, 29, 4), Some(UP_COLOR));
         assert_eq!(row_text(&buf, 0, 31, 40).trim(), "5.01");
         assert_eq!(row_text(&buf, 8, 31, 40).trim(), "4.99");
     }
@@ -470,7 +470,7 @@ mod tests {
         // One plot column shows only the newest bar.
         let buf = render(&two_bars(), Timeframe::M1, None, 11, 12);
         assert_eq!(sym(&buf, 0, 0), "│");
-        assert_eq!(fg(&buf, 0, 0), Some(Color::Red));
+        assert_eq!(fg(&buf, 0, 0), Some(DOWN_COLOR));
     }
 
     #[test]

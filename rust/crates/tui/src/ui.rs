@@ -6,9 +6,9 @@ use protocol::Timeframe;
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use crate::app::{App, ConnState};
 use crate::book_model::{BookRow, layout_rows};
@@ -78,12 +78,29 @@ pub fn draw(frame: &mut Frame, app: &App, hits: &mut HitMap) {
     lines.push(Line::from(""));
     lines.push(Line::from("press q to quit, P to sign in with a wallet"));
 
-    let block = Block::bordered().title(TITLE);
+    let block = crate::brand::block().title(logo_title());
     let paragraph = Paragraph::new(lines)
         .block(block)
         .alignment(Alignment::Center);
     frame.render_widget(paragraph, frame.area());
     crate::pairing_dialog::draw(frame, &app.pairing);
+}
+
+/// The header text `ONI 鬼` with the kanji in bright red. The kanji is two cells wide;
+/// ratatui's `Line` and `Block` measure it with unicode-width, so layouts do not shift.
+fn logo_title() -> Line<'static> {
+    let logo = crate::brand::LOGO.trim();
+    let (word, kanji) = logo.split_once(' ').unwrap_or((logo, ""));
+    Line::from(vec![
+        Span::raw(format!(" {word} ")),
+        Span::styled(
+            kanji.to_owned(),
+            Style::new()
+                .fg(crate::brand::ACCENT_BRIGHT)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(" "),
+    ])
 }
 
 /// The chart screen: the candle chart (Req 25.1), and on wide terminals a right column with the
@@ -259,7 +276,11 @@ fn draw_side_column(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect)
 fn draw_chart_panel(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect) {
     let title = format!(" {} {} ", app.symbol, app.timeframe);
     let title_width = title.chars().count();
-    let block = Block::bordered().title(title);
+    // The brand tag sits in the bottom border, so the top border keeps the title and the mode
+    // label. `Block` measures the double-width kanji, so nothing shifts.
+    let block = crate::brand::block()
+        .title(title)
+        .title_bottom(logo_title().right_aligned());
     let inner = block.inner(area);
     frame.render_widget(block, area);
     hits.register(area, HitTarget::Panel(PanelId::Chart));
@@ -290,7 +311,7 @@ fn draw_chart_panel(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect)
     draw_indicator_toggles(frame, app, hits, strip, next_x);
     if legend_height > 0 {
         frame.render_widget(
-            Paragraph::new(legend).style(Style::new().fg(Color::Gray)),
+            Paragraph::new(legend).style(Style::new().fg(crate::brand::MUTED)),
             legend_area,
         );
     }
@@ -338,7 +359,7 @@ fn draw_mode_label(buf: &mut Buffer, area: Rect, title_width: usize, label: &str
         area.y,
         label,
         label_width,
-        Style::new().fg(Color::Yellow),
+        Style::new().fg(crate::brand::AMBER),
     );
 }
 
@@ -366,7 +387,7 @@ fn draw_indicator_toggles(
                 .fg(indicator_color(indicator))
                 .add_modifier(Modifier::REVERSED | Modifier::BOLD)
         } else {
-            Style::new().fg(Color::DarkGray)
+            Style::new().fg(crate::brand::FAINT)
         };
         let rect = Rect::new(
             u16::try_from(x).unwrap_or(u16::MAX),

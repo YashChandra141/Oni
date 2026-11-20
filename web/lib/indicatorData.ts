@@ -87,13 +87,13 @@ export const LINE_LABELS: Readonly<Record<IndicatorLine, string>> = {
   atr: "ATR",
 };
 
-/** CRT colours: EMA amber, VWAP cyan, Bollinger dim green, RSI magenta, ATR orange. */
+/** Oni colours: EMA amber, VWAP cyan, Bollinger muted red, RSI magenta, ATR orange. */
 export const LINE_COLORS: Readonly<Record<IndicatorLine, string>> = {
   ema: "#ffb000",
   vwap: "#33e6ff",
-  bb_upper: "#1f9e40",
-  bb_mid: "#146b2b",
-  bb_lower: "#1f9e40",
+  bb_upper: "#a14048",
+  bb_mid: "#6e2a30",
+  bb_lower: "#a14048",
   rsi: "#ff4dff",
   atr: "#ff8c1a",
 };

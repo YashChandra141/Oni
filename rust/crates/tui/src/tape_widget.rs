@@ -9,14 +9,14 @@ use protocol::Side;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Style};
-use ratatui::widgets::{Block, Widget};
+use ratatui::widgets::Widget;
 
 use crate::book_model::{TapeEntry, format_clock};
 use crate::chart_model::{format_price, format_qty};
 
-pub const BUY_COLOR: Color = Color::Green;
-pub const SELL_COLOR: Color = Color::Red;
-const TIME_COLOR: Color = Color::Gray;
+pub const BUY_COLOR: Color = crate::brand::BUY;
+pub const SELL_COLOR: Color = crate::brand::SELL;
+const TIME_COLOR: Color = crate::brand::MUTED;
 
 pub struct TapeWidget<'a> {
     symbol: &'a str,
@@ -46,7 +46,7 @@ fn side_color(side: Side) -> Color {
 
 impl Widget for TapeWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let block = Block::bordered().title(" TAPE ");
+        let block = crate::brand::block().title(" TAPE ");
         let inner = block.inner(area);
         block.render(area, buf);
         if inner.width == 0 || inner.height == 0 {
@@ -152,9 +152,9 @@ mod tests {
         assert!(second.contains("SELL"), "{second}");
         assert!(!row_text(&buf, 3, 44).contains("3000.00"));
         // Time is gray; the rest of the row takes the side color.
-        assert_eq!(fg(&buf, 1, 1), Some(Color::Gray));
-        assert_eq!(fg(&buf, 12, 1), Some(Color::Green));
-        assert_eq!(fg(&buf, 12, 2), Some(Color::Red));
+        assert_eq!(fg(&buf, 1, 1), Some(TIME_COLOR));
+        assert_eq!(fg(&buf, 12, 1), Some(BUY_COLOR));
+        assert_eq!(fg(&buf, 12, 2), Some(SELL_COLOR));
     }
 
     #[test]

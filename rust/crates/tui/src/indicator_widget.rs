@@ -25,14 +25,14 @@ use crate::indicator_model::{
 /// Picks one value out of an indicator point.
 type Pick = fn(&protocol::IndicatorValues) -> Option<f64>;
 
-pub const EMA_COLOR: Color = Color::Yellow;
+pub const EMA_COLOR: Color = crate::brand::AMBER;
 pub const VWAP_COLOR: Color = Color::Cyan;
-/// Dim green for the three Bollinger lines.
-pub const BOLLINGER_COLOR: Color = Color::Rgb(60, 140, 60);
+/// Muted red for the three Bollinger lines.
+pub const BOLLINGER_COLOR: Color = crate::brand::BOLLINGER;
 pub const RSI_COLOR: Color = Color::Magenta;
 pub const ATR_COLOR: Color = Color::LightBlue;
-const REFERENCE_COLOR: Color = Color::DarkGray;
-const LABEL_COLOR: Color = Color::Gray;
+const REFERENCE_COLOR: Color = crate::brand::FAINT;
+const LABEL_COLOR: Color = crate::brand::MUTED;
 
 /// Draws the enabled overlay lines on top of the candles. `shown` are the visible bars that
 /// the chart drew. Braille cells go only on empty cells, so candles stay intact.

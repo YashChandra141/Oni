@@ -17,10 +17,10 @@ use crate::hitmap::BookSide;
 /// Column where the depth bar starts, relative to the inner area.
 pub const BAR_OFFSET: u16 = 25;
 
-pub const ASK_COLOR: Color = Color::Red;
-pub const BID_COLOR: Color = Color::Green;
-const SPREAD_COLOR: Color = Color::Yellow;
-const EMPTY_COLOR: Color = Color::Gray;
+pub const ASK_COLOR: Color = crate::brand::SELL;
+pub const BID_COLOR: Color = crate::brand::BUY;
+const SPREAD_COLOR: Color = crate::brand::AMBER;
+const EMPTY_COLOR: Color = crate::brand::MUTED;
 
 pub struct BookWidget<'a> {
     symbol: &'a str,
@@ -53,7 +53,7 @@ fn side_color(side: BookSide) -> Color {
 
 impl Widget for BookWidget<'_> {
     fn render(self, area: Rect, buf: &mut Buffer) {
-        let block = Block::bordered().title(format!(" BOOK {} ", self.symbol));
+        let block = crate::brand::block().title(format!(" BOOK {} ", self.symbol));
         let inner = block.inner(area);
         block.render(area, buf);
         if inner.width == 0 || inner.height == 0 {
@@ -192,21 +192,21 @@ mod tests {
         // Largest level: the whole bar width.
         for x in 26..39 {
             assert_eq!(sym(&buf, x, 2), "█", "x={x}");
-            assert_eq!(fg(&buf, x, 2), Some(Color::Red));
+            assert_eq!(fg(&buf, x, 2), Some(ASK_COLOR));
         }
         // Half of the largest: 6 full cells and a half cell.
         assert_eq!(sym(&buf, 26, 1), "█");
         assert_eq!(sym(&buf, 31, 1), "█");
         assert_eq!(sym(&buf, 32, 1), "▌");
         assert_eq!(sym(&buf, 33, 1), " ");
-        assert_eq!(fg(&buf, 32, 1), Some(Color::Red));
+        assert_eq!(fg(&buf, 32, 1), Some(ASK_COLOR));
         // Bids are green: 100M is half, 50M is a quarter (3 full cells and 2 eighths).
         assert_eq!(sym(&buf, 31, 4), "█");
         assert_eq!(sym(&buf, 32, 4), "▌");
-        assert_eq!(fg(&buf, 26, 4), Some(Color::Green));
+        assert_eq!(fg(&buf, 26, 4), Some(BID_COLOR));
         assert_eq!(sym(&buf, 28, 5), "█");
         assert_eq!(sym(&buf, 29, 5), "▎");
-        assert_eq!(fg(&buf, 29, 5), Some(Color::Green));
+        assert_eq!(fg(&buf, 29, 5), Some(BID_COLOR));
     }
 
     #[test]
@@ -223,7 +223,7 @@ mod tests {
         let spread = row_text(&buf, 3, 40);
         assert!(spread.contains("SPR 1.00"), "{spread}");
         assert!(spread.contains("IMB +2.50%"), "{spread}");
-        assert_eq!(fg(&buf, 15, 3), Some(Color::Yellow));
+        assert_eq!(fg(&buf, 15, 3), Some(SPREAD_COLOR));
     }
 
     #[test]
@@ -239,7 +239,7 @@ mod tests {
         assert!(!reversed(&buf, 1, 1));
         assert!(!reversed(&buf, 1, 4));
         // The level keeps its color under the highlight.
-        assert_eq!(fg(&buf, 26, 2), Some(Color::Red));
+        assert_eq!(fg(&buf, 26, 2), Some(ASK_COLOR));
 
         let cursor = BookCursor {
             side: BookSide::Bid,

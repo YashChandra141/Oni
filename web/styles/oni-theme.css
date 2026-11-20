@@ -1,5 +1,5 @@
-/* Oni theme tokens (asset pack). Opt-in: not imported anywhere yet.
-   Mirrors web/lib/theme.ts. Activate with <html data-theme="oni">. */
+/* Oni theme tokens. Imported by app/layout.tsx; active through <html data-theme="oni">.
+   Mirrors web/lib/theme.ts. The Tailwind-facing colours live in app/globals.css. */
 
 [data-theme="oni"] {
   --oni-bg: #0b0b0d;
@@ -35,7 +35,10 @@
 }
 
 [data-theme="oni"] .oni-panel {
-  background: var(--oni-panel);
+  background: rgba(10, 10, 13, 0.62);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.8);
   color: var(--oni-text);
   border: 1px solid var(--oni-border);
   border-radius: var(--oni-radius-md);

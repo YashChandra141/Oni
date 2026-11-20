@@ -11,7 +11,7 @@ use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Position, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, Paragraph};
+use ratatui::widgets::{Clear, Paragraph};
 
 use crate::account_model::AccountState;
 use crate::app::App;
@@ -31,16 +31,16 @@ pub const PNL_PANEL_WIDTH: u16 = 26;
 
 fn pnl_style(raw: i128) -> Style {
     match raw.signum() {
-        1 => Style::new().fg(Color::Green),
-        -1 => Style::new().fg(Color::Red),
-        _ => Style::new().fg(Color::Gray),
+        1 => Style::new().fg(crate::brand::BUY),
+        -1 => Style::new().fg(crate::brand::SELL),
+        _ => Style::new().fg(crate::brand::MUTED),
     }
 }
 
 fn side_style(side: Option<Side>) -> Style {
     match side {
-        Some(Side::Buy) => Style::new().fg(Color::Green),
-        Some(Side::Sell) => Style::new().fg(Color::Red),
+        Some(Side::Buy) => Style::new().fg(crate::brand::BUY),
+        Some(Side::Sell) => Style::new().fg(crate::brand::SELL),
         None => Style::new(),
     }
 }
@@ -126,7 +126,9 @@ pub fn draw_command_bar(
     let right = match app.account.latest_rejection(app.now_ms) {
         Some(rejection) => Some((
             format!("REJECTED: {}", rejection_text(&rejection.reason)),
-            Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
+            Style::new()
+                .fg(crate::brand::SELL)
+                .add_modifier(Modifier::BOLD),
         )),
         None if show_summary => Some((
             pnl_summary_text(&app.account),
@@ -159,9 +161,11 @@ pub fn draw_command_bar(
     let dialog = app.account.dialog_open();
     let focused = app.focus == Focus::Command && !dialog;
     let prompt_style = if focused {
-        Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+        Style::new()
+            .fg(crate::brand::AMBER)
+            .add_modifier(Modifier::BOLD)
     } else {
-        Style::new().fg(Color::DarkGray)
+        Style::new().fg(crate::brand::FAINT)
     };
     let text_width = usize::from(left.width).saturating_sub(2);
     let editor = &app.command.editor;
@@ -170,7 +174,7 @@ pub fn draw_command_bar(
     if editor.is_empty() && !focused {
         spans.push(Span::styled(
             truncate(PLACEHOLDER, text_width),
-            Style::new().fg(Color::DarkGray),
+            Style::new().fg(crate::brand::FAINT),
         ));
     } else {
         spans.push(Span::raw(shown));
@@ -185,7 +189,7 @@ pub fn draw_command_bar(
     }
 
     if let Some(error) = &app.account.parse_error {
-        let red = Style::new().fg(Color::Red);
+        let red = Style::new().fg(crate::brand::SELL);
         if area.height >= 2 {
             let caret = caret_column(error.position, editor.len_chars());
             let offset = 2 + caret.saturating_sub(start);
@@ -262,7 +266,7 @@ pub fn draw_ticket_line(frame: &mut Frame, app: &App, hits: &mut HitMap, area: R
         value_style = value_style.add_modifier(Modifier::REVERSED);
     }
     if invalid {
-        value_style = value_style.fg(Color::Red);
+        value_style = value_style.fg(crate::brand::SELL);
     }
     let head = ticket_head(app.ticket_limit_price());
     let value_cell = right_pad(&value, 10);
@@ -270,18 +274,22 @@ pub fn draw_ticket_line(frame: &mut Frame, app: &App, hits: &mut HitMap, area: R
         (head, Style::new(), None),
         (
             " QTY ".to_owned(),
-            Style::new().fg(Color::Gray),
+            Style::new().fg(crate::brand::MUTED),
             Some(HitTarget::TicketQty),
         ),
         (value_cell, value_style, Some(HitTarget::TicketQty)),
         (
             " [BUY]".to_owned(),
-            Style::new().fg(Color::Green).add_modifier(Modifier::BOLD),
+            Style::new()
+                .fg(crate::brand::BUY)
+                .add_modifier(Modifier::BOLD),
             Some(HitTarget::TicketBuy),
         ),
         (
             " [SELL]".to_owned(),
-            Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
+            Style::new()
+                .fg(crate::brand::SELL)
+                .add_modifier(Modifier::BOLD),
             Some(HitTarget::TicketSell),
         ),
     ];
@@ -318,11 +326,11 @@ pub fn positions_lines(account: &AccountState) -> Vec<Line<'static>> {
         left_pad("RPNL", 9),
         left_pad("UPNL", 9)
     );
-    let mut lines = vec![Line::styled(header, Style::new().fg(Color::Gray))];
+    let mut lines = vec![Line::styled(header, Style::new().fg(crate::brand::MUTED))];
     if account.positions.is_empty() {
         lines.push(Line::styled(
             "no positions",
-            Style::new().fg(Color::DarkGray),
+            Style::new().fg(crate::brand::FAINT),
         ));
         return lines;
     }
@@ -334,9 +342,9 @@ pub fn positions_lines(account: &AccountState) -> Vec<Line<'static>> {
 
 fn position_line(row: &PositionRow) -> Line<'static> {
     let qty_style = if row.qty.0 < 0 {
-        Style::new().fg(Color::Red)
+        Style::new().fg(crate::brand::SELL)
     } else {
-        Style::new().fg(Color::Green)
+        Style::new().fg(crate::brand::BUY)
     };
     let avg = row.avg_entry.map_or_else(|| "-".to_owned(), format_price);
     Line::from(vec![
@@ -386,7 +394,7 @@ pub fn order_line(order: &OpenOrder, selected: bool) -> Line<'static> {
         Style::new()
     };
     Line::from(vec![
-        Span::styled(ORDER_PREFIX, base.fg(Color::Red)),
+        Span::styled(ORDER_PREFIX, base.fg(crate::brand::SELL)),
         Span::styled(right_pad(side, 5), base.patch(side_style(order.side))),
         Span::styled(right_pad(&symbol, 8), base),
         Span::styled(right_pad(kind, 4), base),
@@ -402,7 +410,7 @@ pub fn pnl_lines(account: &AccountState, width: usize) -> Vec<Line<'static>> {
         let value = signed_money(raw);
         let gap = width.saturating_sub(label.chars().count() + value.chars().count());
         Line::from(vec![
-            Span::styled(label.to_owned(), Style::new().fg(Color::Gray)),
+            Span::styled(label.to_owned(), Style::new().fg(crate::brand::MUTED)),
             Span::raw(" ".repeat(gap)),
             Span::styled(value, pnl_style(raw)),
         ])
@@ -429,7 +437,7 @@ pub fn draw_strip(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect) {
 
 fn draw_positions(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect) {
     hits.register(area, HitTarget::Panel(PanelId::Positions));
-    let block = Block::bordered().title(" POSITIONS ");
+    let block = crate::brand::block().title(" POSITIONS ");
     let inner = block.inner(area);
     frame.render_widget(block, area);
     frame.render_widget(Paragraph::new(positions_lines(&app.account)), inner);
@@ -438,9 +446,9 @@ fn draw_positions(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect) {
 fn draw_orders(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect) {
     hits.register(area, HitTarget::Panel(PanelId::Orders));
     let focused = app.focus == Focus::Orders && !app.account.dialog_open();
-    let mut block = Block::bordered().title(" OPEN ORDERS ");
+    let mut block = crate::brand::block().title(" OPEN ORDERS ");
     if focused {
-        block = block.border_style(Style::new().fg(Color::Yellow));
+        block = block.border_style(Style::new().fg(crate::brand::ACCENT_BRIGHT));
     }
     let inner = block.inner(area);
     frame.render_widget(block, area);
@@ -450,7 +458,10 @@ fn draw_orders(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect) {
     let account = &app.account;
     let header = Rect::new(inner.x, inner.y, inner.width, 1);
     frame.render_widget(
-        Paragraph::new(Line::styled(orders_header(), Style::new().fg(Color::Gray))),
+        Paragraph::new(Line::styled(
+            orders_header(),
+            Style::new().fg(crate::brand::MUTED),
+        )),
         header,
     );
     if account.orders.is_empty() {
@@ -459,7 +470,7 @@ fn draw_orders(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect) {
             frame.render_widget(
                 Paragraph::new(Line::styled(
                     "no open orders",
-                    Style::new().fg(Color::DarkGray),
+                    Style::new().fg(crate::brand::FAINT),
                 )),
                 rect,
             );
@@ -487,7 +498,7 @@ fn draw_orders(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect) {
 }
 
 fn draw_pnl(frame: &mut Frame, app: &App, area: Rect) {
-    let block = Block::bordered().title(" P&L ");
+    let block = crate::brand::block().title(" P&L ");
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let lines = pnl_lines(&app.account, usize::from(inner.width));
@@ -527,13 +538,17 @@ fn draw_buttons(
         (" ".to_owned(), Style::new(), None),
         (
             confirm.to_owned(),
-            Style::new().fg(Color::Green).add_modifier(Modifier::BOLD),
+            Style::new()
+                .fg(crate::brand::BUY)
+                .add_modifier(Modifier::BOLD),
             Some(HitTarget::DialogConfirm),
         ),
         ("  ".to_owned(), Style::new(), None),
         (
             cancel.to_owned(),
-            Style::new().fg(Color::Red).add_modifier(Modifier::BOLD),
+            Style::new()
+                .fg(crate::brand::SELL)
+                .add_modifier(Modifier::BOLD),
             Some(HitTarget::DialogCancel),
         ),
     ];
@@ -549,10 +564,13 @@ pub fn preview_lines(state: &PreviewState, now_ms: i64) -> Vec<Line<'static>> {
             Style::new().fg(Color::Cyan).add_modifier(Modifier::BOLD),
         ),
         Line::from(""),
-        Line::styled(state.preview.text.clone(), Style::new().fg(Color::Yellow)),
+        Line::styled(
+            state.preview.text.clone(),
+            Style::new().fg(crate::brand::AMBER),
+        ),
         Line::styled(
             format!("expires in {}s", seconds_left(state.deadline_ms, now_ms)),
-            Style::new().fg(Color::Gray),
+            Style::new().fg(crate::brand::MUTED),
         ),
         Line::from(""),
     ]
@@ -565,7 +583,7 @@ const CANCEL_LABEL: &str = " Cancel [Esc/N] ";
 fn draw_preview_dialog(frame: &mut Frame, hits: &mut HitMap, state: &PreviewState, now_ms: i64) {
     let area = centered(frame.area(), 58, 9);
     frame.render_widget(Clear, area);
-    let block = Block::bordered().title(" Order preview ");
+    let block = crate::brand::block().title(" Order preview ");
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let lines = preview_lines(state, now_ms);
@@ -583,13 +601,15 @@ fn draw_preview_dialog(frame: &mut Frame, hits: &mut HitMap, state: &PreviewStat
 fn draw_confirm_dialog(frame: &mut Frame, hits: &mut HitMap, action: ConfirmAction) {
     let area = centered(frame.area(), 46, 6);
     frame.render_widget(Clear, area);
-    let block = Block::bordered().title(" Confirm ");
+    let block = crate::brand::block().title(" Confirm ");
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let lines = vec![
         Line::styled(
             action.question(),
-            Style::new().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            Style::new()
+                .fg(crate::brand::AMBER)
+                .add_modifier(Modifier::BOLD),
         ),
         Line::from(""),
     ];
@@ -787,9 +807,9 @@ mod tests {
             })
             .collect();
         let (x, y) = find(&rows, "-0.50").unwrap();
-        assert_eq!(buffer[(x, y)].style().fg, Some(Color::Red));
+        assert_eq!(buffer[(x, y)].style().fg, Some(crate::brand::SELL));
         let (x, y) = find(&rows, "1.20").unwrap();
-        assert_eq!(buffer[(x, y)].style().fg, Some(Color::Green));
+        assert_eq!(buffer[(x, y)].style().fg, Some(crate::brand::BUY));
     }
 
     // Req 28.2, 30.3

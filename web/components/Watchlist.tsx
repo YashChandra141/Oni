@@ -6,8 +6,8 @@ import { useTerminalStore } from "../lib/store";
 import { changeIndicator, symbolForKey, watchlistSymbols, type PriceChange } from "../lib/watchlist";
 
 const COLOR: Record<PriceChange, string> = {
-  up: "text-phosphor",
-  down: "text-red-400",
+  up: "text-buy",
+  down: "text-sell",
   flat: "text-phosphor-dim",
 };
 

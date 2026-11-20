@@ -21,7 +21,18 @@ export function StatusBar() {
       aria-label="Status bar"
       className="crt-panel flex items-center gap-4 px-2 py-1 text-xs"
     >
-      <span className="font-bold tracking-widest">ONI</span>
+      <span className="font-bold tracking-widest" aria-label="Oni">
+        ONI{" "}
+        <span className="text-accent-bright" lang="ja">
+          鬼
+        </span>
+      </span>
+      {connected && (
+        <span className="flex items-center gap-1 text-buy" title="Connected to the server">
+          <span aria-hidden="true" className="inline-block h-2 w-2 rounded-full bg-buy" />
+          Live
+        </span>
+      )}
       {connected ? (
         <>
           {hello !== null && (
