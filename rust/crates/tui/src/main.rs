@@ -18,6 +18,7 @@ mod auth;
 mod book_model;
 mod book_widget;
 mod braille;
+mod brand;
 mod chart_model;
 mod chart_widget;
 mod cli;

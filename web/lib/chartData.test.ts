@@ -17,7 +17,6 @@ import {
   type VolumePoint,
   barsToCandles,
   barsToVolume,
-  formatChartTime,
   formatDisplayNumber,
   chartSyncState,
   isTimeframe,
@@ -218,15 +217,7 @@ describe("priceFormatFor", () => {
 });
 
 describe("formatting", () => {
-  test("formatChartTime shows UTC minutes", () => {
-    expect(formatChartTime(1_700_000_000)).toBe("2023-11-14 22:13 UTC");
-    expect(formatChartTime(0)).toBe("1970-01-01 00:00 UTC");
-  });
-
-  test("formatChartTime shows a dash for an invalid time", () => {
-    expect(formatChartTime(Number.NaN)).toBe("—");
-    expect(formatChartTime(Number.POSITIVE_INFINITY)).toBe("—");
-  });
+  // formatChartTime moved to ./timeFormat (local time display); see timeFormat.test.ts.
 
   test("formatDisplayNumber uses fixed decimals", () => {
     expect(formatDisplayNumber(1.5, 2)).toBe("1.50");

@@ -218,6 +218,18 @@ _For any_ sequence of server messages that are not in C, the web store and the T
 
 **Validates: Requirements 3.10, 3.11, 3.12, 3.13**
 
+Property 12: Expected Behavior - Replay time alignment
+
+_For any_ fixture lines and any injected `now`, after `align_to_now(lines, now)` the first live line (`lines[k]`) SHALL lie in the minute that contains `now`. Every `recv` and `ts` SHALL move by the same shift, all gaps between lines SHALL be unchanged, the shift SHALL be a multiple of 60 000 ms, and the warm-up length `k` SHALL be unchanged. On arithmetic overflow the lines SHALL come back unshifted.
+
+**Validates: Requirements 2.12, 3.15**
+
+Property 13: Expected Behavior - Local time display
+
+_For any_ epoch ms (including instants within three hours of a DST change) and any zone in `"UTC"`, `"Asia/Kolkata"`, and `"America/New_York"`, `formatClock`, `formatChartTime`, and `tickMarkLabel` SHALL return text equal to what `Intl.DateTimeFormat` produces for that instant in that zone. The underlying data SHALL be unchanged: candle times stay whole UTC seconds equal to `floor(t / 1000)`, and formatting mutates nothing. The same instant SHALL render differently in Kolkata and in New York, and invalid input SHALL give the placeholder.
+
+**Validates: Requirements 2.13, 3.16**
+
 ## Fix Implementation
 
 ### Design Decisions (resolving the open points)
@@ -318,7 +330,28 @@ When the store drops its oldest bar at the 500 cap, the chart series keeps that 
 
 Indicator lines use the same versions. A line toggled on gets a new series and a `setData`. Indicator points whose time has no stored candle are dropped, so line series never add time-axis slots.
 
-### Changes Required
+**D6. Replay time alignment.** Replay shows today's time (bugfix 1.11, 2.12, 3.15). The rule is `offset = floor_minute(now_ms) − floor_minute(lines[k].recv)`, where `k = warmup_len(lines)` (line 0 when `k = 0`).
+
+- Where: the runtime's `Replay::on_loaded`, before `take_warmup` and `warm_up`. The runtime reads the wall clock there (`now_ms()`) and passes the value to the pure helper `align_to_now(lines, now_ms)` in `feed/replay.rs`. `core.rs` never reads the clock and only sees shifted times (rust.md).
+- What: every line's `recv` and the message's own `ts` move by the same offset. The offset is a multiple of 60 000 ms, so 1m candle boundaries, `k`, and every gap between lines stay unchanged. The loop `period` and its shifts work on the shifted lines as before.
+- Overflow: all arithmetic is checked. On overflow the offset is 0, the lines stay unshifted, and the runtime logs a warning. The applied offset is logged at info.
+- Determinism: the offset is the only wall-clock input, so two replays differ by one constant (Req 6.6 holds up to that offset). Tests inject `now_ms`.
+
+**D7. Local time display.** Web times are shown in the viewer's zone (bugfix 1.12, 2.13, 3.16). The change is display-only and lives in the browser. The engine, server, protocol, candle buckets, and the journal stay UTC epoch ms. The TUI is out of scope and unchanged.
+
+- **Formatter module.** `web/lib/timeFormat.ts` is the only place that turns a moment into text. It exports `formatClock(ms, opts?)` (HH:MM:SS, 24 hour, for the tape), `formatChartTime(sec, opts?)` (crosshair: `YYYY-MM-DD HH:MM ZONE`), and `tickMarkLabel(sec, tickType, opts?)` (axis: year, short month, day of month, HH:MM, or HH:MM:SS by tick type). It replaces `formatTimeUtc` (in `bookView.ts`) and the old `formatChartTime` (in `chartData.ts`); every caller is updated. `opts` is `{ timeZone?: string; locale?: string }`. With no `timeZone`, `Intl.DateTimeFormat` uses the browser's zone, so each viewer sees their own. Formatter instances are cached per kind, zone, and locale, because constructing them is slow and the tape and crosshair format on every update. Invalid input (non-finite, or outside the Date range) gives the placeholder as before (`--:--:--` for the clock, `—` for the others). An invalid zone also gives the placeholder and never throws.
+- **Lightweight Charts.** Series times stay UTC seconds. The data is NOT shifted by the zone offset, because one fixed offset is wrong across a DST change and would also move candle buckets off their real UTC open times. Only labels change: `localization.timeFormatter` (crosshair label) calls `formatChartTime`, and `timeScale.tickMarkFormatter` (axis) calls `tickMarkLabel` with the library's `TickMarkType` (Year, Month, DayOfMonth, Time, TimeWithSeconds). A non-number `Time` (a business day string) gives the placeholder or `null`. The crosshair readout above the chart uses `formatChartTime` too.
+- **DST correctness.** `Intl.DateTimeFormat` applies the zone's rules to the instant being formatted, so a label before and after a clock change is right with no extra code. A day boundary in the viewer's zone is not a UTC day boundary, so a 1d candle opening at 00:00 UTC shows as the local equivalent (05:30 in IST, 19:00 the day before in New York in winter). The axis labels follow the candle open times and never assume a 24 hour local day.
+- **Test seam.** The formatters take an optional `timeZone` (and `locale`), so tests pin `"America/New_York"`, `"Asia/Kolkata"`, and `"UTC"` and do not depend on the machine's zone. Other tests that need exact text pass `timeZone: "UTC"`.
+- **Where it applies.** The tape (`TradesTape`) and the chart. Fills, orders, positions, the status bar, notices, and the rejection toast show no clock time today, so they need no change. Any time added to them later uses these formatters.
+
+**D7 file changes**
+
+**File**: `web/lib/timeFormat.ts` (new), `web/lib/bookView.ts`, `web/lib/chartData.ts`, `web/components/ChartPanel.tsx`, `web/components/TradesTape.tsx`
+
+1. Add the formatters described in D7. Remove `formatTimeUtc` and the UTC `formatChartTime`.
+2. `ChartPanel`: set `localization.timeFormatter` and `timeScale.tickMarkFormatter`, and use the new `formatChartTime` for the readout.
+3. `TradesTape`: use `formatClock(entry.ts)`.
 
 **File**: `rust/crates/protocol/src/event.rs`, `lib.rs`, `strategies.rs`, `codec.rs`
 
@@ -558,6 +591,7 @@ Then write property tests that compare the fixed code against that data or again
 - **Property 6** (fast-check over the layout spec): for every panel id and every area, the area and track checks above. Content heights are not generated, because the check is static.
 - **Property 7** (fast-check `web/store` + `bookView`): random trade sequences across three symbols and random selected symbols; check bounds, id order and stability, and the one-row-added relation.
 - **Properties 8 to 11**: the preservation cases listed above, using the existing P1, P4 to P7, P11 to P13, P18, P19, P28, P34, and P35 suites plus the new golden comparisons.
+- **Property 13** (fast-check `web/lib/timeFormat.test.ts`): random epoch ms, including instants within three hours of the 2024 US DST changes, in `"UTC"`, `"Asia/Kolkata"`, and `"America/New_York"`; compare the formatters with an independent `Intl.DateTimeFormat` reference, and check that the candle data is unchanged. Unit tests: the same instant differs between Kolkata and New York, a 1d open shows as 05:30 in Kolkata, and invalid input gives the placeholder.
 
 ### Integration Tests
 

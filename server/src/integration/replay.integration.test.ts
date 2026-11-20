@@ -209,8 +209,14 @@ if (!HAVE_ENGINE) {
           expect(candle.bars).toHaveLength(1);
           for (const bar of candle.bars) expectValidBar(bar);
         }
-        // Only one snapshot: everything after the first candle is live.
-        expect(candles().filter((c) => c.candle.snapshot)).toHaveLength(1);
+        // Snapshots: the subscribe answer, plus (when the subscribe came before the fixture load)
+        // the fresh snapshot the replay warm-up sends (chart-and-tape-fix Req 2.3, design D4).
+        // Either way every snapshot precedes every live candle.
+        const snapshots = candles().filter((c) => c.candle.snapshot);
+        expect(snapshots.length).toBeGreaterThanOrEqual(1);
+        expect(snapshots.length).toBeLessThanOrEqual(2);
+        const firstLiveIndex = candles().findIndex((c) => !c.candle.snapshot);
+        expect(candles().slice(firstLiveIndex).some((c) => c.candle.snapshot)).toBe(false);
 
         // 3. BTC-USD trades on the market topic (Req 9.8, 17.6).
         await inbox.until(() => btcTrades().length >= WANT_TRADES, `${WANT_TRADES} BTC-USD trades`);
@@ -382,21 +388,28 @@ if (!HAVE_ENGINE) {
                 ((e.type === "candle" && !e.snapshot && e.symbol === "BTC-USD" && e.timeframe === "1m") ||
                   (e.type === "indicators" && e.symbol === "BTC-USD" && e.timeframe === "1m")),
             );
+        // The subscribe answer ends with an Indicators event that follows the snapshot, not a live
+        // candle, so only Indicators events that follow a live candle are checked.
+        const checkAlignment = (): { checked: number; bad: number | null } => {
+          let lastBarT: number | null = null;
+          let checked = 0;
+          for (const e of liveSeq()) {
+            if (e.type === "candle") {
+              lastBarT = e.bars[e.bars.length - 1]?.t ?? null;
+            } else if (lastBarT !== null) {
+              if (e.ts !== lastBarT) return { checked, bad: e.ts };
+              checked += 1;
+            }
+          }
+          return { checked, bad: null };
+        };
         await first.inbox.until(
-          () => liveSeq().some((e) => e.type === "indicators"),
-          "a live BTC-USD 1m Indicators event",
+          () => checkAlignment().checked > 0,
+          "a live BTC-USD 1m Indicators event after a live candle",
           LIVE_WAIT_MS,
         );
-        let lastBarT: number | null = null;
-        let checked = 0;
-        for (const e of liveSeq()) {
-          if (e.type === "candle") {
-            lastBarT = e.bars[e.bars.length - 1]?.t ?? null;
-          } else if (lastBarT !== null) {
-            expect(e.ts).toBe(lastBarT);
-            checked += 1;
-          }
-        }
+        const { checked, bad } = checkAlignment();
+        expect(bad).toBeNull();
         expect(checked).toBeGreaterThan(0);
 
         // Req 2.7: a second connection, after the first one's snapshot, gets a cached snapshot.

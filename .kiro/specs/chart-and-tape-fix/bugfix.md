@@ -44,6 +44,14 @@ Requirement references (Req N.M) point to `.kiro/specs/haunted-terminal/requirem
 
 1.10 WHEN a trade arrives for the selected symbol THEN the Web_UI tape gives every rendered row a new identity, because each row's identity depends on its position in the list. Every visible row is rebuilt for each trade instead of one row being added.
 
+**Scope addition: replay time**
+
+1.11 WHEN the Engine replays a Fixture THEN the system shows the Fixture's recorded timestamps instead of the current time. The chart time axis, the tape, and fills carry an old or fake date (for example Jan 1 00:00 UTC for the demo Fixture).
+
+**Scope addition: local time zone**
+
+1.12 WHEN the Web_UI shows a time (chart time axis, crosshair readout, tape, fills and orders, status bar, notices) THEN the system formats it in UTC, for example "22:13 UTC", instead of the viewer's local time zone. A viewer in India or in the USA sees UTC times that they must convert by hand.
+
 ### Expected Behavior (Correct)
 
 **Bug A: chart history and indicator alignment**
@@ -72,6 +80,14 @@ Requirement references (Req N.M) point to `.kiro/specs/haunted-terminal/requirem
 
 2.11 WHEN a trade arrives for the selected symbol THEN the Web_UI tape SHALL show the newest trade at the top of its panel, SHALL render at most a fixed number of rows (50), and SHALL add the new row without rebuilding the rows already shown.
 
+**Scope addition: replay time**
+
+2.12 WHEN a replay Fixture loads THEN the system SHALL shift the `recv` and the message `ts` of every Fixture line by one offset, a whole number of minutes, so that the first line after the warm-up (`lines[k]`, or line 0 when there is no warm-up) falls in the current UTC minute of the wall clock at load time. Later loops SHALL keep increasing from there. The shift SHALL be applied before the warm-up, so the Engine core only sees shifted times.
+
+**Scope addition: local time zone**
+
+2.13 WHEN the Web_UI shows a time (chart time axis, crosshair readout, tape, fills and orders, status bar, notices) THEN the system SHALL format it in the browser's local time zone through `Intl.DateTimeFormat` with no fixed zone, so each viewer sees their own zone for the same moment (someone in India sees IST, someone in the USA sees their US zone). The conversion SHALL follow the zone's daylight saving rules for the instant being shown. The change is display-only: the Web_UI SHALL NOT shift any data by a zone offset.
+
 ### Unchanged Behavior (Regression Prevention)
 
 3.1 WHEN the Candle_Builder builds candles from trades THEN the system SHALL CONTINUE TO satisfy low ≤ open ≤ high and low ≤ close ≤ high, volume equal to the sum of trade quantities in the interval, and equality of aggregated and directly built higher-Timeframe candles (Req 8.4, 8.5, 8.6).
@@ -96,8 +112,12 @@ Requirement references (Req N.M) point to `.kiro/specs/haunted-terminal/requirem
 
 3.11 WHEN the user zooms, pans, moves the crosshair, switches Timeframe with buttons or keys 1 to 5, or toggles an indicator in either Client THEN the system SHALL CONTINUE TO behave as specified in Req 25, 26, and 29. A new history snapshot SHALL CONTINUE TO position the view on the newest candles.
 
-3.12 WHEN a Trade Event arrives THEN the system SHALL CONTINUE TO forward it to every Client subscribed to its symbol, show it in the tape with UTC time, price, quantity, and side for the selected symbol, and update the watchlist last price (Req 9.8, 27.2, 27.3).
+3.12 WHEN a Trade Event arrives THEN the system SHALL CONTINUE TO forward it to every Client subscribed to its symbol, show it in the tape with time (in the viewer's local zone, criterion 2.13), price, quantity, and side for the selected symbol, and update the watchlist last price (Req 9.8, 27.2, 27.3).
 
 3.13 WHEN the Web_UI is displayed THEN the system SHALL CONTINUE TO show the same panels in the same arrangement (status bar at the top, command bar at the bottom, watchlist, chart, order book, order ticket, account panels, and tape), with the preview dialog, confirm dialog, and rejection toast shown above the panels, and with the chart resizing to its panel when the window resizes.
 
 3.14 WHEN the Engine restarts THEN the Server SHALL CONTINUE TO reset every Paper_Account, notify every connected Client, and resend every active subscription (Req 15.4, 15.7).
+
+3.15 WHEN replay time is aligned to the current time (criterion 2.12) THEN the system SHALL CONTINUE TO keep the inter-message delays, the warm-up length `k`, and the shape of every 1m candle unchanged. Higher Timeframes may group trades differently, because the offset is a minute multiple, not a multiple of the Timeframe. Live mode SHALL CONTINUE TO use venue times unchanged. Replay determinism (Req 6.6, criterion 3.4) holds up to this one constant offset, which comes from the wall clock at load time.
+
+3.16 WHEN times are shown in the viewer's local zone (criterion 2.13) THEN the system SHALL CONTINUE TO keep every candle bucket aligned to UTC (a 1d candle opens at 00:00 UTC, which a viewer in India sees as 05:30 IST), and to keep wire data, the Engine, the Server, and the Journal in UTC epoch ms. Chart series times SHALL CONTINUE TO be UTC seconds. The TUI is out of scope for this change and its time display is unchanged.

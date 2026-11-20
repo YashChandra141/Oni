@@ -5,6 +5,7 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Oni",
   description: "Crypto paper-trading terminal. Paper only: no real orders, no real funds.",
+  icons: { icon: "/brand/favicon.svg" },
 };
 
 export const viewport: Viewport = {

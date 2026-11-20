@@ -3,7 +3,7 @@
 Notes for every task:
 
 - Commands such as `bun run gen:protocol`, `bun run check`, `bun run --cwd web build`, `cargo test`, and `bun test` need the user's approval each time they run (tech.md standing rule). State the exact command, directory, and reason, then wait.
-- Property numbers refer to the 11 correctness properties in `design.md`. Requirement numbers refer to the clauses in `bugfix.md`.
+- Property numbers refer to the 13 correctness properties in `design.md`. Requirement numbers refer to the clauses in `bugfix.md`.
 - No test contacts Backpack, Coinbase, a Solana RPC, or any network service. Backfill tests use a fake fetcher.
 - Rust code: no `unwrap()` or `expect()` outside tests, no `unsafe`, no wall-clock reads in the engine core (rust.md).
 - Never hand-edit `shared/protocol/*.ts` except the `index.ts` re-export line, and never hand-edit `server/src/generated/`.
@@ -207,7 +207,7 @@ Notes for every task:
     - **EXPECTED OUTCOME**: Tests PASS (no regressions), apart from the `Indicators` `ts` field in the golden comparison.
     - _Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9_
 
-- [ ] 4. Fix the protocol: indicator history on `Candle` snapshots
+- [x] 4. Fix the protocol: indicator history on `Candle` snapshots
 
   - [x] 4.1 Add `IndicatorPoint` and `Candle.indicators`
     - In `rust/crates/protocol/src/event.rs`, define `IndicatorPoint { t: TimeMs, values: IndicatorValues }` with `#[ts(export, export_to = crate::TS_EXPORT_DIR)]` and `#[ts(type = "number")]` on `t`. Add `indicators: Option<Vec<IndicatorPoint>>` to `Candle` with `#[serde(default, skip_serializing_if = "Option::is_none")]` and `#[ts(optional)]`. Re-export `IndicatorPoint` from `lib.rs`. `protocol_version` stays 2.
@@ -241,14 +241,14 @@ Notes for every task:
     - Add a size test: 500 bars and 500 points with extreme i64 and f64 values encode to at most `MAX_EVENT_LINE_BYTES`.
     - _Requirements: 2.6, 2.7_
 
-  - [ ] 4.6 Verify the protocol and engine exploration tests now pass
+  - [x] 4.6 Verify the protocol and engine exploration tests now pass
     - **Property 4: Expected Behavior** - Snapshots carry per-candle indicator history (test 1.4)
     - **IMPORTANT**: Re-run the SAME test from 1.4. Do NOT write a new test.
     - **EXPECTED OUTCOME**: Test PASSES.
     - Re-run the protocol round-trip proptest (P1) and confirm it passes.
     - _Requirements: 2.6_
 
-- [ ] 5. Fix the server: line limit and snapshot cache
+- [x] 5. Fix the server: line limit and snapshot cache
 
   - [x] 5.1 Raise the engine-stdout line limit to 512 KiB
     - In `server/src/engine/lines.ts`, export `MAX_EVENT_LINE_BYTES = 512 * 1024`. In `server/src/engine/supervisor.ts`, pass `maxBytes: MAX_EVENT_LINE_BYTES` to the engine-stdout `LineSplitter`. The splitter default stays 64 KiB, and engine stdin keeps its 64 KiB limit.
@@ -269,13 +269,13 @@ Notes for every task:
     - In `server/src/state/market.test.ts` (fast-check), apply random sequences of engine `Candle` and `Indicators` events to `MarketState` and to the web store reducers. Assert the cached snapshot carries the same bars and indicator points as the store, that a snapshot replaces all earlier points, and that `clear()` drops the points.
     - _Requirements: 2.6, 2.7_
 
-  - [ ] 5.4 Verify the line-limit exploration test now passes
+  - [x] 5.4 Verify the line-limit exploration test now passes
     - **Property 4: Expected Behavior** - Worst-case snapshot line fits (test 1.9)
     - **IMPORTANT**: Re-run the SAME test from 1.9. Do NOT write a new test.
     - **EXPECTED OUTCOME**: Test PASSES.
     - _Requirements: 2.6_
 
-- [ ] 6. Fix the web store: aligned points, snapshot replacement, stable tape ids
+- [x] 6. Fix the web store: aligned points, snapshot replacement, stable tape ids
 
   - [x] 6.1 Align indicator points to candle open times
     - In `web/lib/chartData.ts`, add `bucketStartMs(ts, tf)` (UTC, all five timeframes). In `web/lib/store.ts`, `applyIndicatorsEvent` stores `t: bucketStartMs(event.ts, event.timeframe)`, replaces the point at that time, keeps strictly ascending order, caps at 500, and rejects non-finite or negative `ts`.
@@ -316,19 +316,19 @@ Notes for every task:
     - Add `tapeRows(tape, symbol)` to `web/lib/bookView.ts` (filter by symbol, first `TAPE_ROWS` = 50). Fast-check random trade sequences across three symbols and random selected symbols. Assert at most 200 entries newest first, unique ids strictly decreasing from the top, ids never change while stored, `tapeRows` returns at most 50 entries of that symbol, and after one more trade of the selected symbol the result equals `[new, ...previousRows].slice(0, 50)` by id.
     - _Requirements: 2.11_
 
-  - [ ] 6.8 Verify the web store exploration tests now pass
+  - [x] 6.8 Verify the web store exploration tests now pass
     - **Property 1: Expected Behavior** - Tests 1.2, 1.5, and 1.8
     - **IMPORTANT**: Re-run the SAME tests from 1.2, 1.5, and 1.8. Do NOT write new tests.
     - **EXPECTED OUTCOME**: Tests PASS.
     - _Requirements: 2.1, 2.7, 2.11_
 
-  - [ ] 6.9 Verify web store preservation tests still pass
+  - [x] 6.9 Verify web store preservation tests still pass
     - **Property 11: Preservation** - Re-run the tests from task 2.5
     - **IMPORTANT**: Re-run the SAME tests. Do NOT write new tests.
     - **EXPECTED OUTCOME**: Tests PASS (tape content equals the golden tape ignoring ids).
     - _Requirements: 3.11, 3.12_
 
-- [ ] 7. Fix the web ChartPanel: incremental updates
+- [x] 7. Fix the web ChartPanel: incremental updates
 
   - [x] 7.1 Add `planChartSync` and remove `planSeriesUpdate`
     - In `web/lib/chartData.ts`, add the pure `planChartSync(prev, next)` per D5. It returns `set` when there is no previous state, the view key (symbol, timeframe, decimals) changed, or the snapshot or rewrite counter changed. Otherwise it returns `update` with the bars at or after `prev.lastTime`, and only those bars are converted. Replace `planSeriesUpdate` and `seriesShape`, and move their tests to the new helper.
@@ -350,19 +350,19 @@ Notes for every task:
     - In `web/lib/chartData.test.ts` (fast-check), run random event sequences split into random render batches. Use a model chart series that applies `setData` and `update` as Lightweight Charts does (update replaces an equal time or appends a newer one). After each `planChartSync` result, compare the model series from the first stored time on with `setData(barsToCandles(stored bars))`. Check the volume series and each enabled indicator line the same way. When a batch only changes the forming bar or appends newer bars, assert the plan is `update` with exactly the changed bars and no other bar is converted. A snapshot or rewrite must give `set`.
     - _Requirements: 2.8_
 
-  - [ ] 7.4 Verify the chart exploration test now passes
+  - [x] 7.4 Verify the chart exploration test now passes
     - **Property 5: Expected Behavior** - Test 1.6
     - **IMPORTANT**: Re-run the SAME test from 1.6. Do NOT write a new test.
     - **EXPECTED OUTCOME**: Test PASSES.
     - _Requirements: 2.8_
 
-  - [ ] 7.5 Verify chart interaction preservation tests still pass
+  - [x] 7.5 Verify chart interaction preservation tests still pass
     - **Property 11: Preservation** - Re-run the `chartRange`, `chartKeys`, and toggle tests from task 2.5
     - **IMPORTANT**: Re-run the SAME tests. Add a `planChartSync` check that a snapshot repositions and a rewrite does not.
     - **EXPECTED OUTCOME**: Tests PASS.
     - _Requirements: 3.11_
 
-- [ ] 8. Fix the web layout: fixed grid, scrolling panels, memoized tape
+- [x] 8. Fix the web layout: fixed grid, scrolling panels, memoized tape
 
   - [x] 8.1 Create `web/lib/layout.ts`
     - Export the grid spec as data: columns `12rem minmax(0,1fr) 16rem`, rows `auto minmax(0,1fr) 12rem auto`, and areas `"status status status" / "watch chart side" / "tape account account" / "command command command"`. Export a `PANEL_AREA` map that gives each panel exactly one area.
@@ -394,13 +394,13 @@ Notes for every task:
     - Add the arrangement check: status top, command bottom, watchlist left of the chart, side right of the chart, tape below the watchlist, account below the chart. Overlays keep `fixed`.
     - _Requirements: 2.9, 2.10, 3.13_
 
-  - [ ] 8.6 Verify the layout exploration test now passes
+  - [x] 8.6 Verify the layout exploration test now passes
     - **Property 6: Expected Behavior** - Test 1.7
     - **IMPORTANT**: Re-run the SAME test from 1.7. Do NOT write a new test.
     - **EXPECTED OUTCOME**: Test PASSES.
     - _Requirements: 2.9, 2.10_
 
-- [ ] 9. Fix the TUI: use the indicator history from snapshots
+- [x] 9. Fix the TUI: use the indicator history from snapshots
 
   - [x] 9.1 Apply the snapshot's indicator history
     - In `rust/crates/tui/src/app.rs`, in the `Event::Candle` arm of `update`, add `App::apply_indicator_history`. On a snapshot for the selected key, replace that key's `IndicatorSeries` with the snapshot's points (floored to the candle open time, merged, capped at 500). With `indicators: None`, clear it. Live handling is unchanged. Redraw rules (at most 30 per second, only when dirty) are unchanged.
@@ -414,14 +414,14 @@ Notes for every task:
     - In `rust/crates/tui/src/app.rs` tests (proptest), random `Indicators` event `ts` values and snapshots with and without `indicators`. Assert stored points are floored, one per open time, ascending, at most 500, that a snapshot replaces the series, and that `None` clears it.
     - _Requirements: 2.1, 2.7, 3.10_
 
-  - [ ] 9.3 Verify TUI preservation tests still pass
+  - [x] 9.3 Verify TUI preservation tests still pass
     - **Property 11: Preservation** - Re-run the tests from task 2.6
     - **IMPORTANT**: Re-run the SAME tests. Do NOT write new tests.
     - **EXPECTED OUTCOME**: Tests PASS.
     - Add a step to `rust/crates/tui/MANUAL_CHECK.md`: after the warm-up, the CandleChart_Widget shows history candles with indicator lines over them.
     - _Requirements: 3.10, 3.11_
 
-- [-] 10. Checkpoint - Ensure all tests pass
+- [x] 10. Checkpoint - Ensure all tests pass
   - Run `bun run check` from the repository root. It runs cargo fmt check, clippy `-D warnings`, cargo test, tsc, and bun test. The user approves it at run time.
   - Run `bun run --cwd web build` to confirm the static export builds. The user approves it at run time.
   - Add the replay integration test `server/src/integration/replay.integration.test.ts` if it is not yet present: real engine with `fixtures/demo.jsonl` at speed 1, subscribe BTC-USD 1m, expect a snapshot with 85 to 95 bars and matching indicator points, live `Indicators` `ts` equal to the `Candle` `t`, a cached snapshot with points for a second subscriber, and a warm-up wall time under 1 s in a release build.
@@ -432,3 +432,43 @@ Notes for every task:
     - Switch to 5m and back, then restart the server. No stale line segments remain and the view sits on the newest candles.
     - Resize the window and confirm the chart follows its panel.
   - Ensure all tests pass, ask the user if questions arise.
+
+- [x] 11. Replay shows today's real time
+  - Scope addition. The checkpoint re-run of Task 10 (`bun run check`, `bun run --cwd web build`) covers this task.
+
+  - [x] 11.1 Shift replay timestamps to the current minute at load
+    - In `rust/crates/engine/src/feed/replay.rs`, add the pure helpers `align_offset` / `checked_align_offset` (minute floors, checked arithmetic, 0 on overflow), `shift_lines` (moves `recv` and the message `ts`, all or nothing), and `align_to_now(lines, now_ms)`.
+    - In `rust/crates/engine/src/runtime.rs`, `Replay::on_loaded` takes the wall-clock `wall_ms` (read with `now_ms()` in the run loop). It calls `align_to_now` before `ReplaySchedule::new`, `take_warmup`, and `warm_up`, logs the offset at info, and warns on overflow. `core.rs` is unchanged.
+    - Update `start_and_load` (fixed `TEST_WALL_MS`) and `run_replays_trades_in_order_and_loops` (relative times, first trade on the load minute). Check that `server/src/integration/replay.integration.test.ts` assumes no absolute fixture time.
+    - _Bug_Condition: replay shows the Fixture's recorded timestamps_
+    - _Expected_Behavior: D6 Replay time alignment_
+    - _Preservation: delays, `k`, and 1m candle shapes unchanged; live mode unchanged (3.15)_
+    - _Requirements: 1.11, 2.12, 3.15_
+
+  - [x] 11.2 Write property test for replay time alignment
+    - **Property 12: Expected Behavior** - Replay time alignment
+    - In `feed/replay.rs` tests (proptest, 64 cases), random fixtures and an injected `now`: the first live line is in now's minute, all deltas of `recv` and `ts` are preserved, the shift is a multiple of 60 000, and `warmup_len` is unchanged. Add unit tests for `align_offset` (minute multiple, now's minute, overflow gives 0).
+    - _Requirements: 2.12, 3.15_
+
+- [x] 12. Show times in the viewer's local time zone
+  - Scope addition (bugfix 1.12, 2.13, 3.16; design D7). Display-only, web only: times stay UTC epoch ms everywhere else. The TUI is out of scope for this task and is unchanged.
+  - The next `bun run check && bun run --cwd web build` (the checkpoint of Task 10) covers this task. The user approves each run.
+
+  - [x] 12.1 Local-time formatters and chart localization
+    - Create `web/lib/timeFormat.ts` with `formatClock(ms, opts?)`, `formatChartTime(sec, opts?)`, and `tickMarkLabel(sec, tickType, opts?)`. `opts` is `{ timeZone?: string; locale?: string }`. Use `Intl.DateTimeFormat` with no fixed zone by default, cache the instances per kind, zone, and locale, and give a placeholder dash for invalid input.
+    - Remove `formatTimeUtc` (`bookView.ts`) and the UTC `formatChartTime` (`chartData.ts`) and update every caller and test.
+    - In `web/components/ChartPanel.tsx`, set `localization.timeFormatter` (crosshair) and `timeScale.tickMarkFormatter` (axis). Keep the series times as UTC seconds and do not shift any data.
+    - _Bug_Condition: the Web_UI shows UTC times_
+    - _Expected_Behavior: D7 Local time display_
+    - _Preservation: candle buckets, wire data, and the journal stay UTC (3.16)_
+    - _Requirements: 1.12, 2.13, 3.16_
+
+  - [x] 12.2 Use them in the tape, orders/fills, status bar, and notices
+    - `web/components/TradesTape.tsx` uses `formatClock`. Fills, orders, positions, the status bar, notices, and the rejection toast show no clock time today (checked by grep for `ts`, `time`, and the old helpers), so they need no change. Any time shown there later uses the same formatters.
+    - _Requirements: 2.13, 3.12_
+
+  - [x] 12.3 Write property test for local time display
+    - **Property 13: Expected Behavior** - Local time display
+    - In `web/lib/timeFormat.test.ts` (fast-check), random epoch ms including DST-transition dates, in `"UTC"`, `"Asia/Kolkata"`, and `"America/New_York"`: the formatted text equals `Intl.DateTimeFormat` in that zone, and the candle data is unchanged. Unit tests: the same instant renders differently in Kolkata and New York, a 1d open at 00:00 UTC shows as 05:30 in Kolkata, and invalid input gives the placeholder.
+    - Tests that asserted UTC strings pass an explicit `timeZone: "UTC"`.
+    - _Requirements: 2.13, 3.16_

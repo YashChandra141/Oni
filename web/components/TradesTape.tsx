@@ -1,11 +1,12 @@
 "use client";
 
-// Trades tape (Task 8.3/8.4, Req 27.2, 2.11, 3.12): the newest trades with UTC time, price, quantity, and side.
+// Trades tape (Task 8.3/8.4, Req 27.2, 2.11, 3.12): the newest trades with local time, price, quantity, and side.
 
 import { memo, useMemo } from "react";
-import { formatTimeUtc, tapeRows } from "../lib/bookView";
+import { tapeRows } from "../lib/bookView";
 import { formatPrice, formatQty } from "../lib/format";
 import { useTerminalStore, type TapeEntry } from "../lib/store";
+import { formatClock } from "../lib/timeFormat";
 
 interface TapeRowProps {
   readonly entry: TapeEntry;
@@ -16,7 +17,7 @@ interface TapeRowProps {
 const TapeRow = memo(function TapeRow({ entry, priceDecimals, qtyDecimals }: TapeRowProps) {
   return (
     <li className={`flex justify-between gap-2 ${entry.side === "buy" ? "text-buy" : "text-sell"}`}>
-      <span className="text-phosphor-dim">{formatTimeUtc(entry.ts)}</span>
+      <span className="text-phosphor-dim">{formatClock(entry.ts)}</span>
       <span>{formatPrice(entry.price, priceDecimals)}</span>
       <span>{formatQty(entry.qty, qtyDecimals)}</span>
     </li>

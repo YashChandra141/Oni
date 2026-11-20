@@ -25,6 +25,12 @@
 //! `LOOP_GAP_MS / speed` of wall time between loops instead of spinning.
 //!
 //! If a shift would overflow `i64`, the schedule ends instead of wrapping.
+//!
+//! # Time alignment
+//!
+//! [`align_to_now`] shifts a freshly loaded fixture so replay shows today's time: one offset, a
+//! whole number of minutes, moves every `recv` and `ts` so the first line after the warm-up
+//! lands in the current UTC minute. It takes the clock reading as an argument and is pure.
 
 use std::fmt;
 use std::time::Duration;
@@ -55,6 +61,90 @@ pub fn warmup_len(lines: &[FixtureLine]) -> usize {
         return 0;
     };
     lines.iter().take_while(|l| l.recv < threshold).count()
+}
+
+/// One minute in ms. Replay time shifts are a whole number of these, so 1m candle boundaries
+/// stay on minute boundaries.
+const MINUTE_MS: TimeMs = 60_000;
+
+/// `t` rounded down to a whole minute (towards negative infinity).
+fn floor_minute(t: TimeMs) -> Option<TimeMs> {
+    // For `t` near `i64::MIN` the floor can fall below `i64::MIN`, hence checked.
+    t.div_euclid(MINUTE_MS).checked_mul(MINUTE_MS)
+}
+
+/// The shift that moves `first_live_recv` into the minute that contains `now_ms`:
+/// `floor_minute(now_ms) - floor_minute(first_live_recv)`. Always a multiple of 60 000. `None`
+/// if the subtraction overflows `i64`. Pure: the caller supplies the clock reading.
+pub fn checked_align_offset(first_live_recv: TimeMs, now_ms: TimeMs) -> Option<TimeMs> {
+    floor_minute(now_ms)?.checked_sub(floor_minute(first_live_recv)?)
+}
+
+/// Moves `recv` and the message's own `ts` of every line by `offset` ms. All or nothing: if any
+/// value would overflow `i64`, returns the lines unchanged as `Err`.
+pub fn shift_lines(
+    lines: Vec<FixtureLine>,
+    offset: TimeMs,
+) -> Result<Vec<FixtureLine>, Vec<FixtureLine>> {
+    let fits = lines
+        .iter()
+        .all(|l| l.recv.checked_add(offset).is_some() && l.msg.ts().checked_add(offset).is_some());
+    if !fits {
+        return Err(lines);
+    }
+    Ok(lines
+        .into_iter()
+        .filter_map(|l| {
+            Some(FixtureLine {
+                recv: l.recv.checked_add(offset)?,
+                msg: l.msg.shifted(offset)?,
+            })
+        })
+        .collect())
+}
+
+/// A fixture after time alignment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Aligned {
+    pub lines: Vec<FixtureLine>,
+    /// The shift applied to every `recv` and `ts`, in ms. 0 if none.
+    pub offset: TimeMs,
+    /// True if the shift would have overflowed, so `offset` is 0 and the lines are unchanged.
+    pub overflowed: bool,
+}
+
+/// Shifts the whole fixture by one minute-multiple offset so that the first line after the
+/// warm-up (`lines[warmup_len]`, or line 0 without a warm-up) falls in the minute of `now_ms`.
+/// The warm-up length does not change, and every gap between lines is preserved. On overflow
+/// the lines come back unshifted with `overflowed` set. Pure: `now_ms` comes from the caller.
+pub fn align_to_now(lines: Vec<FixtureLine>, now_ms: TimeMs) -> Aligned {
+    let k = warmup_len(&lines);
+    let Some(first_live) = lines.get(k) else {
+        return Aligned {
+            lines,
+            offset: 0,
+            overflowed: false,
+        };
+    };
+    let Some(offset) = checked_align_offset(first_live.recv, now_ms) else {
+        return Aligned {
+            lines,
+            offset: 0,
+            overflowed: true,
+        };
+    };
+    match shift_lines(lines, offset) {
+        Ok(lines) => Aligned {
+            lines,
+            offset,
+            overflowed: false,
+        },
+        Err(lines) => Aligned {
+            lines,
+            offset: 0,
+            overflowed: true,
+        },
+    }
 }
 
 /// One message ready for release.
@@ -261,6 +351,11 @@ mod tests {
     use crate::feed::MarketMsg;
     use crate::feed::fixture::{LineError, encode_fixture_line, parse_fixture};
     use protocol::{Level, Price, Qty, Side};
+
+    /// The offset `align_to_now` applies, or 0 when it would overflow (what the runtime uses).
+    fn align_offset(first_live_recv: TimeMs, now_ms: TimeMs) -> TimeMs {
+        checked_align_offset(first_live_recv, now_ms).unwrap_or(0)
+    }
 
     fn trade(recv: TimeMs, ts: TimeMs, price: i64) -> FixtureLine {
         FixtureLine {
@@ -555,6 +650,127 @@ mod tests {
         let _ = long.next();
         assert!(long.take_warmup().is_empty());
         assert_eq!(long.index, 1);
+    }
+
+    // chart-and-tape-fix Property 12 (unit cases). Req 2.12, 3.15.
+    #[test]
+    fn align_offset_is_a_minute_multiple_and_lands_in_nows_minute() {
+        let first: TimeMs = 1_700_000_012_345;
+        let now: TimeMs = 1_800_000_099_999;
+        let offset = align_offset(first, now);
+        assert_eq!(offset % MINUTE_MS, 0);
+        assert_eq!(
+            (first + offset).div_euclid(MINUTE_MS),
+            now.div_euclid(MINUTE_MS)
+        );
+        // Already in the right minute: no shift.
+        assert_eq!(align_offset(now, now), 0);
+        // Negative offset: a fixture from the future moves back.
+        assert!(align_offset(now, first) < 0);
+        assert_eq!(align_offset(now, first) % MINUTE_MS, 0);
+    }
+
+    #[test]
+    fn align_offset_gives_zero_on_overflow() {
+        assert_eq!(checked_align_offset(TimeMs::MIN, TimeMs::MAX), None);
+        assert_eq!(align_offset(TimeMs::MIN, TimeMs::MAX), 0);
+        // The offset fits, but shifting the later line by it does not.
+        let wide = vec![trade(0, 0, 1), trade(1_000_000, 1_000_000, 2)];
+        let aligned = align_to_now(wide.clone(), TimeMs::MAX);
+        assert_eq!(aligned.lines, wide);
+        assert_eq!(aligned.offset, 0);
+        assert!(aligned.overflowed);
+    }
+
+    #[test]
+    fn align_to_now_shifts_recv_and_ts_and_keeps_deltas_and_warmup() {
+        // Two warm-up lines, then the live part starting at 3_000_000 (not on a minute).
+        let lines = vec![
+            trade(1_000, 990, 1),
+            trade(1_500, 1_490, 2),
+            trade(3_000_017, 3_000_000, 3),
+            trade(3_000_500, 3_000_480, 4),
+        ];
+        let k = warmup_len(&lines);
+        assert_eq!(k, 2);
+        let now = 1_800_000_030_000;
+        let aligned = align_to_now(lines.clone(), now);
+        assert!(!aligned.overflowed);
+        assert_eq!(aligned.offset % MINUTE_MS, 0);
+        assert_eq!(warmup_len(&aligned.lines), k);
+        assert_eq!(
+            aligned.lines[k].recv.div_euclid(MINUTE_MS),
+            now.div_euclid(MINUTE_MS)
+        );
+        for (old, new) in lines.iter().zip(&aligned.lines) {
+            assert_eq!(new.recv - old.recv, aligned.offset);
+            assert_eq!(new.msg.ts() - old.msg.ts(), aligned.offset);
+        }
+        // The schedule still starts at line k with zero delay and keeps its gaps.
+        let mut sched = ReplaySchedule::new(aligned.lines, 1).unwrap();
+        assert_eq!(sched.take_warmup().len(), k);
+        let first = sched.next().unwrap();
+        assert_eq!(first.delay, Duration::ZERO);
+        assert_eq!(sched.next().unwrap().delay, Duration::from_millis(483));
+    }
+
+    #[test]
+    fn align_to_now_without_warmup_uses_line_zero_and_empty_is_a_no_op() {
+        let lines = trades_at(&[10_000, 70_000]);
+        let now = 5 * MINUTE_MS + 1;
+        let aligned = align_to_now(lines.clone(), now);
+        // offset = floor_minute(now) - floor_minute(line 0) = 300_000: the line keeps its
+        // 10 s position inside the minute, so it lands in now's minute, not on its start.
+        assert_eq!(aligned.offset, 5 * MINUTE_MS);
+        assert_eq!(aligned.lines[0].recv, 5 * MINUTE_MS + 10_000);
+        assert_eq!(aligned.lines[1].recv, 5 * MINUTE_MS + 70_000);
+        assert_eq!(
+            aligned.lines[0].recv.div_euclid(MINUTE_MS),
+            now.div_euclid(MINUTE_MS)
+        );
+        for (old, new) in lines.iter().zip(&aligned.lines) {
+            assert_eq!(new.msg.ts() - old.msg.ts(), aligned.offset);
+        }
+        let empty = align_to_now(Vec::new(), 123);
+        assert!(empty.lines.is_empty() && empty.offset == 0 && !empty.overflowed);
+    }
+
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(64))]
+
+        // chart-and-tape-fix Property 12: replay time alignment
+        // **Validates: Requirements 2.12, 3.15**
+        #[test]
+        fn p12_alignment_puts_the_first_live_line_in_nows_minute(
+            start in 0i64..2_000_000_000_000,
+            gaps in proptest::collection::vec(0i64..600_000, 1..40),
+            now in 0i64..4_000_000_000_000,
+        ) {
+            let mut recvs = vec![start];
+            for gap in &gaps {
+                recvs.push(recvs.last().copied().unwrap() + gap);
+            }
+            let lines: Vec<FixtureLine> = recvs
+                .iter()
+                .zip(1..)
+                .map(|(&recv, price)| trade(recv, recv - 5, price))
+                .collect();
+            let k = warmup_len(&lines);
+            let aligned = align_to_now(lines.clone(), now);
+
+            proptest::prop_assert!(!aligned.overflowed);
+            proptest::prop_assert_eq!(aligned.offset % MINUTE_MS, 0);
+            proptest::prop_assert_eq!(warmup_len(&aligned.lines), k);
+            proptest::prop_assert_eq!(aligned.lines.len(), lines.len());
+            proptest::prop_assert_eq!(
+                aligned.lines[k].recv.div_euclid(MINUTE_MS),
+                now.div_euclid(MINUTE_MS)
+            );
+            for (old, new) in lines.iter().zip(&aligned.lines) {
+                proptest::prop_assert_eq!(new.recv - old.recv, aligned.offset);
+                proptest::prop_assert_eq!(new.msg.ts() - old.msg.ts(), aligned.offset);
+            }
+        }
     }
 
     #[test]

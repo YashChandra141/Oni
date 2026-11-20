@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Oni mark">
+  <title>Oni mark</title>
+  <defs>
+    <linearGradient id="oni-face" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#c1121f"/>
+      <stop offset="1" stop-color="#8b0000"/>
+    </linearGradient>
+    <filter id="oni-glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="1.2" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect x="1" y="1" width="62" height="62" rx="14" fill="#111114" stroke="#8b0000" stroke-width="1.5"/>
+  <g transform="translate(8 8) scale(0.75)">
+    <path d="M14 22 L8 3 L25 14 Z M50 22 L56 3 L39 14 Z" fill="#e5e5e5"/>
+    <path d="M12 20 Q32 8 52 20 L50 40 Q46 56 32 61 Q18 56 14 40 Z" fill="url(#oni-face)" stroke="#ff2a2a" stroke-width="1"/>
+    <path d="M14 26 L30 34 L30 38 L14 31 Z M50 26 L34 34 L34 38 L50 31 Z" fill="#0b0b0d"/>
+    <path d="M18 37 L29 39 L26 43 L19 42 Z M46 37 L35 39 L38 43 L45 42 Z" fill="#ffe08a" filter="url(#oni-glow)"/>
+    <path d="M19 49 Q32 44 45 49 L43 54 Q32 50 21 54 Z" fill="#0b0b0d"/>
+    <path d="M24 49 L26 57 L29 50 Z M40 49 L38 57 L35 50 Z" fill="#ffffff"/>
+  </g>
+</svg>

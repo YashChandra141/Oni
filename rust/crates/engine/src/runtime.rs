@@ -32,7 +32,8 @@ use crate::feed::backpack::run_backpack;
 use crate::feed::coinbase::run_coinbase;
 use crate::feed::fixture::{FixtureError, FixtureLine, read_fixture};
 use crate::feed::replay::{
-    ReplaySchedule, ScheduleError, Scheduled, error_event, load_error_event, schedule_error_event,
+    ReplaySchedule, ScheduleError, Scheduled, align_to_now, error_event, load_error_event,
+    schedule_error_event,
 };
 use crate::lines::{Line, LineReader};
 
@@ -273,7 +274,7 @@ where
                 info!("stdin reached end of file");
                 break;
             }
-            Wake::Loaded(loaded) => replay.on_loaded(loaded, &mut engine, Instant::now()),
+            Wake::Loaded(loaded) => replay.on_loaded(loaded, &mut engine, Instant::now(), now_ms()),
             Wake::LiveMarket(Some(msg)) => live.on_market(&mut engine, msg),
             Wake::LiveMarket(None) => {
                 warn!("live market channel closed");
@@ -418,7 +419,18 @@ impl Replay {
     /// For a fixture longer than the warm-up window, the old prefix is applied to `engine` at
     /// once (Req 2.3) and the returned Events are its fresh snapshots (Req 2.4). Nothing can
     /// interleave: this runs in one synchronous step. The speed applies from `lines[k]` on.
-    fn on_loaded(&mut self, loaded: LoadResult, engine: &mut Engine, now: Instant) -> Vec<Event> {
+    ///
+    /// `wall_ms` is the wall-clock time (Unix epoch ms) at load, read by the caller with
+    /// [`now_ms`]. Every fixture time is shifted by one minute-multiple offset so the first line
+    /// after the warm-up falls in that minute (chart-and-tape-fix Req 2.12). `now` is the
+    /// monotonic instant that the replay deadlines count from.
+    fn on_loaded(
+        &mut self,
+        loaded: LoadResult,
+        engine: &mut Engine,
+        now: Instant,
+        wall_ms: TimeMs,
+    ) -> Vec<Event> {
         let Some(PendingLoad { fixture, speed, .. }) = self.pending.take() else {
             return Vec::new();
         };
@@ -434,7 +446,13 @@ impl Replay {
                 return vec![error_event(ErrorCode::Internal, message)];
             }
         };
-        let mut schedule = match ReplaySchedule::new(lines, speed) {
+        // Before take_warmup / warm_up: the core only ever sees shifted times.
+        let aligned = align_to_now(lines, wall_ms);
+        if aligned.overflowed {
+            warn!(fixture = %fixture, "replay time alignment overflowed; using the recorded times");
+        }
+        info!(fixture = %fixture, offset_ms = aligned.offset, "replay time offset applied");
+        let mut schedule = match ReplaySchedule::new(aligned.lines, speed) {
             Ok(schedule) => schedule,
             Err(err) => {
                 warn!(fixture = %fixture, %err, "fixture cannot be replayed; current replay unchanged");
@@ -533,7 +551,8 @@ async fn write_events<W: AsyncWrite + Unpin>(output: &mut W, events: &[Event]) -
     output.flush().await
 }
 
-/// Wall-clock time in milliseconds since the Unix epoch, for Heartbeat Events only.
+/// Wall-clock time in milliseconds since the Unix epoch, for Heartbeat Events and for aligning
+/// a loaded replay fixture to the current minute.
 fn now_ms() -> TimeMs {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| {
         TimeMs::try_from(d.as_millis()).unwrap_or(TimeMs::MAX)
@@ -728,12 +747,16 @@ mod tests {
             .collect()
     }
 
+    /// Injected wall clock for `start_and_load`: 2026-12-03 12:00:00 UTC.
+    const TEST_WALL_MS: TimeMs = 1_796_299_200_000;
+
     /// Starts `fixture`, waits for the load, and returns the Events of the outcome.
     async fn start_and_load(replay: &mut Replay, fixture: &str, now: Instant) -> Vec<Event> {
         assert_eq!(replay.start(fixture.into(), 1), Vec::new());
         let loaded = wait_load(&mut replay.pending).await;
-        // Signature change (task 3.2): these fixtures are short, so the warm-up is empty.
-        replay.on_loaded(loaded, &mut Engine::new(), now)
+        // These fixtures are short, so the warm-up is empty. The wall clock is fixed so the
+        // offset is deterministic; tests here assert prices and order, not absolute times.
+        replay.on_loaded(loaded, &mut Engine::new(), now, TEST_WALL_MS)
     }
 
     fn active_fixture(replay: &Replay) -> Option<&str> {
@@ -864,6 +887,7 @@ mod tests {
         const BASE: TimeMs = 1_798_761_600_000;
         let lines = [(BASE, 1), (BASE + 20, 2), (BASE + 40, 3)];
         let fixture = TempFixture::with_trades("run", &lines);
+        let before = now_ms();
         let (mut stdin_writer, stdin_reader) = tokio::io::duplex(1024);
         let (stdout_writer, stdout_reader) = tokio::io::duplex(64 * 1024);
         let engine = run(BufReader::new(stdin_reader), stdout_writer, config());
@@ -895,6 +919,16 @@ mod tests {
             .expect("replay did not produce 7 trades within 5 s");
         result.unwrap();
 
+        // Replay time is aligned to the wall clock: the first trade (BASE is a minute boundary)
+        // sits exactly on the minute of the load, and the rest keep the recorded offsets.
+        let first_ts = trades[0].1;
+        assert_eq!(first_ts % 60_000, 0, "{first_ts}");
+        let (lo, hi) = (before - before % 60_000, now_ms());
+        assert!(
+            (lo..=hi).contains(&first_ts),
+            "{first_ts} not in {lo}..={hi}"
+        );
+
         let period = 40 + crate::feed::replay::LOOP_GAP_MS;
         let expected: Vec<(i64, TimeMs)> = [(1, 0), (2, 20), (3, 40)]
             .iter()
@@ -903,7 +937,7 @@ mod tests {
             .enumerate()
             .map(|(i, &(price, dt))| {
                 let k = TimeMs::try_from(i / 3).unwrap();
-                (price, BASE + dt + k * period)
+                (price, first_ts + dt + k * period)
             })
             .collect();
         assert_eq!(trades, expected);

@@ -736,6 +736,11 @@
         "executionId": "14efca5f-40cc-4f40-ad83-362f4e60edcc",
         "chatSessionId": "sess_11612aef-38f3-40c4-a8ef-3064180ca4f5",
         "timestamp": 1795173901084
+      },
+      {
+        "executionId": "a83fd2fa-9867-457b-92cd-f41b41a5c3f8",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795184733201
       }
     ],
     "5.1 Raise the engine-stdout line limit to 512 KiB": [
@@ -814,6 +819,11 @@
         "executionId": "14efca5f-40cc-4f40-ad83-362f4e60edcc",
         "chatSessionId": "sess_11612aef-38f3-40c4-a8ef-3064180ca4f5",
         "timestamp": 1795173902571
+      },
+      {
+        "executionId": "a83fd2fa-9867-457b-92cd-f41b41a5c3f8",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795184735451
       }
     ],
     "6.1 Align indicator points to candle open times": [
@@ -980,6 +990,11 @@
         "executionId": "14efca5f-40cc-4f40-ad83-362f4e60edcc",
         "chatSessionId": "sess_11612aef-38f3-40c4-a8ef-3064180ca4f5",
         "timestamp": 1795173905671
+      },
+      {
+        "executionId": "a83fd2fa-9867-457b-92cd-f41b41a5c3f8",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795184751013
       }
     ],
     "6.9 Verify web store preservation tests still pass": [
@@ -992,6 +1007,11 @@
         "executionId": "14efca5f-40cc-4f40-ad83-362f4e60edcc",
         "chatSessionId": "sess_11612aef-38f3-40c4-a8ef-3064180ca4f5",
         "timestamp": 1795173906452
+      },
+      {
+        "executionId": "a83fd2fa-9867-457b-92cd-f41b41a5c3f8",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795184751706
       }
     ],
     "7.1 Add `planChartSync` and remove `planSeriesUpdate`": [
@@ -1070,6 +1090,11 @@
         "executionId": "14efca5f-40cc-4f40-ad83-362f4e60edcc",
         "chatSessionId": "sess_11612aef-38f3-40c4-a8ef-3064180ca4f5",
         "timestamp": 1795173908025
+      },
+      {
+        "executionId": "a83fd2fa-9867-457b-92cd-f41b41a5c3f8",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795184754960
       }
     ],
     "7.5 Verify chart interaction preservation tests still pass": [
@@ -1092,6 +1117,11 @@
         "executionId": "ec02b383-a794-4c50-93ac-32f5222156be",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795177225402
+      },
+      {
+        "executionId": "a83fd2fa-9867-457b-92cd-f41b41a5c3f8",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795184756244
       }
     ],
     "8.1 Create `web/lib/layout.ts`": [
@@ -1214,6 +1244,11 @@
         "executionId": "14efca5f-40cc-4f40-ad83-362f4e60edcc",
         "chatSessionId": "sess_11612aef-38f3-40c4-a8ef-3064180ca4f5",
         "timestamp": 1795173911154
+      },
+      {
+        "executionId": "a83fd2fa-9867-457b-92cd-f41b41a5c3f8",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795184757802
       }
     ],
     "9.1 Apply the snapshot's indicator history": [
@@ -1280,58 +1315,63 @@
         "executionId": "ec02b383-a794-4c50-93ac-32f5222156be",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795177225628
+      },
+      {
+        "executionId": "a83fd2fa-9867-457b-92cd-f41b41a5c3f8",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795184761721
       }
     ],
     "10. Checkpoint - Ensure all tests pass": [
       {
-        "executionId": "14efca5f-40cc-4f40-ad83-362f4e60edcc",
-        "chatSessionId": "sess_11612aef-38f3-40c4-a8ef-3064180ca4f5",
-        "timestamp": 1795173915756
+        "executionId": "903b2332-3880-4794-8336-b62e30850ae3",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795183727635
       },
       {
-        "executionId": "8e1d5c36-708d-47df-acdf-bf78b2f10c4d",
+        "executionId": "903b2332-3880-4794-8336-b62e30850ae3",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
-        "timestamp": 1795176646113
+        "timestamp": 1795183734567
       },
       {
-        "executionId": "ec02b383-a794-4c50-93ac-32f5222156be",
+        "executionId": "662da3c3-b988-4939-9fab-adfd0980887c",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
-        "timestamp": 1795177219022
+        "timestamp": 1795184091181
       },
       {
-        "executionId": "ec02b383-a794-4c50-93ac-32f5222156be",
+        "executionId": "662da3c3-b988-4939-9fab-adfd0980887c",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
-        "timestamp": 1795177226003
+        "timestamp": 1795184097939
       },
       {
-        "executionId": "8e371b27-4db3-40f3-a793-106bc5a201d3",
+        "executionId": "b09f46e8-82dc-408f-bca1-dba85a6495de",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
-        "timestamp": 1795177688841
+        "timestamp": 1795184411344
       },
       {
-        "executionId": "8e371b27-4db3-40f3-a793-106bc5a201d3",
+        "executionId": "b09f46e8-82dc-408f-bca1-dba85a6495de",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
-        "timestamp": 1795177695765
+        "timestamp": 1795184417840
       },
       {
-        "executionId": "b1fd2cbd-b1f0-487d-8e24-74801ba6c596",
+        "executionId": "a83fd2fa-9867-457b-92cd-f41b41a5c3f8",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
-        "timestamp": 1795178273833
+        "timestamp": 1795184765820
       },
       {
-        "executionId": "b1fd2cbd-b1f0-487d-8e24-74801ba6c596",
+        "executionId": "83b35da0-c19b-45f7-a23d-5e7979477652",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
-        "timestamp": 1795178280437
+        "timestamp": 1795185836025
       },
       {
-        "executionId": "b0041980-802c-47ff-ba4b-abd8390518b8",
+        "executionId": "83b35da0-c19b-45f7-a23d-5e7979477652",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
-        "timestamp": 1795178500127
+        "timestamp": 1795185843992
       },
       {
-        "executionId": "b0041980-802c-47ff-ba4b-abd8390518b8",
+        "executionId": "552e4a8e-5660-440f-aa46-e7d1ca263da6",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
-        "timestamp": 1795178511831
+        "timestamp": 1795186422260
       }
     ],
     "1. Write bug condition exploration tests (BEFORE implementing any fix)": [
@@ -1353,6 +1393,97 @@
         "executionId": "8e1d5c36-708d-47df-acdf-bf78b2f10c4d",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795175071756
+      }
+    ],
+    "4. Fix the protocol: indicator history on `Candle` snapshots": [
+      {
+        "executionId": "a83fd2fa-9867-457b-92cd-f41b41a5c3f8",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795184734040
+      }
+    ],
+    "5. Fix the server: line limit and snapshot cache": [
+      {
+        "executionId": "a83fd2fa-9867-457b-92cd-f41b41a5c3f8",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795184750514
+      }
+    ],
+    "6. Fix the web store: aligned points, snapshot replacement, stable tape ids": [
+      {
+        "executionId": "a83fd2fa-9867-457b-92cd-f41b41a5c3f8",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795184752417
+      }
+    ],
+    "7. Fix the web ChartPanel: incremental updates": [
+      {
+        "executionId": "a83fd2fa-9867-457b-92cd-f41b41a5c3f8",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795184756971
+      }
+    ],
+    "8. Fix the web layout: fixed grid, scrolling panels, memoized tape": [
+      {
+        "executionId": "a83fd2fa-9867-457b-92cd-f41b41a5c3f8",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795184758301
+      }
+    ],
+    "9. Fix the TUI: use the indicator history from snapshots": [
+      {
+        "executionId": "a83fd2fa-9867-457b-92cd-f41b41a5c3f8",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795184763684
+      }
+    ],
+    "11.1 Shift replay timestamps to the current minute at load": [
+      {
+        "executionId": "a83fd2fa-9867-457b-92cd-f41b41a5c3f8",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795184767845
+      }
+    ],
+    "11.2 Write property test for replay time alignment": [
+      {
+        "executionId": "a83fd2fa-9867-457b-92cd-f41b41a5c3f8",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795184770608
+      }
+    ],
+    "11. Replay shows today's real time": [
+      {
+        "executionId": "a83fd2fa-9867-457b-92cd-f41b41a5c3f8",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795184771334
+      }
+    ],
+    "12.1 Local-time formatters and chart localization": [
+      {
+        "executionId": "552e4a8e-5660-440f-aa46-e7d1ca263da6",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795186433599
+      }
+    ],
+    "12.3 Write property test for local time display": [
+      {
+        "executionId": "552e4a8e-5660-440f-aa46-e7d1ca263da6",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795186439315
+      }
+    ],
+    "12.2 Use them in the tape, orders/fills, status bar, and notices": [
+      {
+        "executionId": "552e4a8e-5660-440f-aa46-e7d1ca263da6",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795186442510
+      }
+    ],
+    "12. Show times in the viewer's local time zone": [
+      {
+        "executionId": "552e4a8e-5660-440f-aa46-e7d1ca263da6",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795186452648
       }
     ]
   }

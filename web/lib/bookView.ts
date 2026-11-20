@@ -135,10 +135,4 @@ export function bookKeyAction(
   }
 }
 
-/** HH:MM:SS in UTC for a time in ms since the epoch, or "--:--:--" when invalid. */
-export function formatTimeUtc(ms: number): string {
-  if (!Number.isFinite(ms)) return "--:--:--";
-  const date = new Date(ms);
-  if (Number.isNaN(date.getTime())) return "--:--:--";
-  return date.toISOString().slice(11, 19);
-}
+// Tape times are shown in the viewer's local zone: see formatClock in ./timeFormat.

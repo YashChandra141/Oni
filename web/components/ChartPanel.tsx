@@ -32,6 +32,7 @@ import {
   type LineSeriesPartialOptions,
   type MouseEventParams,
   type Time,
+  type TickMarkType,
 } from "lightweight-charts";
 import { useEffect, useRef, useState } from "react";
 import type { Bar } from "../../shared/protocol/index";
@@ -41,7 +42,6 @@ import {
   DEFAULT_QTY_DECIMALS,
   barsToCandles,
   barsToVolume,
-  formatChartTime,
   formatDisplayNumber,
   chartSyncState,
   planChartSync,
@@ -77,6 +77,7 @@ import {
   zoomRange,
 } from "../lib/chartRange";
 import { candleKey, useTerminalStore } from "../lib/store";
+import { TIME_PLACEHOLDER, formatChartTime, tickMarkLabel } from "../lib/timeFormat";
 
 const NO_BARS: readonly Bar[] = [];
 const NO_INDICATORS: readonly IndicatorPoint[] = [];
@@ -196,7 +197,18 @@ export default function ChartPanel() {
         },
       },
       rightPriceScale: { borderColor: CHART_THEME.grid },
-      timeScale: { borderColor: CHART_THEME.grid, timeVisible: true, secondsVisible: false },
+      // Series times stay UTC seconds; only the labels use the viewer's local zone (design D7).
+      localization: {
+        timeFormatter: (time: Time) =>
+          typeof time === "number" ? formatChartTime(time) : TIME_PLACEHOLDER,
+      },
+      timeScale: {
+        borderColor: CHART_THEME.grid,
+        timeVisible: true,
+        secondsVisible: false,
+        tickMarkFormatter: (time: Time, tickType: TickMarkType) =>
+          typeof time === "number" ? tickMarkLabel(time, tickType) : null,
+      },
       // Wheel zooms and drag pans (Req 29.1, 29.2). Wheel scrolling is off so the wheel has one
       // meaning; touch and drag keep the library defaults.
       handleScroll: {

@@ -1366,6 +1366,13 @@
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1794669217176
       }
+    ],
+    "16.1 CRT polish in both clients": [
+      {
+        "executionId": "0f1d4cc6-6541-4549-8b61-9f337e4989b2",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795187203429
+      }
     ]
   }
 }

@@ -7,7 +7,6 @@ import {
   TAPE_ROWS,
   bookKeyAction,
   depthFractions,
-  formatTimeUtc,
   layoutBook,
   levelAtCursor,
   moveBookCursor,
@@ -93,16 +92,7 @@ describe("levelAtCursor", () => {
   });
 });
 
-describe("formatTimeUtc", () => {
-  test("formats HH:MM:SS in UTC", () => {
-    expect(formatTimeUtc(Date.UTC(2026, 0, 2, 3, 4, 5, 999))).toBe("03:04:05");
-    expect(formatTimeUtc(0)).toBe("00:00:00");
-  });
-  test("invalid input gives a placeholder", () => {
-    expect(formatTimeUtc(Number.NaN)).toBe("--:--:--");
-    expect(formatTimeUtc(8.64e15 + 1)).toBe("--:--:--");
-  });
-});
+// formatTimeUtc became formatClock (local time display); see timeFormat.test.ts.
 
 describe("bookKeyAction", () => {
   test("maps Up, Down, Enter through the book context", () => {

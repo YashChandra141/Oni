@@ -1,0 +1,43 @@
+/* Oni theme tokens (asset pack). Opt-in: not imported anywhere yet.
+   Mirrors web/lib/theme.ts. Activate with <html data-theme="oni">. */
+
+[data-theme="oni"] {
+  --oni-bg: #0b0b0d;
+  --oni-panel: #111114;
+  --oni-panel-raised: #17171b;
+  --oni-border: #8b0000;
+  --oni-border-glow: #c1121f;
+  --oni-accent: #c1121f;
+  --oni-accent-bright: #ff2a2a;
+  --oni-text: #e5e5e5;
+  --oni-text-muted: #8a8a8f;
+  --oni-buy: #22c55e;
+  --oni-sell: #ef4444;
+  --oni-live: #22c55e;
+  --oni-warn: #f59e0b;
+
+  --oni-radius-sm: 4px;
+  --oni-radius-md: 8px;
+  --oni-radius-lg: 12px;
+  --oni-radius-pill: 9999px;
+
+  --oni-glow-soft: 0 0 12px rgba(193, 18, 31, 0.35);
+  --oni-glow-strong: 0 0 18px rgba(255, 42, 42, 0.55);
+  --oni-glow-inset: inset 0 0 12px rgba(139, 0, 0, 0.35);
+
+  --oni-font-sans: Inter, "Segoe UI", system-ui, -apple-system, Arial, sans-serif;
+  --oni-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --oni-font-kanji: "Noto Sans JP", "Yu Gothic", "Hiragino Sans", Meiryo, "MS Gothic", sans-serif;
+}
+
+[data-theme="oni"] .oni-glow {
+  box-shadow: var(--oni-glow-soft);
+}
+
+[data-theme="oni"] .oni-panel {
+  background: var(--oni-panel);
+  color: var(--oni-text);
+  border: 1px solid var(--oni-border);
+  border-radius: var(--oni-radius-md);
+  box-shadow: var(--oni-glow-soft), var(--oni-glow-inset);
+}

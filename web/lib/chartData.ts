@@ -165,13 +165,7 @@ export function priceFormatFor(decimals: number): {
   return { type: "price", precision, minMove };
 }
 
-/** `1700000000` -> `"2023-11-14 22:13 UTC"`. Chart times are UTC seconds. */
-export function formatChartTime(seconds: number): string {
-  if (!Number.isFinite(seconds)) return "—";
-  const date = new Date(seconds * 1000);
-  if (Number.isNaN(date.getTime())) return "—";
-  return `${date.toISOString().slice(0, 16).replace("T", " ")} UTC`;
-}
+// Chart times stay UTC seconds here; they are shown in the viewer's local zone by ./timeFormat.
 
 /** Fixed-decimals text for a display number (crosshair readout). */
 export function formatDisplayNumber(value: number, decimals: number): string {
