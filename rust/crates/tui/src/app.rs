@@ -223,11 +223,39 @@ impl App {
         if symbol != self.symbol || timeframe != self.timeframe {
             return;
         }
-        let t = ts - ts.rem_euclid(timeframe.millis());
+        let t = bar_open(ts, timeframe);
         self.indicators
             .entry((symbol.to_owned(), timeframe))
             .or_default()
             .merge(IndicatorPoint { t, values });
+    }
+
+    /// Applies the indicator history of a candle snapshot for the selected key: the key's
+    /// series is replaced by the points, each floored to its candle open time, merged (the
+    /// last point wins on an equal `t`), ascending, and capped at 500. `None`
+    /// clears the series. Other keys are ignored (Req 2.6, 2.7, 3.10).
+    pub fn apply_indicator_history(
+        &mut self,
+        symbol: &str,
+        timeframe: Timeframe,
+        points: Option<&[protocol::IndicatorPoint]>,
+    ) {
+        if symbol != self.symbol || timeframe != self.timeframe {
+            return;
+        }
+        let key = (symbol.to_owned(), timeframe);
+        let Some(points) = points else {
+            self.indicators.remove(&key);
+            return;
+        };
+        let mut series = IndicatorSeries::default();
+        for p in points {
+            series.merge(IndicatorPoint {
+                t: bar_open(p.t, timeframe),
+                values: p.values,
+            });
+        }
+        self.indicators.insert(key, series);
     }
 
     /// The book of the selected symbol.
@@ -345,6 +373,11 @@ impl App {
     }
 }
 
+/// `ts` aligned down to the open time of its candle.
+fn bar_open(ts: i64, timeframe: Timeframe) -> i64 {
+    ts - ts.rem_euclid(timeframe.millis())
+}
+
 /// Applies one network event. Returns whether the screen needs a redraw.
 pub fn update(app: &mut App, event: NetEvent) -> bool {
     match event {
@@ -424,9 +457,13 @@ fn apply_message(app: &mut App, message: ServerMessage) -> bool {
                     timeframe,
                     snapshot,
                     bars,
+                    indicators,
                 } => {
                     if symbol == app.symbol && timeframe == app.timeframe {
                         app.apply_candles(snapshot, &bars);
+                        if snapshot {
+                            app.apply_indicator_history(&symbol, timeframe, indicators.as_deref());
+                        }
                     }
                 }
                 Event::Indicators {
@@ -738,6 +775,7 @@ mod tests {
                 timeframe,
                 snapshot,
                 bars,
+                indicators: None,
             },
         })
     }
@@ -923,6 +961,61 @@ mod tests {
         assert_eq!(app.indicator_series().unwrap().points().len(), 2);
     }
 
+    fn snapshot_with_indicators(points: Option<Vec<(i64, f64)>>) -> NetEvent {
+        NetEvent::Message(ServerMessage::Event {
+            event: Event::Candle {
+                symbol: "BTC-USD".into(),
+                timeframe: Timeframe::M1,
+                snapshot: true,
+                bars: vec![bar(60_000, 1)],
+                indicators: points.map(|ps| {
+                    ps.into_iter()
+                        .map(|(t, ema)| protocol::IndicatorPoint {
+                            t,
+                            values: IndicatorValues {
+                                ema: Some(ema),
+                                ..IndicatorValues::default()
+                            },
+                        })
+                        .collect()
+                }),
+            },
+        })
+    }
+
+    #[test]
+    fn snapshot_indicator_history_replaces_the_series() {
+        let mut app = App::new("ws://x/ws");
+        update(&mut app, indicators_event("BTC-USD", Timeframe::M1, 0, 9.0));
+        update(
+            &mut app,
+            snapshot_with_indicators(Some(vec![(60_000, 1.0), (120_000, 2.0)])),
+        );
+        let points = app.indicator_series().unwrap().points();
+        let got: Vec<(i64, Option<f64>)> = points.iter().map(|p| (p.t, p.values.ema)).collect();
+        assert_eq!(got, [(60_000, Some(1.0)), (120_000, Some(2.0))]);
+    }
+
+    #[test]
+    fn snapshot_without_indicators_clears_the_series() {
+        let mut app = App::new("ws://x/ws");
+        update(&mut app, indicators_event("BTC-USD", Timeframe::M1, 0, 9.0));
+        update(&mut app, snapshot_with_indicators(None));
+        assert!(app.indicator_series().is_none());
+    }
+
+    #[test]
+    fn snapshot_indicator_points_are_floored_and_merged() {
+        let mut app = App::new("ws://x/ws");
+        update(
+            &mut app,
+            snapshot_with_indicators(Some(vec![(60_500, 1.0), (60_900, 2.0), (125_000, 3.0)])),
+        );
+        let points = app.indicator_series().unwrap().points();
+        let got: Vec<(i64, Option<f64>)> = points.iter().map(|p| (p.t, p.values.ema)).collect();
+        assert_eq!(got, [(60_000, Some(2.0)), (120_000, Some(3.0))]);
+    }
+
     #[test]
     fn indicator_points_are_capped_at_500() {
         let mut app = App::new("ws://x/ws");
@@ -937,6 +1030,120 @@ mod tests {
         let points = app.indicator_series().unwrap().points();
         assert_eq!(points.len(), 500);
         assert_eq!(points[0].t, 10 * 60_000);
+    }
+
+    mod preservation {
+        use super::*;
+        use proptest::prelude::*;
+        use std::collections::BTreeMap;
+
+        proptest! {
+            // Property 11 (preservation) - validates Req 3.10, 3.11
+            // The TUI merges candles by open time and keeps at most 500, the newest.
+            #[test]
+            fn candles_merge_by_open_time_and_keep_at_most_500(
+                steps in proptest::collection::vec(
+                    (any::<bool>(), proptest::collection::vec((0i64..900, 0i64..1000), 0..40)),
+                    1..30,
+                ),
+            ) {
+                let mut app = App::new("ws://x/ws");
+                let mut model: BTreeMap<i64, i64> = BTreeMap::new();
+                for (snapshot, items) in steps {
+                    let bars: Vec<Bar> = items.iter().map(|&(t, c)| bar(t, c)).collect();
+                    if snapshot {
+                        model.clear();
+                    }
+                    for &(t, c) in &items {
+                        model.insert(t, c);
+                    }
+                    while model.len() > MAX_BARS {
+                        model.pop_first();
+                    }
+                    app.apply_candles(snapshot, &bars);
+                    prop_assert!(app.candles.len() <= MAX_BARS);
+                    let got: Vec<(i64, i64)> =
+                        app.candles.iter().map(|b| (b.t, b.close.0)).collect();
+                    let want: Vec<(i64, i64)> = model.iter().map(|(&t, &c)| (t, c)).collect();
+                    prop_assert_eq!(got, want);
+                }
+            }
+        }
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(64))]
+
+            // Property 1 (bug condition) - validates Req 2.1, 2.7, 3.10
+            // Indicator points sit on candle open times: one per open time, ascending, at most
+            // 500; a snapshot with indicators replaces the series and `None` clears it.
+            #[test]
+            fn indicator_points_align_to_candle_open_times(
+                steps in proptest::collection::vec(
+                    prop_oneof![
+                        (0i64..42_000_000, -1000i32..1000)
+                            .prop_map(|(ts, v)| (None, vec![(ts, v)])),
+                        proptest::collection::vec((0i64..42_000_000, -1000i32..1000), 0..700)
+                            .prop_map(|ps| (Some(true), ps)),
+                        Just((Some(false), Vec::new())),
+                    ],
+                    1..12,
+                ),
+            ) {
+                let step = Timeframe::M1.millis();
+                let mut app = App::new("ws://x/ws");
+                let mut model: BTreeMap<i64, i32> = BTreeMap::new();
+                for (kind, items) in steps {
+                    match kind {
+                        None => {
+                            let (ts, v) = items[0];
+                            update(
+                                &mut app,
+                                indicators_event("BTC-USD", Timeframe::M1, ts, f64::from(v)),
+                            );
+                            model.insert(ts - ts.rem_euclid(step), v);
+                        }
+                        Some(true) => {
+                            update(
+                                &mut app,
+                                snapshot_with_indicators(Some(
+                                    items.iter().map(|&(t, v)| (t, f64::from(v))).collect(),
+                                )),
+                            );
+                            model.clear();
+                            for &(t, v) in &items {
+                                model.insert(t - t.rem_euclid(step), v);
+                            }
+                        }
+                        Some(false) => {
+                            update(&mut app, snapshot_with_indicators(None));
+                            model.clear();
+                        }
+                    }
+                    while model.len() > MAX_BARS {
+                        model.pop_first();
+                    }
+                    match app.indicator_series() {
+                        None => prop_assert!(model.is_empty()),
+                        Some(series) => {
+                            let points = series.points();
+                            prop_assert!(points.len() <= 500);
+                            prop_assert!(points.iter().all(|p| p.t.rem_euclid(step) == 0));
+                            prop_assert!(points.windows(2).all(|w| w[0].t < w[1].t));
+                            let got: Vec<(i64, Option<f64>)> =
+                                points.iter().map(|p| (p.t, p.values.ema)).collect();
+                            let want: Vec<(i64, Option<f64>)> = model
+                                .iter()
+                                .map(|(&t, &v)| (t, Some(f64::from(v))))
+                                .collect();
+                            prop_assert_eq!(got, want);
+                        }
+                    }
+                    if kind == Some(false) {
+                        prop_assert!(app.indicator_series().is_none());
+                    }
+                }
+            }
+        }
     }
 
     #[test]

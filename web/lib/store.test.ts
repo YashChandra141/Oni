@@ -195,6 +195,7 @@ describe("trades and tape", () => {
     expect(state.lastTrade["ETH-USD"]?.price).toBe("350000");
     expect(state.tape.map((t) => t.ts)).toEqual([3, 2, 1]);
     expect(state.tape[0]).toEqual({
+      id: 3,
       symbol: "BTC-USD",
       price: "6400100",
       qty: "1000000",

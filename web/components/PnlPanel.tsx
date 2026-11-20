@@ -14,7 +14,7 @@ export default function PnlPanel() {
   const total = addUnits(realized, unrealized);
 
   return (
-    <div className="flex flex-col gap-0.5" aria-label="P&L">
+    <div className="flex min-h-0 flex-col gap-0.5 overflow-auto" aria-label="P&L">
       <div className="flex justify-between">
         <span className="text-phosphor-dim">REALIZED</span>
         <span className={pnlClass(realized)}>{formatMoney(realized)}</span>

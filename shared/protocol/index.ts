@@ -9,6 +9,7 @@ export type { Command } from "./Command";
 export type { DataMode } from "./DataMode";
 export type { ErrorCode } from "./ErrorCode";
 export type { Event } from "./Event";
+export type { IndicatorPoint } from "./IndicatorPoint";
 export type { IndicatorValues } from "./IndicatorValues";
 export type { InstrumentInfo } from "./InstrumentInfo";
 export type { Level } from "./Level";

@@ -3,12 +3,17 @@
 
 import { forClient, keyFromEvent, keymap, type Keymap } from "../../shared/keymap";
 import type { Level } from "../../shared/protocol/index";
-import type { BookCursor, BookState } from "./store";
+import type { BookCursor, BookState, TapeEntry } from "./store";
 
 /** Most levels shown per side. */
 export const BOOK_LEVELS = 12;
 /** Most trades rendered in the tape. */
 export const TAPE_ROWS = 50;
+
+/** The tape rows to render for `symbol`: the first `TAPE_ROWS` matches of a newest-first tape. */
+export function tapeRows(tape: readonly TapeEntry[], symbol: string): TapeEntry[] {
+  return tape.filter((entry) => entry.symbol === symbol).slice(0, TAPE_ROWS);
+}
 
 const UNSIGNED = /^\d+$/;
 

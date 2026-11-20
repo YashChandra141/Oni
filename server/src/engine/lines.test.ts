@@ -121,3 +121,51 @@ describe("LineSplitter", () => {
     expect(() => new LineSplitter({ maxBytes: 0 })).toThrow(RangeError);
   });
 });
+
+// Bug condition exploration, chart-and-tape-fix Task 1.9 (Property 4, cause 8).
+// Reqs 1.5, 2.6: the worst-case snapshot line (500 bars + 500 indicator points) must reach the
+// server intact. The limit is whatever the engine-stdout reader in supervisor.ts uses: today the
+// splitter default (MAX_LINE_BYTES), after fix task 5.1 `MAX_EVENT_LINE_BYTES`.
+import * as linesModule from "./lines.ts";
+
+describe("engine stdout worst-case Candle snapshot line (Property 4)", () => {
+  test("a 500-bar snapshot with 500 indicator points is delivered intact", () => {
+    const I64_MAX = "9223372036854775807";
+    const I64_MIN = "-9223372036854775808";
+    const F = -1.7976931348623157e308;
+    const bars = Array.from({ length: 500 }, (_, i) => ({
+      t: 9007199254740000 + i,
+      open: I64_MIN,
+      high: I64_MAX,
+      low: I64_MIN,
+      close: I64_MAX,
+      volume: I64_MAX,
+    }));
+    const indicators = bars.map((b) => ({
+      t: b.t,
+      values: { ema: F, sma: F, vwap: F, bb_upper: F, bb_mid: F, bb_lower: F, rsi: F, atr: F },
+    }));
+    const line = JSON.stringify({
+      type: "candle",
+      symbol: "BTC-USD",
+      timeframe: "1m",
+      snapshot: true,
+      bars,
+      indicators,
+    });
+    const bytes = enc.encode(`${line}\n`);
+    const lineBytes = bytes.length - 1;
+
+    // Same limit as supervisor.ts's engine-stdout splitter.
+    const exported = linesModule as Record<string, unknown>;
+    const limit =
+      typeof exported.MAX_EVENT_LINE_BYTES === "number" ? exported.MAX_EVENT_LINE_BYTES : MAX_LINE_BYTES;
+    const oversized: number[] = [];
+    const splitter = new LineSplitter({ maxBytes: limit, onOversized: (n) => oversized.push(n) });
+    const out = splitter.push(bytes);
+
+    console.log(`worst-case snapshot line: ${lineBytes} bytes, limit in force: ${limit} bytes`);
+    expect({ oversized, delivered: out.length }).toEqual({ oversized: [], delivered: 1 });
+    expect(out[0]).toBe(line);
+  });
+});

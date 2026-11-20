@@ -22,6 +22,11 @@ pub enum Event {
         timeframe: Timeframe,
         snapshot: bool,
         bars: Vec<Bar>,
+        /// Indicator values per history bar. Only snapshots carry them; live updates omit the
+        /// key, so their JSON is unchanged.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[ts(optional)]
+        indicators: Option<Vec<IndicatorPoint>>,
     },
     /// One market trade (Req 9.8). `side` is the aggressor side.
     Trade {
@@ -134,6 +139,15 @@ pub struct IndicatorValues {
     pub bb_lower: Option<f64>,
     pub rsi: Option<f64>,
     pub atr: Option<f64>,
+}
+
+/// The indicator values at the close of the candle that starts at `t`.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = crate::TS_EXPORT_DIR)]
+pub struct IndicatorPoint {
+    #[ts(type = "number")]
+    pub t: TimeMs,
+    pub values: IndicatorValues,
 }
 
 /// Order status carried by `order_ack`.
@@ -271,6 +285,7 @@ mod tests {
             timeframe: Timeframe::M1,
             snapshot: true,
             bars: vec![bar],
+            indicators: None,
         };
         let expected = concat!(
             r#"{"type":"candle","symbol":"SOL-USD","timeframe":"1m","snapshot":true,"#,
@@ -278,6 +293,55 @@ mod tests {
         );
         assert_eq!(json(&event), expected);
         assert_round_trip(&event);
+    }
+
+    #[test]
+    fn live_candle_json_has_no_indicators_key() {
+        let event = Event::Candle {
+            symbol: "SOL-USD".into(),
+            timeframe: Timeframe::M1,
+            snapshot: false,
+            bars: vec![],
+            indicators: None,
+        };
+        assert!(!json(&event).contains("indicators"));
+    }
+
+    #[test]
+    fn snapshot_candle_json_includes_indicators() {
+        let event = Event::Candle {
+            symbol: "SOL-USD".into(),
+            timeframe: Timeframe::M1,
+            snapshot: true,
+            bars: vec![],
+            indicators: Some(vec![IndicatorPoint {
+                t: 60_000,
+                values: IndicatorValues {
+                    ema: Some(1.5),
+                    ..IndicatorValues::default()
+                },
+            }]),
+        };
+        let line = json(&event);
+        assert!(
+            line.contains(r#""indicators":[{"t":60000,"values":{"ema":1.5,"#),
+            "{line}"
+        );
+        assert_round_trip(&event);
+    }
+
+    #[test]
+    fn candle_json_without_indicators_parses_to_none() {
+        let line =
+            r#"{"type":"candle","symbol":"SOL-USD","timeframe":"1m","snapshot":false,"bars":[]}"#;
+        let parsed: Event = serde_json::from_str(line).unwrap();
+        assert!(matches!(
+            parsed,
+            Event::Candle {
+                indicators: None,
+                ..
+            }
+        ));
     }
 
     #[test]

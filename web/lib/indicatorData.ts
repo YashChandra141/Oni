@@ -10,7 +10,7 @@
 
 import type { UTCTimestamp } from "lightweight-charts";
 import type { Action } from "../../shared/keymap";
-import type { IndicatorValues } from "../../shared/protocol/index";
+import type { IndicatorPoint } from "../../shared/protocol/index";
 
 /** The toggles, in button order (Req 26.3). */
 export const INDICATOR_NAMES = ["ema", "vwap", "bollinger", "rsi", "atr"] as const;
@@ -27,11 +27,8 @@ export const DEFAULT_INDICATOR_TOGGLES: IndicatorToggles = {
   atr: false,
 };
 
-/** One Indicators event as kept by the store: the bar start time (ms) and its values. */
-export interface IndicatorPoint {
-  readonly t: number;
-  readonly values: IndicatorValues;
-}
+/** One Indicators event as kept by the store: the candle open time (ms) and its values. */
+export type { IndicatorPoint };
 
 /** Most indicator points kept per symbol and timeframe (same as candles, Req 8.7). */
 export const MAX_INDICATOR_POINTS = 500;
@@ -170,10 +167,12 @@ export function indicatorLineData(
   points: readonly IndicatorPoint[],
   line: IndicatorLine,
   priceDecimals: number,
+  candleTimesMs?: ReadonlySet<number>,
 ): IndicatorLinePoint[] {
   const out: IndicatorLinePoint[] = [];
   for (const point of points) {
     if (!Number.isFinite(point.t) || point.t < 0) continue;
+    if (candleTimesMs !== undefined && !candleTimesMs.has(point.t)) continue;
     const value = lineValueToDisplay(line, point.values[line], priceDecimals);
     if (value === null) continue;
     out.push({ time: Math.floor(point.t / 1000) as UTCTimestamp, value });
@@ -186,6 +185,36 @@ export function indicatorLineData(
     else deduped.push(item);
   }
   return deduped;
+}
+
+/** A chart time with no value: `series.update` of it clears the point at that time. */
+export interface IndicatorLineGap {
+  readonly time: UTCTimestamp;
+}
+
+/**
+ * Incremental updates for one line (Req 2.8): like `indicatorLineData`, plus a gap item for each
+ * stored point whose value is now null and whose time has no value point. Without it a value that
+ * turns null would stay on the chart, where a full `setData` would drop it.
+ */
+export function indicatorLineUpdates(
+  points: readonly IndicatorPoint[],
+  line: IndicatorLine,
+  priceDecimals: number,
+  candleTimesMs?: ReadonlySet<number>,
+): (IndicatorLinePoint | IndicatorLineGap)[] {
+  const values = indicatorLineData(points, line, priceDecimals, candleTimesMs);
+  const valued = new Set<number>(values.map((v) => v.time));
+  const gaps = new Map<number, IndicatorLineGap>();
+  for (const point of points) {
+    if (!Number.isFinite(point.t) || point.t < 0) continue;
+    if (candleTimesMs !== undefined && !candleTimesMs.has(point.t)) continue;
+    const time = Math.floor(point.t / 1000) as UTCTimestamp;
+    if (!valued.has(time)) gaps.set(time, { time });
+  }
+  const out: (IndicatorLinePoint | IndicatorLineGap)[] = [...values, ...gaps.values()];
+  out.sort((a, b) => a.time - b.time);
+  return out;
 }
 
 /** The newest non-null display value of a line, or null when there is none. */

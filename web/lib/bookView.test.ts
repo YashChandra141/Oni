@@ -1,12 +1,17 @@
 // Pure order book and tape helpers (Task 8.3, Req 27.1, 27.2, 30.1).
 import { describe, expect, test } from "bun:test";
+import fc from "fast-check";
+import type { ServerMessage } from "../../shared/protocol/index";
+import { applyServerMessage, initialState, type TapeEntry, type TerminalState } from "./store";
 import {
+  TAPE_ROWS,
   bookKeyAction,
   depthFractions,
   formatTimeUtc,
   layoutBook,
   levelAtCursor,
   moveBookCursor,
+  tapeRows,
 } from "./bookView";
 
 const lv = (price: string, qty: string) => ({ price, qty });
@@ -110,5 +115,135 @@ describe("bookKeyAction", () => {
     expect(bookKeyAction({ key: "b" }, false)).toBeNull();
     expect(bookKeyAction({ key: "ArrowUp", ctrlKey: true }, false)).toBeNull();
     expect(bookKeyAction({ key: "Enter" }, true)).toBeNull();
+  });
+});
+
+// Bug condition exploration (chart-and-tape-fix Task 1.8, Property 7). Expected to FAIL on
+// unfixed code: TradesTape keys rows by `${ts}-${index}`, so every row key shifts on a new trade.
+// Requirements 1.10, 2.11.
+describe("Property 7: bounded tape with stable keys", () => {
+  /** The ONE place that holds the tape row key rule. Task 6.3/8.4: swap for the stable store id. */
+  const rowKey = (entry: TapeEntry, _index: number): string => String(entry.id);
+
+  /** The rows TradesTape renders for the selected symbol, with their keys. */
+  function shownRows(state: TerminalState): { entry: TapeEntry; key: string }[] {
+    return state.tape
+      .filter((t) => t.symbol === state.selection.symbol)
+      .slice(0, TAPE_ROWS)
+      .map((entry, index) => ({ entry, key: rowKey(entry, index) }));
+  }
+
+  const tradeMsg = (symbol: string, ts: number, price: number): ServerMessage =>
+    ({
+      type: "event",
+      event: { type: "trade", symbol, price: String(price), qty: "1000000", side: "buy", ts },
+    }) as ServerMessage;
+
+  const symbols = ["BTC-USD", "ETH-USD"];
+
+  test("existing row keys stay, the new row is on top, and at most 50 rows show", () => {
+    fc.assert(
+      fc.property(
+        fc.array(fc.tuple(fc.constantFrom(...symbols), fc.integer({ min: 1, max: 5000 })), {
+          minLength: 1,
+          maxLength: 120,
+        }),
+        fc.integer({ min: 1, max: 5000 }),
+        (seq, lastGap) => {
+          let state = initialState();
+          let ts = 1_000;
+          let price = 6_400_000;
+          for (const [symbol, gap] of seq) {
+            ts += gap;
+            price += 1;
+            state = applyServerMessage(state, tradeMsg(symbol, ts, price));
+          }
+          // Make sure at least one row of the selected symbol exists.
+          ts += 1;
+          state = applyServerMessage(state, tradeMsg(state.selection.symbol, ts, ++price));
+          const before = shownRows(state);
+          expect(before.length).toBeLessThanOrEqual(TAPE_ROWS);
+
+          ts += lastGap;
+          state = applyServerMessage(state, tradeMsg(state.selection.symbol, ts, ++price));
+          const after = shownRows(state);
+
+          expect(after.length).toBeLessThanOrEqual(TAPE_ROWS);
+          // Newest first: the new trade is the top row.
+          expect(after[0]?.entry.ts).toBe(ts);
+          // Rows already shown keep their keys.
+          const afterKeys = new Map(after.map((row) => [row.entry, row.key]));
+          for (const row of before) {
+            const key = afterKeys.get(row.entry);
+            if (key !== undefined) expect(key).toBe(row.key);
+          }
+          // Newest first order by ts.
+          for (let i = 1; i < after.length; i += 1) {
+            expect(after[i - 1]!.entry.ts).toBeGreaterThanOrEqual(after[i]!.entry.ts);
+          }
+        },
+      ),
+      { numRuns: 100 },
+    );
+  });
+});
+
+// Task 6.7, Property 7: bounded tape with stable keys. Validates: Requirements 2.11
+describe("Property 7 (fix check): tapeRows is bounded with stable ids", () => {
+  const syms = ["BTC-USD", "ETH-USD", "SOL-USD"];
+  const trade = (symbol: string, ts: number): ServerMessage =>
+    ({
+      type: "event",
+      event: { type: "trade", symbol, price: "6400000", qty: "1000000", side: "buy", ts },
+    }) as ServerMessage;
+
+  test("store holds at most 200 newest first, ids unique, decreasing, stable; rows <= 50", () => {
+    fc.assert(
+      fc.property(
+        fc.array(fc.constantFrom(...syms), { minLength: 1, maxLength: 400 }),
+        fc.constantFrom(...syms),
+        fc.constantFrom(...syms),
+        (seq, selected, extraSymbol) => {
+          let state = initialState();
+          let ts = 1_000;
+          const seen = new Map<number, TapeEntry>();
+          for (const symbol of seq) {
+            ts += 1;
+            state = applyServerMessage(state, trade(symbol, ts));
+            expect(state.tape.length).toBeLessThanOrEqual(200);
+            for (let i = 0; i < state.tape.length; i += 1) {
+              const entry = state.tape[i]!;
+              if (i > 0) expect(state.tape[i - 1]!.id).toBeGreaterThan(entry.id);
+              const prior = seen.get(entry.id);
+              if (prior !== undefined) expect(prior).toBe(entry);
+              seen.set(entry.id, entry);
+            }
+            expect(state.tape[0]!.ts).toBe(ts);
+          }
+          const previous = tapeRows(state.tape, selected);
+          expect(previous.length).toBeLessThanOrEqual(TAPE_ROWS);
+          expect(previous.every((e) => e.symbol === selected)).toBe(true);
+
+          // Interleave a trade of another symbol, then one of the selected symbol.
+          ts += 1;
+          state = applyServerMessage(state, trade(extraSymbol, ts));
+          ts += 1;
+          state = applyServerMessage(state, trade(selected, ts));
+          const created = state.tape[0]!;
+          const after = tapeRows(state.tape, selected);
+          const alsoOther = extraSymbol === selected ? 1 : 0;
+          // The extra trade of the selected symbol (if same) sits right below `created`.
+          const expected = (
+            alsoOther === 1 ? [created, state.tape[1]!, ...previous] : [created, ...previous]
+          )
+            .slice(0, TAPE_ROWS)
+            .map((e) => e.id);
+          expect(after.map((e) => e.id)).toEqual(expected);
+          expect(after.length).toBeLessThanOrEqual(TAPE_ROWS);
+          expect(after.every((e) => e.symbol === selected)).toBe(true);
+        },
+      ),
+      { numRuns: 100 },
+    );
   });
 });

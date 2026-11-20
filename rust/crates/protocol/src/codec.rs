@@ -26,6 +26,11 @@ use crate::types::OrderKind;
 /// allocates before it calls [`decode_command`].
 pub const MAX_LINE_BYTES: usize = 64 * 1024;
 
+/// Longest Event line the server accepts from the engine's stdout, in bytes. The server's
+/// engine-stdout reader uses the same value. A snapshot of 500 bars and 500 indicator points
+/// must fit.
+pub const MAX_EVENT_LINE_BYTES: usize = 512 * 1024;
+
 /// Slowest replay speed a `start_replay` Command may request (Req 6.3, 6.4).
 pub const MIN_REPLAY_SPEED: u32 = 1;
 

@@ -580,3 +580,29 @@ describe("protocol v2 schemas", () => {
     }
   });
 });
+
+describe("candle indicators history (chart-and-tape-fix, Req 2.6)", () => {
+  const candle = { type: "candle", symbol: "BTC-USD", timeframe: "1m", snapshot: true, bars: [bar] };
+
+  test("a candle snapshot parses with and without indicators", () => {
+    expect(EventSchema.safeParse(candle).success).toBe(true);
+    const withPoints = { ...candle, indicators: [{ t: bar.t, values }, { t: bar.t + 60_000, values }] };
+    const r = EventSchema.safeParse(withPoints);
+    expect(r.success).toBe(true);
+    if (r.success && r.data.type === "candle") expect(r.data.indicators).toHaveLength(2);
+    expect(EventSchema.safeParse({ ...candle, indicators: [] }).success).toBe(true);
+  });
+
+  test("a malformed indicator point is rejected", () => {
+    const bad: unknown[] = [
+      { t: "1733200000000", values },
+      { t: bar.t },
+      { t: bar.t, values: { ...values, ema: "1.5" } },
+      { t: 1.5, values },
+    ];
+    for (const point of bad) {
+      expect(EventSchema.safeParse({ ...candle, indicators: [point] }).success).toBe(false);
+    }
+    expect(EventSchema.safeParse({ ...candle, indicators: "x" }).success).toBe(false);
+  });
+});

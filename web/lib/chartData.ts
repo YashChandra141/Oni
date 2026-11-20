@@ -25,6 +25,20 @@ export function timeframeFromKey(key: string): Timeframe | null {
   return timeframeLabels[index] ?? null;
 }
 
+const TIMEFRAME_MS: Readonly<Record<Timeframe, number>> = {
+  "1m": 60_000,
+  "5m": 300_000,
+  "15m": 900_000,
+  "1h": 3_600_000,
+  "1d": 86_400_000,
+};
+
+/** Start (ms, UTC) of the candle bucket that contains `ts` (ms) for the timeframe. */
+export function bucketStartMs(ts: number, tf: Timeframe): number {
+  const size = TIMEFRAME_MS[tf];
+  return Math.floor(ts / size) * size;
+}
+
 /** CRT colours, the same values as the theme tokens in app/globals.css. */
 export const CHART_THEME = {
   background: "#000000",
@@ -169,41 +183,71 @@ export function formatDisplayNumber(value: number, decimals: number): string {
 // ---------------------------------------------------------------------------------------------
 // Deciding between `setData` and `update`
 
-/** What was last given to the chart: enough to tell a live tick from a replaced list. */
-export interface SeriesShape {
+/** What ChartPanel remembers per series after applying a plan (D5). `lastTime` is a bar start in ms. */
+export interface ChartSyncState {
+  /** Symbol, timeframe, and decimals, e.g. `BTC-USD|1m|2|8`. A change is a view switch. */
   readonly key: string;
-  readonly count: number;
-  readonly firstTime: number | null;
+  /** Store `seriesVersion[key].snapshot` when this state was applied. */
+  readonly snapshot: number;
+  /** Store `seriesVersion[key].rewrite` when this state was applied. */
+  readonly rewrite: number;
+  /** Start time (ms) of the newest bar given to the chart, or null if there was none. */
   readonly lastTime: number | null;
 }
 
-export function seriesShape(key: string, points: readonly { readonly time: number }[]): SeriesShape {
-  const first = points[0];
-  const last = points[points.length - 1];
+/** The stored bars (ascending by `t`) plus the counters to compare against the previous state. */
+export interface ChartSyncInput<T extends { readonly t: number } = Bar> {
+  readonly key: string;
+  readonly snapshot: number;
+  readonly rewrite: number;
+  readonly bars: readonly T[];
+}
+
+export type ChartSyncPlan<T extends { readonly t: number } = Bar> =
+  | { readonly kind: "set" }
+  | { readonly kind: "update"; readonly bars: readonly T[] };
+
+/** The state to remember after applying `input`. */
+export function chartSyncState(input: ChartSyncInput<{ readonly t: number }>): ChartSyncState {
+  const last = input.bars[input.bars.length - 1];
   return {
-    key,
-    count: points.length,
-    firstTime: first === undefined ? null : first.time,
-    lastTime: last === undefined ? null : last.time,
+    key: input.key,
+    snapshot: input.snapshot,
+    rewrite: input.rewrite,
+    lastTime: last === undefined ? null : last.t,
   };
 }
 
-export type SeriesPlan = "set" | "update";
+/**
+ * D5: `set` (replace the whole series) when there is no previous state, the view key changed,
+ * the snapshot or rewrite counter changed, or the data cannot be applied as a tail (no bars, no
+ * previous bar, or the newest bar is older than the previous one). Otherwise `update` with the
+ * bars at or after `prev.lastTime`, and the caller converts only those. A changed snapshot
+ * counter or key also means the view is repositioned (ChartPanel compares them itself).
+ */
+export function planChartSync<T extends { readonly t: number }>(
+  prev: ChartSyncState | null,
+  next: ChartSyncInput<T>,
+): ChartSyncPlan<T> {
+  if (prev === null) return { kind: "set" };
+  if (prev.key !== next.key) return { kind: "set" };
+  if (prev.snapshot !== next.snapshot || prev.rewrite !== next.rewrite) return { kind: "set" };
+  const last = next.bars[next.bars.length - 1];
+  if (prev.lastTime === null || last === undefined || last.t < prev.lastTime) return { kind: "set" };
+  const from = prev.lastTime;
+  return { kind: "update", bars: next.bars.filter((b) => b.t >= from) };
+}
 
 /**
- * `set` (replace the whole array) unless `next` differs from `prev` only in the last bar: same
- * key, same count, same first time, same last time, and at least one bar. Then `update` on the
- * last bar is enough. A change to a bar in the middle of the list is not detected here (the
- * store only changes the last bar, or the list length, apart from late revisions).
+ * Whether applying `next` with a full `set` repositions the view (Req 3.11, 2.8): when there is
+ * no previous state, the view key changed, or the snapshot counter changed (also on the same
+ * key). A rewrite-only change keeps the user's pan and zoom.
  */
-export function planSeriesUpdate(prev: SeriesShape | null, next: SeriesShape): SeriesPlan {
-  if (prev === null) return "set";
-  if (next.count === 0) return "set";
-  if (prev.key !== next.key) return "set";
-  if (prev.count !== next.count) return "set";
-  if (prev.firstTime !== next.firstTime) return "set";
-  if (prev.lastTime !== next.lastTime) return "set";
-  return "update";
+export function shouldReposition(
+  prev: ChartSyncState | null,
+  next: { readonly key: string; readonly snapshot: number; readonly rewrite: number },
+): boolean {
+  return prev === null || prev.key !== next.key || prev.snapshot !== next.snapshot;
 }
 
 // ---------------------------------------------------------------------------------------------

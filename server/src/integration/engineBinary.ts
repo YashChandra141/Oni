@@ -37,6 +37,22 @@ function newestMtime(path: string): number {
   return newest;
 }
 
+/** Newest mtime (ms) under `rust/target/debug/.fingerprint/engine-*`; 0 if there is none. */
+function fingerprintMtime(): number {
+  const dir = resolve(REPO_ROOT, "rust", "target", "debug", ".fingerprint");
+  let newest = 0;
+  try {
+    for (const name of readdirSync(dir)) {
+      if (!name.startsWith("engine-")) continue;
+      const mtime = newestMtime(join(dir, name));
+      if (mtime > newest) newest = mtime;
+    }
+  } catch {
+    return 0;
+  }
+  return newest;
+}
+
 /** `null` when the binary is usable, else the reason the integration tests are skipped. */
 function skipReason(): string | null {
   let binaryMtime: number;
@@ -51,7 +67,12 @@ function skipReason(): string | null {
     newestMtime(join(crates, "protocol", "src")),
     newestMtime(join(crates, "engine", "Cargo.toml")),
   );
-  if (sources > binaryMtime) return `${ENGINE_PATH} is older than the engine sources; ${BUILD_HINT}`;
+  // The binary's own mtime is not enough: after a whitespace-only change (`cargo fmt`) cargo can
+  // finish a build without bumping the executable. Cargo does rewrite the engine unit's files in
+  // `target/debug/.fingerprint/engine-*` whenever it compiles that unit, so the later of the two
+  // is the time of the last build that saw the sources. A source edited after that is stale.
+  const lastBuild = Math.max(binaryMtime, fingerprintMtime());
+  if (sources > lastBuild) return `${ENGINE_PATH} is older than the engine sources; ${BUILD_HINT}`;
   return null;
 }
 

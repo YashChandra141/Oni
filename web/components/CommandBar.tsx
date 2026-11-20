@@ -66,7 +66,7 @@ export function CommandBar() {
   const caretColumn = parseError === null ? 0 : Math.min(parseError.position, text.length);
 
   return (
-    <footer aria-label="Command bar" className="crt-panel col-span-3 px-2 py-1">
+    <footer aria-label="Command bar" className="crt-panel px-2 py-1">
       <div className="flex items-center gap-2">
         <label htmlFor={COMMAND_INPUT_ID} className="text-amber">
           &gt;

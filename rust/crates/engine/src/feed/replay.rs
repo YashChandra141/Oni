@@ -31,6 +31,7 @@ use std::time::Duration;
 
 use protocol::{ErrorCode, Event, MAX_REPLAY_SPEED, MIN_REPLAY_SPEED, TimeMs};
 
+use super::MarketMsg;
 use super::fixture::{FixtureError, FixtureLine};
 
 /// Market time added between the last line of one loop and the first line of the next, in ms.
@@ -38,6 +39,23 @@ pub const LOOP_GAP_MS: TimeMs = 1_000;
 
 /// Longest `error` event message this module builds, in characters.
 const MAX_MESSAGE_CHARS: usize = 400;
+
+/// Replay warm-up window: the engine applies every first-loop line older than this, measured
+/// back from the last line's `recv`, at once and without output (Req 2.3).
+pub const WARMUP_WINDOW_MS: TimeMs = 30 * 60 * 1000;
+
+/// Number of leading first-loop lines that belong to the warm-up: those with
+/// `recv < last.recv - WARMUP_WINDOW_MS`. Depends only on the `recv` values, never on the speed.
+/// Zero for a fixture whose span is at most [`WARMUP_WINDOW_MS`] and for an empty fixture.
+pub fn warmup_len(lines: &[FixtureLine]) -> usize {
+    let Some(last) = lines.last() else {
+        return 0;
+    };
+    let Some(threshold) = last.recv.checked_sub(WARMUP_WINDOW_MS) else {
+        return 0;
+    };
+    lines.iter().take_while(|l| l.recv < threshold).count()
+}
 
 /// One message ready for release.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -129,6 +147,33 @@ impl ReplaySchedule {
     /// Market time between the starts of two consecutive loops, in ms.
     pub fn period(&self) -> TimeMs {
         self.period
+    }
+
+    /// Removes the warm-up prefix of loop 0 and returns its messages, unshifted. Valid only
+    /// before the first [`Iterator::next`]; afterwards, and when [`warmup_len`] is zero, it
+    /// returns an empty Vec and changes nothing.
+    ///
+    /// After a non-empty call the schedule starts at line `k`: wall offsets count from
+    /// `lines[k].recv`, so `lines[k]` has zero delay and the speed applies only to `lines[k..]`
+    /// and to later loops. Later loops still replay the whole fixture, shifted by `period`.
+    pub fn take_warmup(&mut self) -> Vec<MarketMsg> {
+        if self.ended || self.index != 0 || self.loop_index != 0 || self.last_wall_ms.is_some() {
+            return Vec::new();
+        }
+        let k = warmup_len(&self.lines);
+        let Some(next) = self.lines.get(k) else {
+            return Vec::new();
+        };
+        if k == 0 {
+            return Vec::new();
+        }
+        self.origin = next.recv;
+        self.index = k;
+        self.last_wall_ms = None;
+        self.lines
+            .get(..k)
+            .map(|prefix| prefix.iter().map(|l| l.msg.clone()).collect())
+            .unwrap_or_default()
     }
 
     fn next_scheduled(&mut self) -> Option<Scheduled> {
@@ -416,6 +461,100 @@ mod tests {
         assert_eq!(text, r#"fixture "e.jsonl" has no lines"#);
         let speed = schedule_error_event("e.jsonl", &ScheduleError::SpeedOutOfRange(0));
         assert_eq!(*message(&speed).0, ErrorCode::OutOfRange);
+    }
+
+    proptest::proptest! {
+        // chart-and-tape-fix Property 9: Preservation (replay timing)
+        // **Validates: Requirements 3.4, 3.5**
+        #[test]
+        fn p9_short_fixture_delays_match_the_recv_model_over_three_loops(
+            start in 0i64..1_000_000_000_000,
+            gaps in proptest::collection::vec(0i64..60_000, 1..30),
+            speed in 1u32..=50,
+        ) {
+            let mut recvs = vec![start];
+            for gap in &gaps {
+                recvs.push(recvs.last().copied().unwrap() + gap);
+            }
+            let span = recvs.last().copied().unwrap() - start;
+            proptest::prop_assume!(span <= 30 * 60 * 1000);
+            let n = recvs.len();
+            let lines = trades_at(&recvs);
+            let schedule = ReplaySchedule::new(lines.clone(), speed).unwrap();
+            let period = schedule.period();
+            proptest::prop_assert_eq!(period, span + LOOP_GAP_MS);
+            let out: Vec<Scheduled> = schedule.take(3 * n).collect();
+            proptest::prop_assert_eq!(out.len(), 3 * n);
+
+            let speed_ms = TimeMs::from(speed);
+            let mut prev_wall: Option<TimeMs> = None;
+            let mut prev_recv: Option<TimeMs> = None;
+            for (i, s) in out.iter().enumerate() {
+                let k = TimeMs::try_from(i / n).unwrap();
+                let original = &lines[i % n];
+                let recv = original.recv + k * period;
+                proptest::prop_assert_eq!(s.line.recv, recv);
+                proptest::prop_assert_eq!(s.line.msg.ts(), original.msg.ts() + k * period);
+                let wall = (recv - start) / speed_ms;
+                let expected = prev_wall.map_or(0, |p| wall - p);
+                proptest::prop_assert_eq!(s.delay.as_millis(), u128::try_from(expected).unwrap());
+                if let Some(p) = prev_recv {
+                    proptest::prop_assert!(recv >= p);
+                    if i % n == 0 {
+                        // Market time strictly increases across loop boundaries.
+                        proptest::prop_assert!(recv > p);
+                    }
+                }
+                prev_wall = Some(wall);
+                prev_recv = Some(recv);
+            }
+        }
+    }
+
+    // chart-and-tape-fix Property 2 (unit cases). Req 2.3, 2.4.
+    #[test]
+    fn warmup_len_boundary_is_exclusive_at_30_minutes() {
+        // Exactly 30 minutes older than the last line: not warm-up.
+        let exact = trades_at(&[0, WARMUP_WINDOW_MS]);
+        assert_eq!(warmup_len(&exact), 0);
+        // One ms more: the first line is warm-up.
+        let over = trades_at(&[0, WARMUP_WINDOW_MS + 1]);
+        assert_eq!(warmup_len(&over), 1);
+        assert_eq!(warmup_len(&[]), 0);
+    }
+
+    #[test]
+    fn take_warmup_moves_the_origin_and_gives_the_first_line_zero_delay() {
+        let recvs = [1_000, 1_500, 3_000_000, 3_000_500];
+        let lines = trades_at(&recvs);
+        assert_eq!(warmup_len(&lines), 2);
+        for speed in [1, 50] {
+            let mut sched = ReplaySchedule::new(lines.clone(), speed).unwrap();
+            let msgs = sched.take_warmup();
+            assert_eq!(msgs, [lines[0].msg.clone(), lines[1].msg.clone()]);
+            assert_eq!(sched.origin, 3_000_000);
+            assert_eq!(sched.index, 2);
+            // A second call changes nothing.
+            assert!(sched.take_warmup().is_empty());
+            let first = sched.next().unwrap();
+            assert_eq!(first.line.recv, 3_000_000);
+            assert_eq!(first.delay, Duration::ZERO);
+            let second = sched.next().unwrap();
+            assert_eq!(second.delay.as_millis(), u128::from(500 / speed));
+        }
+    }
+
+    #[test]
+    fn take_warmup_is_empty_without_warmup_or_after_the_first_line() {
+        let mut short = schedule(&[0, 1_000], 1);
+        assert!(short.take_warmup().is_empty());
+        assert_eq!(short.origin, 0);
+        assert_eq!(short.index, 0);
+
+        let mut long = ReplaySchedule::new(trades_at(&[0, 5_000_000]), 1).unwrap();
+        let _ = long.next();
+        assert!(long.take_warmup().is_empty());
+        assert_eq!(long.index, 1);
     }
 
     #[test]

@@ -17,7 +17,7 @@ use crate::client::{
     ClientMessage, DataMode, InstrumentInfo, NoticeKind, OrderPreview, PreviewAction, ServerMessage,
 };
 use crate::command::Command;
-use crate::event::{Bar, ErrorCode, Event, IndicatorValues, Level, OrderStatus};
+use crate::event::{Bar, ErrorCode, Event, IndicatorPoint, IndicatorValues, Level, OrderStatus};
 use crate::instrument::INSTRUMENTS;
 use crate::num::{Money, Price, Qty};
 use crate::types::{AccountId, OrderId, OrderKind, Side, TimeMs, Timeframe, Venue};
@@ -358,14 +358,26 @@ pub fn valid_command() -> impl Strategy<Value = Command> {
 /// Every Event variant with any well-typed field values.
 pub fn any_event() -> impl Strategy<Value = Event> + Clone {
     prop_oneof![
-        (free_text(), timeframe(), any::<bool>(), vec(bar(), 0..6)).prop_map(
-            |(symbol, timeframe, snapshot, bars)| Event::Candle {
-                symbol,
-                timeframe,
-                snapshot,
-                bars,
-            }
-        ),
+        (
+            free_text(),
+            timeframe(),
+            any::<bool>(),
+            vec(bar(), 0..6),
+            option::of(vec(
+                (any_time(), indicator_values())
+                    .prop_map(|(t, values)| IndicatorPoint { t, values }),
+                0..6
+            ))
+        )
+            .prop_map(|(symbol, timeframe, snapshot, bars, indicators)| {
+                Event::Candle {
+                    symbol,
+                    timeframe,
+                    snapshot,
+                    bars,
+                    indicators,
+                }
+            }),
         (free_text(), any_price(), any_qty(), side(), any_time()).prop_map(
             |(symbol, price, qty, side, ts)| Event::Trade {
                 symbol,

@@ -17,7 +17,7 @@
 //!   reconnect resubscribes, and the new `level2` snapshot replaces the book.
 //! - **TLS:** `wss://` goes through tokio-tungstenite's rustls connector (ring provider).
 
-// The runtime uses `run_coinbase`; `fetch_candles` waits for the live Subscribe wiring.
+// The runtime uses `run_coinbase` and `fetch_candles`; some other items only tests use so far.
 #![allow(dead_code)]
 
 use std::fmt;
@@ -311,10 +311,8 @@ pub fn candles_path(product_id: &str, start_s: i64, end_s: i64, timeframe: Timef
 
 /// Fetches up to 350 recent candles of `symbol` (internal symbol) ending at `end_s` (Unix
 /// seconds, supplied by the caller), oldest first (Req 5.2). One request; the caller decides
-/// when to backfill and must not call this in a loop (public rate limits).
-///
-/// TODO(Task 8.x / live Subscribe wiring): feed these bars into the candle builder when a client
-/// subscribes in live mode. The core has no history-injection API yet.
+/// when to backfill and must not call this in a loop (public rate limits). The runtime calls it
+/// through `feed::backfill::CoinbaseHistory`, paced by the backfill task.
 pub async fn fetch_candles(
     symbol: &str,
     timeframe: Timeframe,

@@ -23,8 +23,11 @@ use tokio::task::{JoinError, JoinHandle};
 use tokio::time::{Instant, MissedTickBehavior};
 use tracing::{debug, error, info, warn};
 
-use crate::core::Engine;
+use crate::core::{Engine, HistoryRequest};
 use crate::feed::MarketMsg;
+use crate::feed::backfill::{
+    BackpackHistory, CoinbaseHistory, HistoryFetcher, HistoryResult, run_backfill,
+};
 use crate::feed::backpack::run_backpack;
 use crate::feed::coinbase::run_coinbase;
 use crate::feed::fixture::{FixtureError, FixtureLine, read_fixture};
@@ -73,14 +76,36 @@ const MAX_LIVE_BATCH: usize = 256;
 struct LiveFeed {
     market: Option<mpsc::Receiver<MarketMsg>>,
     errors: Option<mpsc::Receiver<Event>>,
+    /// Requests to the backfill task. `None` in replay mode.
+    history_requests: Option<mpsc::Sender<HistoryRequest>>,
+    /// Finished backfills. `None` in replay mode and after the task stops.
+    history: Option<mpsc::Receiver<HistoryResult>>,
+}
+
+/// Capacity of the queue of history requests. At most 3 symbols x 5 timeframes exist, so a full
+/// queue means the backfill task is stuck; the request then fails and a later subscribe retries.
+const HISTORY_REQUEST_CAPACITY: usize = 32;
+/// Capacity of the queue of finished backfills.
+const HISTORY_RESULT_CAPACITY: usize = 32;
+
+/// Spawns the backfill task with `fetcher` and returns its two channel ends.
+fn spawn_backfill<F: HistoryFetcher>(
+    fetcher: F,
+) -> (mpsc::Sender<HistoryRequest>, mpsc::Receiver<HistoryResult>) {
+    let (req_tx, req_rx) = mpsc::channel(HISTORY_REQUEST_CAPACITY);
+    let (res_tx, res_rx) = mpsc::channel(HISTORY_RESULT_CAPACITY);
+    tokio::spawn(run_backfill(req_rx, res_tx, fetcher));
+    (req_tx, res_rx)
 }
 
 impl LiveFeed {
-    /// Spawns the adapter for `config.venue` on the current runtime.
+    /// Spawns the adapter and the backfill task for `config.venue` on the current runtime.
     fn start(config: Option<LiveFeedConfig>) -> Self {
         let none = Self {
             market: None,
             errors: None,
+            history_requests: None,
+            history: None,
         };
         let Some(config) = config else {
             return none;
@@ -91,9 +116,12 @@ impl LiveFeed {
                 let (err_tx, errors) = mpsc::channel(LIVE_ERROR_CAPACITY);
                 info!("starting the coinbase live feed");
                 tokio::spawn(run_coinbase(tx, err_tx, config.symbols));
+                let (history_requests, history) = spawn_backfill(CoinbaseHistory);
                 Self {
                     market: Some(market),
                     errors: Some(errors),
+                    history_requests: Some(history_requests),
+                    history: Some(history),
                 }
             }
             Venue::Backpack => {
@@ -103,12 +131,38 @@ impl LiveFeed {
                 let (err_tx, errors) = mpsc::channel(LIVE_ERROR_CAPACITY);
                 info!("starting the backpack live feed");
                 tokio::spawn(run_backpack(tx, err_tx, config.symbols));
+                let (history_requests, history) = spawn_backfill(BackpackHistory);
                 Self {
                     market: Some(market),
                     errors: Some(errors),
+                    history_requests: Some(history_requests),
+                    history: Some(history),
                 }
             }
         }
+    }
+
+    /// Moves the history requests that the last command queued into the backfill task. A request
+    /// that cannot be queued fails at once, so the key can retry on a later subscribe. Returns
+    /// the Events of those failures.
+    fn queue_history(&self, engine: &mut Engine) -> Vec<Event> {
+        let mut events = Vec::new();
+        for request in engine.take_history_requests() {
+            let (request, reason) = match self.history_requests.as_ref() {
+                Some(tx) => match tx.try_send(request) {
+                    Ok(()) => continue,
+                    Err(mpsc::error::TrySendError::Full(request)) => {
+                        (request, "backfill queue full")
+                    }
+                    Err(mpsc::error::TrySendError::Closed(request)) => {
+                        (request, "backfill task stopped")
+                    }
+                },
+                None => (request, "backfill unavailable"),
+            };
+            events.extend(engine.on_history_failed(&request.symbol, request.timeframe, reason));
+        }
+        events
     }
 
     /// Sends `first` and then every message already queued, up to [`MAX_LIVE_BATCH`], to the
@@ -164,6 +218,8 @@ enum Wake {
     LiveMarket(Option<MarketMsg>),
     /// A live adapter Event (feed disconnects), or `None` when its channel closed.
     LiveError(Option<Event>),
+    /// A finished candle backfill, or `None` when the backfill task's channel closed.
+    History(Option<HistoryResult>),
     ReplayDue,
 }
 
@@ -178,7 +234,12 @@ where
     R: AsyncBufRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let mut engine = Engine::new();
+    // Only live mode fetches venue history; replay builds its history by warm-up.
+    let mut engine = if config.live.is_some() {
+        Engine::with_backfill()
+    } else {
+        Engine::new()
+    };
     let mut replay = Replay::new(config.fixtures_dir);
     let mut live = LiveFeed::start(config.live);
     let mut lines = LineReader::new(input, MAX_LINE_BYTES);
@@ -197,17 +258,22 @@ where
             line = lines.next_line() => Wake::Line(line.map_err(RunError::Read)?),
             loaded = wait_load(&mut replay.pending) => Wake::Loaded(loaded),
             error = recv_opt(&mut live.errors) => Wake::LiveError(error),
+            result = recv_opt(&mut live.history) => Wake::History(result),
             msg = recv_opt(&mut live.market) => Wake::LiveMarket(msg),
             () = sleep_until_some(deadline) => Wake::ReplayDue,
         };
         let events = match wake {
             Wake::Heartbeat => vec![Event::Heartbeat { ts: now_ms() }],
-            Wake::Line(Some(line)) => on_line(&mut engine, &mut replay, line),
+            Wake::Line(Some(line)) => {
+                let mut events = on_line(&mut engine, &mut replay, line);
+                events.extend(live.queue_history(&mut engine));
+                events
+            }
             Wake::Line(None) => {
                 info!("stdin reached end of file");
                 break;
             }
-            Wake::Loaded(loaded) => replay.on_loaded(loaded, Instant::now()),
+            Wake::Loaded(loaded) => replay.on_loaded(loaded, &mut engine, Instant::now()),
             Wake::LiveMarket(Some(msg)) => live.on_market(&mut engine, msg),
             Wake::LiveMarket(None) => {
                 warn!("live market channel closed");
@@ -217,6 +283,15 @@ where
             Wake::LiveError(Some(event)) => vec![event],
             Wake::LiveError(None) => {
                 live.errors = None;
+                Vec::new()
+            }
+            Wake::History(Some(result)) => match result.outcome {
+                Ok(bars) => engine.on_history(&result.symbol, result.timeframe, &bars),
+                Err(reason) => engine.on_history_failed(&result.symbol, result.timeframe, &reason),
+            },
+            Wake::History(None) => {
+                warn!("backfill task stopped");
+                live.history = None;
                 Vec::new()
             }
             Wake::ReplayDue => replay.release(&mut engine, Instant::now()),
@@ -339,7 +414,11 @@ impl Replay {
 
     /// Handles a finished fixture load: replaces the running replay on success, or returns an
     /// error Event and keeps the running replay on failure (Req 6.5).
-    fn on_loaded(&mut self, loaded: LoadResult, now: Instant) -> Vec<Event> {
+    ///
+    /// For a fixture longer than the warm-up window, the old prefix is applied to `engine` at
+    /// once (Req 2.3) and the returned Events are its fresh snapshots (Req 2.4). Nothing can
+    /// interleave: this runs in one synchronous step. The speed applies from `lines[k]` on.
+    fn on_loaded(&mut self, loaded: LoadResult, engine: &mut Engine, now: Instant) -> Vec<Event> {
         let Some(PendingLoad { fixture, speed, .. }) = self.pending.take() else {
             return Vec::new();
         };
@@ -362,13 +441,18 @@ impl Replay {
                 return vec![schedule_error_event(&fixture, &err)];
             }
         };
-        // A new schedule always yields its first line; this guards the impossible case.
+        let warmup = schedule.take_warmup();
+        let warmup_lines = warmup.len();
+        // A new schedule always yields its first line (line `k` after a warm-up); this guards
+        // the impossible case. Checked before the engine is touched.
         let Some(first) = schedule.next() else {
             return vec![schedule_error_event(&fixture, &ScheduleError::SpanTooLarge)];
         };
+        let events = engine.warm_up(warmup);
         info!(
             fixture = %fixture,
             speed,
+            warmup_lines,
             lines = schedule.lines_per_loop(),
             loop_period_ms = schedule.period(),
             replaced = self.active.is_some(),
@@ -380,7 +464,7 @@ impl Replay {
             next: first,
             schedule,
         });
-        Vec::new()
+        events
     }
 
     /// Releases every replay message due at or before `now`, up to [`MAX_RELEASE_BATCH`], to
@@ -555,6 +639,7 @@ mod tests {
                 timeframe: protocol::Timeframe::M1,
                 snapshot: true,
                 bars: Vec::new(),
+                indicators: Some(Vec::new()),
             }]
         );
         let unsubscribe = r#"{"type":"unsubscribe","symbol":"BTC-USD","timeframe":"1m"}"#;
@@ -647,7 +732,8 @@ mod tests {
     async fn start_and_load(replay: &mut Replay, fixture: &str, now: Instant) -> Vec<Event> {
         assert_eq!(replay.start(fixture.into(), 1), Vec::new());
         let loaded = wait_load(&mut replay.pending).await;
-        replay.on_loaded(loaded, now)
+        // Signature change (task 3.2): these fixtures are short, so the warm-up is empty.
+        replay.on_loaded(loaded, &mut Engine::new(), now)
     }
 
     fn active_fixture(replay: &Replay) -> Option<&str> {
@@ -821,6 +907,64 @@ mod tests {
             })
             .collect();
         assert_eq!(trades, expected);
+    }
+
+    /// Bug condition exploration (chart-and-tape-fix Task 1.3, Property 2; Req 1.3, 2.3): a
+    /// fixture that spans more than 30 minutes must give the chart warm-up history at once.
+    /// Two hours of one-trade-per-minute data, replayed at speed 1, subscribed to BTC-USD 1m:
+    /// a snapshot with at least 85 bars must arrive within a few real seconds. On unfixed code
+    /// replay starts at line 0 in real time, so only one bar exists.
+    #[tokio::test]
+    async fn replay_of_a_two_hour_fixture_warms_up_history_without_waiting() {
+        // A minute boundary, so each trade opens its own 1m bar.
+        const BASE: TimeMs = 28_333_333 * 60_000;
+        let trades: Vec<(TimeMs, i64)> = (0..=120)
+            .map(|i| (BASE + i * 60_000, 6_000_000 + i))
+            .collect();
+        let fixture = TempFixture::with_trades("warmup", &trades);
+        let (mut stdin_writer, stdin_reader) = tokio::io::duplex(4096);
+        let (stdout_writer, stdout_reader) = tokio::io::duplex(1024 * 1024);
+        let engine = tokio::spawn(run(BufReader::new(stdin_reader), stdout_writer, config()));
+
+        let subscribe = Command::Subscribe {
+            symbol: "BTC-USD".into(),
+            timeframe: protocol::Timeframe::M1,
+        };
+        let start = Command::StartReplay {
+            fixture: fixture.name.clone(),
+            speed: 1,
+        };
+        for cmd in [&subscribe, &start] {
+            let text = encode_line(cmd).unwrap();
+            stdin_writer.write_all(text.as_bytes()).await.unwrap();
+        }
+
+        let mut out = BufReader::new(stdout_reader).lines();
+        let mut best_snapshot = 0usize;
+        let mut bar_times = std::collections::BTreeSet::new();
+        let watch = async {
+            while best_snapshot < 85 {
+                let Ok(Some(text)) = out.next_line().await else {
+                    break;
+                };
+                if let Event::Candle { snapshot, bars, .. } = decode_line::<Event>(&text).unwrap() {
+                    bar_times.extend(bars.iter().map(|b| b.t));
+                    if snapshot {
+                        best_snapshot = best_snapshot.max(bars.len());
+                    }
+                }
+            }
+        };
+        // Short timeout: the unfixed engine never sends a big snapshot, so this must not hang.
+        let _ = tokio::time::timeout(Duration::from_secs(3), watch).await;
+        drop(stdin_writer);
+        engine.abort();
+        assert!(
+            best_snapshot >= 85,
+            "replay warm-up history missing: largest snapshot had {best_snapshot} bars \
+             ({} distinct 1m bars seen in total)",
+            bar_times.len()
+        );
     }
 
     /// A writer whose pipe is closed.

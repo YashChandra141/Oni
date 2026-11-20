@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 import type { SecretSource } from "../config.ts";
 import type { Command, Event } from "../protocol.ts";
 import { Backoff } from "./backoff.ts";
+import { MAX_EVENT_LINE_BYTES } from "./lines.ts";
 import {
   type ControlCommand,
   type EngineNotice,
@@ -249,7 +250,8 @@ describe("EngineSupervisor stdout and stderr", () => {
   test("oversized stdout lines are logged and dropped", async () => {
     const h = harness();
     h.sup.start();
-    h.latest().out(`${"y".repeat(70 * 1024)}\n{"type":"heartbeat","ts":2}\n`);
+    // Just over the engine-stdout limit (512 KiB, fix task 5.1; the stdin limit stays 64 KiB).
+    h.latest().out(`${"y".repeat(MAX_EVENT_LINE_BYTES + 1)}\n{"type":"heartbeat","ts":2}\n`);
     await tick();
     expect(h.events).toEqual([{ type: "heartbeat", ts: 2 }]);
     expect(h.logs.some((l) => l.level === "warn" && l.line.includes("oversized stdout line"))).toBe(true);

@@ -37,7 +37,9 @@
 use std::collections::VecDeque;
 use std::iter;
 
-use protocol::{Bar, IndicatorValues, Price, Qty, TimeMs};
+use protocol::{Bar, IndicatorPoint, IndicatorValues, Price, Qty, TimeMs};
+
+use crate::candles::MAX_BARS;
 
 pub const EMA_PERIOD: usize = 20;
 pub const SMA_PERIOD: usize = 20;
@@ -436,6 +438,8 @@ pub struct SymbolIndicators {
     vwap: Vwap,
     /// The newest bar seen. It is not committed until a later bar arrives.
     forming: Option<Ohlcv>,
+    /// The values after the last update of each bar, oldest first, at most [`MAX_BARS`].
+    history: VecDeque<IndicatorPoint>,
 }
 
 impl Default for SymbolIndicators {
@@ -448,6 +452,7 @@ impl Default for SymbolIndicators {
             atr: Atr::new(ATR_PERIOD),
             vwap: Vwap::new(),
             forming: None,
+            history: VecDeque::new(),
         }
     }
 }
@@ -492,7 +497,32 @@ impl SymbolIndicators {
             }
         }
         self.forming = Some(bar);
-        Some(self.peek(&bar))
+        let values = self.peek(&bar);
+        let point = IndicatorPoint { t: bar.t, values };
+        match self.history.back_mut() {
+            Some(last) if last.t == bar.t => *last = point,
+            _ => {
+                if self.history.len() >= MAX_BARS {
+                    self.history.pop_front();
+                }
+                self.history.push_back(point);
+            }
+        }
+        Some(values)
+    }
+
+    /// The indicator values of each bar after its last update, oldest first.
+    pub fn history(&self) -> &VecDeque<IndicatorPoint> {
+        &self.history
+    }
+
+    /// Builds the indicators by feeding `bars` (oldest first) through [`Self::update`].
+    pub fn from_bars(bars: &[Bar]) -> Self {
+        let mut ind = Self::default();
+        for bar in bars {
+            ind.update(bar);
+        }
+        ind
     }
 
     /// The start time of the forming bar and the current values, or `None` before any bar.

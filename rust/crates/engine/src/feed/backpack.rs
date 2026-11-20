@@ -20,7 +20,7 @@
 //! - **Reconnect:** 500 ms doubling to 30 s; reset when trade or depth data parses. Every
 //!   reconnect resubscribes and resets all [`DepthSync`] states.
 
-// The runtime uses `run_backpack`; `fetch_klines` waits for the live Subscribe wiring.
+// The runtime uses `run_backpack` and `fetch_klines`; some other items only tests use so far.
 #![allow(dead_code)]
 
 use std::collections::VecDeque;
@@ -387,11 +387,8 @@ pub fn klines_path(venue_symbol: &str, timeframe: Timeframe, start_s: i64, end_s
 
 /// Fetches up to [`MAX_KLINES`] recent bars of `symbol` (internal symbol) ending at `end_s` (Unix
 /// seconds, supplied by the caller), oldest first (Req 43.4). One request; the caller decides
-/// when to backfill and must not call this in a loop (rate limits unknown).
-///
-/// TODO(Task 8.x / live Subscribe wiring, shared with the Coinbase adapter): feed these bars into
-/// the candle builder when a client subscribes in live mode. The core has no history-injection
-/// API yet.
+/// when to backfill and must not call this in a loop (rate limits unknown). The runtime calls it
+/// through `feed::backfill::BackpackHistory`, paced by [`REST_PACING`].
 pub async fn fetch_klines(
     symbol: &str,
     timeframe: Timeframe,

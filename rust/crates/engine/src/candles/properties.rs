@@ -243,3 +243,228 @@ proptest! {
         }
     }
 }
+
+// ---------------------------------------------------------------------------------------------
+// chart-and-tape-fix, Property 3: Bug Condition - Backfill merge keeps the forming candle and
+// never duplicates a time (Task 3.7, Req 2.5). The generators below are shared with the core
+// test in `core/properties.rs`.
+//
+// A case is one timeframe, a trade-built live ring of 0 to 520 bars (520 evicts down to the
+// 500 cap), a known or unknown market time, and up to ~720 venue bars that are shuffled,
+// duplicated, overlapping the live range, sometimes misaligned, and sometimes OHLC-inconsistent
+// (high below low, low of 0, low above open, or negative volume).
+// ---------------------------------------------------------------------------------------------
+
+use proptest::sample::{Index, select};
+
+/// Aligned base time of every merge case (midnight UTC, so aligned to every timeframe).
+pub(crate) const BASE: TimeMs = START_2027;
+
+const SYM: &str = "BTC-USD";
+
+/// One generated backfill case.
+#[derive(Debug, Clone)]
+pub(crate) struct MergeCase {
+    pub tf: Timeframe,
+    /// Time-ordered trades, one per bucket of `tf` (each bucket gets one trade).
+    pub trades: Vec<(Price, Qty, TimeMs)>,
+    pub venue: Vec<Bar>,
+    pub market_now: Option<TimeMs>,
+}
+
+fn live_trades(tf: Timeframe) -> impl Strategy<Value = Vec<(Price, Qty, TimeMs)>> {
+    let len = tf.millis();
+    prop_oneof![1 => 0..=3_usize, 4 => 0..=520_usize]
+        .prop_flat_map(move |n| vec((1..=2_i64, 0..len, 1..=1_000_000_i64, 1..=1_000_i64), n))
+        .prop_map(move |raw| {
+            let mut unit = 0;
+            raw.into_iter()
+                .map(|(step, offset, price, qty)| {
+                    unit += step;
+                    (Price(price), Qty(qty), BASE + unit * len + offset)
+                })
+                .collect()
+        })
+}
+
+fn venue_bar(tf: Timeframe) -> impl Strategy<Value = Bar> {
+    let len = tf.millis();
+    (
+        -700..=1_100_i64,
+        prop_oneof![8 => Just(0_i64), 1 => 1..len],
+        (1..=1_000_i64, 0..=50_i64, 0..=50_i64, 0..=50_i64),
+        0..12_u8,
+        prop_oneof![20 => 0..=1_000_i64, 1 => -5..0_i64],
+    )
+        .prop_map(
+            move |(k, offset, (low, d_open, d_close, d_high), flaw, volume)| {
+                let (mut low, open, close) = (low, low + d_open, low + d_close);
+                let mut high = open.max(close) + d_high;
+                match flaw {
+                    0 => high = low - 1,
+                    1 => low = 0,
+                    2 => low = open + 1,
+                    _ => {}
+                }
+                Bar {
+                    t: BASE + k * len + offset,
+                    open: Price(open),
+                    high: Price(high),
+                    low: Price(low),
+                    close: Price(close),
+                    volume: Qty(volume),
+                }
+            },
+        )
+}
+
+/// Unsorted venue bars with repeated times (the repeat differs in volume).
+fn venue_bars(tf: Timeframe) -> impl Strategy<Value = Vec<Bar>> {
+    (
+        vec(venue_bar(tf), 0..700),
+        vec((any::<Index>(), 1..=50_i64), 0..20),
+    )
+        .prop_map(|(mut bars, dups)| {
+            for (at, bump) in dups {
+                let Some(&original) = bars.get(at.index(bars.len().max(1))) else {
+                    break;
+                };
+                let mut copy = original;
+                copy.volume = Qty(copy.volume.0.saturating_add(bump));
+                bars.push(copy);
+            }
+            bars
+        })
+        .prop_shuffle()
+}
+
+pub(crate) fn merge_case() -> impl Strategy<Value = MergeCase> {
+    select(Timeframe::ALL.to_vec()).prop_flat_map(|tf| {
+        let len = tf.millis();
+        let market_now = prop_oneof![
+            1 => Just(None),
+            2 => (-700..=1_100_i64, 0..len).prop_map(move |(k, o)| Some(BASE + k * len + o)),
+        ];
+        (live_trades(tf), venue_bars(tf), market_now).prop_map(
+            move |(trades, venue, market_now)| MergeCase {
+                tf,
+                trades,
+                venue,
+                market_now,
+            },
+        )
+    })
+}
+
+/// `(k, price, qty)` of trades applied after a merge: at `BASE + k * len + qty`, so they land
+/// before, inside, and after the live range.
+pub(crate) fn late_trades() -> impl Strategy<Value = Vec<(i64, i64, i64)>> {
+    vec((-700..=1_200_i64, 1..=1_000_i64, 1..=100_i64), 0..30)
+}
+
+/// Independent copy of the venue-bar validity rule.
+fn venue_bar_is_valid(bar: &Bar, len: TimeMs) -> bool {
+    bar.t.rem_euclid(len) == 0
+        && bar.low.0 > 0
+        && bar.low <= bar.open
+        && bar.open <= bar.high
+        && bar.low <= bar.close
+        && bar.close <= bar.high
+        && bar.volume.0 >= 0
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(64))]
+
+    // chart-and-tape-fix Property 3 (candles), then P4 on the merged ring.
+    // **Validates: Requirements 2.5**
+    #[test]
+    fn p3_merge_history_keeps_live_bars_and_unique_times(
+        case in merge_case(),
+        later in late_trades(),
+    ) {
+        let MergeCase { tf, trades, venue, market_now } = case;
+        let len = tf.millis();
+        let mut b = CandleBuilder::default();
+        for &(price, qty, ts) in &trades {
+            let _ = b.on_trade(SYM, price, qty, ts);
+        }
+        let before = b.bars(SYM, tf);
+        let others_before: Vec<(Timeframe, Vec<Bar>)> = Timeframe::ALL
+            .into_iter()
+            .filter(|&t| t != tf)
+            .map(|t| (t, b.bars(SYM, t)))
+            .collect();
+
+        let mut valid: BTreeMap<TimeMs, Bar> = BTreeMap::new();
+        let mut invalid = 0;
+        for bar in &venue {
+            if venue_bar_is_valid(bar, len) {
+                valid.insert(bar.t, *bar);
+            } else {
+                invalid += 1;
+            }
+        }
+        let cutoff = match before.first() {
+            Some(front) => Some(front.t),
+            None => market_now
+                .map(|now| floor_to(now, len))
+                .or_else(|| valid.keys().next_back().copied()),
+        };
+
+        let result = b.merge_history(SYM, tf, &venue, market_now);
+        let after = b.bars(SYM, tf);
+
+        // Strictly ascending, so no duplicate time; at most 500 bars.
+        prop_assert!(after.windows(2).all(|w| w[0].t < w[1].t), "order: {:?}", after);
+        prop_assert!(after.len() <= MAX_BARS);
+        // Bars at or after the cutoff are the live bars, untouched.
+        let live_part: Vec<Bar> = after
+            .iter()
+            .filter(|bar| cutoff.is_some_and(|c| bar.t >= c))
+            .copied()
+            .collect();
+        prop_assert_eq!(&live_part, &before);
+        // Bars before the cutoff come from valid, aligned venue bars.
+        for bar in after.iter().filter(|bar| cutoff.is_some_and(|c| bar.t < c)) {
+            prop_assert_eq!(bar.t.rem_euclid(len), 0);
+            prop_assert_eq!(valid.get(&bar.t), Some(bar));
+        }
+        for bar in &after {
+            check_ohlc(SYM, tf, bar)?;
+        }
+        // Exactly the newest venue bars that fit next to the live ones were added.
+        let expected: Vec<Bar> = match cutoff {
+            None => before.clone(),
+            Some(c) => {
+                let older: Vec<Bar> = valid.values().filter(|bar| bar.t < c).copied().collect();
+                let room = MAX_BARS.saturating_sub(before.len());
+                let skip = older.len().saturating_sub(room);
+                older.into_iter().skip(skip).chain(before.iter().copied()).collect()
+            }
+        };
+        prop_assert_eq!(&after, &expected);
+        prop_assert_eq!(result.invalid, invalid);
+        prop_assert_eq!(result.added, after.len() - before.len());
+        prop_assert_eq!(result.changed, after != before);
+        // Other timeframes are not touched.
+        for (t, ring) in &others_before {
+            prop_assert_eq!(&b.bars(SYM, *t), ring);
+        }
+
+        // P4 after the merge: trades into and around the merged ring keep every bar valid.
+        for (k, price, qty) in later {
+            for (t, bar) in b.on_trade(SYM, Price(price), Qty(qty), BASE + k * len + qty) {
+                check_ohlc(SYM, t, &bar)?;
+            }
+        }
+        for t in Timeframe::ALL {
+            let ring = b.bars(SYM, t);
+            prop_assert!(ring.len() <= MAX_BARS);
+            prop_assert!(ring.windows(2).all(|w| w[0].t < w[1].t), "{} order", t);
+            for bar in &ring {
+                check_ohlc(SYM, t, bar)?;
+            }
+        }
+    }
+}

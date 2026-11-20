@@ -68,6 +68,29 @@ impl Dropped {
     }
 }
 
+/// Result of [`CandleBuilder::merge_history`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct HistoryMerge {
+    /// The ring differs after the merge.
+    pub changed: bool,
+    /// Venue bars prepended to the ring.
+    pub added: usize,
+    /// Venue bars dropped as misaligned or inconsistent.
+    pub invalid: usize,
+}
+
+/// A venue bar is usable when it is aligned to `tf`, has `0 < low <= open, close <= high`, and
+/// a non-negative volume.
+fn is_valid_venue_bar(bar: &Bar, tf: Timeframe) -> bool {
+    bucket_start(bar.t, tf) == Some(bar.t)
+        && bar.low.0 > 0
+        && bar.low <= bar.open
+        && bar.open <= bar.high
+        && bar.low <= bar.close
+        && bar.close <= bar.high
+        && bar.volume.0 >= 0
+}
+
 /// Builds candles for every symbol and timeframe from trades.
 #[derive(Debug, Default)]
 pub struct CandleBuilder {
@@ -249,6 +272,63 @@ impl CandleBuilder {
         self.ring(symbol, tf)?.back().copied()
     }
 
+    /// Merges venue history `bars` older than the cutoff into the ring of `symbol` and `tf`
+    /// (design D2). Live trades own every bar at or after the cutoff, so the forming candle is
+    /// never touched.
+    ///
+    /// The cutoff is the oldest ring bar if the ring has bars, else the bucket of `market_now`
+    /// (the latest market time, if a market message was seen), else the newest valid venue bar.
+    /// Invalid or misaligned venue bars are dropped and counted. Later duplicates of a time
+    /// replace earlier ones. The newest [`MAX_BARS`] bars are kept.
+    pub fn merge_history(
+        &mut self,
+        symbol: &str,
+        tf: Timeframe,
+        bars: &[Bar],
+        market_now: Option<TimeMs>,
+    ) -> HistoryMerge {
+        let mut result = HistoryMerge::default();
+        let Some(index) = Timeframe::ALL.iter().position(|&t| t == tf) else {
+            return result;
+        };
+        // Sorted and unique by time; a later bar with the same time wins.
+        let mut valid: BTreeMap<TimeMs, Bar> = BTreeMap::new();
+        for &venue_bar in bars {
+            if is_valid_venue_bar(&venue_bar, tf) {
+                valid.insert(venue_bar.t, venue_bar);
+            } else {
+                result.invalid = result.invalid.saturating_add(1);
+            }
+        }
+        let existing = self.series.get(symbol).and_then(|s| s.rings.get(index));
+        let cutoff = match existing.and_then(|ring| ring.front()) {
+            Some(front) => Some(front.t),
+            None => market_now
+                .and_then(|now| bucket_start(now, tf))
+                .or_else(|| valid.keys().next_back().copied()),
+        };
+        let Some(cutoff) = cutoff else {
+            return result;
+        };
+        let live_len = existing.map_or(0, VecDeque::len);
+        let older: Vec<Bar> = valid.into_values().filter(|b| b.t < cutoff).collect();
+        // Keep only the newest bars that fit next to the live ones.
+        let skip = older
+            .len()
+            .saturating_sub(MAX_BARS.saturating_sub(live_len));
+        let kept: Vec<Bar> = older.into_iter().skip(skip).collect();
+        if kept.is_empty() {
+            return result;
+        }
+        let ring = &mut self.series.entry(symbol.to_owned()).or_default().rings[index];
+        for &kept_bar in kept.iter().rev() {
+            ring.push_front(kept_bar);
+        }
+        result.changed = true;
+        result.added = kept.len();
+        result
+    }
+
     /// Counts of dropped trades.
     pub fn dropped(&self) -> Dropped {
         self.dropped
@@ -298,7 +378,7 @@ pub fn build_direct(trades: &[(Price, Qty, TimeMs)], tf: Timeframe) -> Vec<Bar> 
 
 /// Property tests P4, P5, P6 (Task 4.5).
 #[cfg(test)]
-mod properties;
+pub(crate) mod properties;
 
 #[cfg(test)]
 mod tests {
@@ -562,5 +642,105 @@ mod tests {
         for tf in Timeframe::ALL {
             assert_eq!(build_direct(&trades, tf), b.bars(BTC, tf), "{tf}");
         }
+    }
+
+    fn flat(t: TimeMs, p: i64) -> Bar {
+        bar(t, [p; 4], 1)
+    }
+
+    fn times(b: &CandleBuilder) -> Vec<TimeMs> {
+        b.bars(BTC, Timeframe::M1).iter().map(|x| x.t).collect()
+    }
+
+    #[test]
+    fn merge_history_empty_ring_uses_market_now_cutoff() {
+        let mut b = CandleBuilder::default();
+        let venue = [
+            flat(0, 10),
+            flat(MIN, 11),
+            flat(2 * MIN, 12),
+            flat(3 * MIN, 13),
+        ];
+        let r = b.merge_history(BTC, Timeframe::M1, &venue, Some(2 * MIN + 5));
+        assert_eq!(
+            r,
+            HistoryMerge {
+                changed: true,
+                added: 2,
+                invalid: 0
+            }
+        );
+        assert_eq!(times(&b), [0, MIN]);
+    }
+
+    #[test]
+    fn merge_history_with_bars_adds_only_older_and_keeps_live() {
+        let mut b = CandleBuilder::default();
+        trade(&mut b, 100, 5, 5 * MIN);
+        trade(&mut b, 101, 5, 6 * MIN);
+        let live = b.bars(BTC, Timeframe::M1);
+        let venue = [
+            flat(3 * MIN, 1),
+            flat(4 * MIN, 2),
+            flat(5 * MIN, 3),
+            flat(7 * MIN, 4),
+        ];
+        let r = b.merge_history(BTC, Timeframe::M1, &venue, Some(6 * MIN));
+        assert_eq!(r.added, 2);
+        assert!(r.changed);
+        assert_eq!(times(&b), [3 * MIN, 4 * MIN, 5 * MIN, 6 * MIN]);
+        assert_eq!(&b.bars(BTC, Timeframe::M1)[2..], &live[..]);
+        // Nothing older left: no change.
+        let again = b.merge_history(BTC, Timeframe::M1, &venue[..1], None);
+        assert_eq!(again, HistoryMerge::default());
+    }
+
+    #[test]
+    fn merge_history_unknown_market_time_treats_newest_as_forming() {
+        let mut b = CandleBuilder::default();
+        let venue = [flat(2 * MIN, 12), flat(0, 10), flat(MIN, 11)];
+        let r = b.merge_history(BTC, Timeframe::M1, &venue, None);
+        assert_eq!(r.added, 2);
+        assert_eq!(times(&b), [0, MIN]);
+    }
+
+    #[test]
+    fn merge_history_counts_invalid_and_misaligned_bars() {
+        let mut b = CandleBuilder::default();
+        let venue = [
+            flat(0, 10),
+            flat(1, 10),                    // misaligned
+            bar(MIN, [10, 9, 8, 9], 1),     // open above high
+            bar(2 * MIN, [5, 6, 0, 5], 1),  // low not positive
+            bar(3 * MIN, [5, 6, 4, 5], -1), // negative volume
+            flat(4 * MIN, 7),
+        ];
+        let r = b.merge_history(BTC, Timeframe::M1, &venue, Some(10 * MIN));
+        assert_eq!(r.invalid, 4);
+        assert_eq!(r.added, 2);
+        assert_eq!(times(&b), [0, 4 * MIN]);
+    }
+
+    #[test]
+    fn merge_history_duplicate_times_last_wins() {
+        let mut b = CandleBuilder::default();
+        let venue = [flat(0, 10), flat(0, 20), flat(MIN, 30)];
+        let r = b.merge_history(BTC, Timeframe::M1, &venue, Some(5 * MIN));
+        assert_eq!(r.added, 2);
+        assert_eq!(b.bars(BTC, Timeframe::M1), [flat(0, 20), flat(MIN, 30)]);
+    }
+
+    #[test]
+    fn merge_history_cap_keeps_the_newest_500() {
+        let mut b = CandleBuilder::default();
+        trade(&mut b, 100, 1, 600 * MIN);
+        let venue: Vec<Bar> = (0..600).map(|i| flat(i * MIN, 10)).collect();
+        let r = b.merge_history(BTC, Timeframe::M1, &venue, Some(600 * MIN));
+        assert_eq!(r.added, MAX_BARS - 1);
+        let got = times(&b);
+        assert_eq!(got.len(), MAX_BARS);
+        assert_eq!(got.first(), Some(&(101 * MIN)));
+        assert_eq!(got.last(), Some(&(600 * MIN)));
+        assert!(got.windows(2).all(|w| w[0] < w[1]));
     }
 }

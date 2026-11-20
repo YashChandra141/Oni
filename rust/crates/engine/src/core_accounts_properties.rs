@@ -774,3 +774,275 @@ fn contested_liquidity_is_the_documented_boundary() {
     assert_eq!(fills_of(&first, "w_a"), vec![(100_000_i64, 5_i64)]);
     assert_eq!(fills_of(&second, "w_b"), vec![(100_000_i64, 5_i64)]);
 }
+
+// ---------------------------------------------------------------------------------------------
+// Property 10 (chart-and-tape-fix, Task 3.8): P28 with warm-up and history mixed in
+// ---------------------------------------------------------------------------------------------
+
+/// Sibling of P28 that leaves P28 unchanged. The same account Commands and market data are mixed
+/// with `subscribe`, `warm_up`, `on_history` and `on_history_failed` calls on a backfill engine.
+/// These calls are market-side inputs: both the interleaved run and every solo run receive them.
+/// Validates Req 3.8, 3.9 (chart-and-tape-fix) and Req 14.9.
+mod warmup_isolation {
+    use super::*;
+    use protocol::{Bar, Timeframe};
+
+    /// A market-side call that is not an order Command.
+    #[derive(Debug, Clone)]
+    enum Extra {
+        Subscribe(usize),
+        WarmUp {
+            symbol: usize,
+            trades: Vec<(i64, i64, Side)>,
+            snapshot: bool,
+        },
+        History {
+            symbol: usize,
+            prices: Vec<i64>,
+        },
+        HistoryFailed(usize),
+    }
+
+    #[derive(Debug, Clone)]
+    enum Item {
+        Base(Input),
+        Extra(Extra),
+    }
+
+    fn extra() -> impl Strategy<Value = Extra> {
+        prop_oneof![
+            2 => (0..2usize).prop_map(Extra::Subscribe),
+            3 => (
+                0..2usize,
+                vec((94_000..=106_000_i64, 1..=100_i64, side()), 1..6),
+                any::<bool>()
+            )
+                .prop_map(|(symbol, trades, snapshot)| Extra::WarmUp { symbol, trades, snapshot }),
+            2 => (0..2usize, vec(95_000..=105_000_i64, 1..8))
+                .prop_map(|(symbol, prices)| Extra::History { symbol, prices }),
+            1 => (0..2usize).prop_map(Extra::HistoryFailed),
+        ]
+    }
+
+    /// Inserts each extra at its (modulo) position among the base inputs.
+    fn mix(inputs: Vec<Input>, extras: &[(usize, Extra)]) -> Vec<Item> {
+        let mut items: Vec<Item> = inputs.into_iter().map(Item::Base).collect();
+        for (pos, e) in extras {
+            let at = pos % (items.len() + 1);
+            items.insert(at, Item::Extra(e.clone()));
+        }
+        items
+    }
+
+    fn apply(engine: &mut Engine, item: &Item, serial: &mut i64) -> Vec<Event> {
+        match item {
+            Item::Base(Input::Market(msg)) => engine.on_market(msg.clone()),
+            Item::Base(Input::Command(cmd)) => engine.on_command(cmd.clone()),
+            Item::Extra(Extra::Subscribe(s)) => {
+                let events = engine.on_command(Command::Subscribe {
+                    symbol: SYMBOLS[s % 2].into(),
+                    timeframe: Timeframe::M1,
+                });
+                let _ = engine.take_history_requests();
+                events
+            }
+            Item::Extra(Extra::WarmUp {
+                symbol,
+                trades,
+                snapshot,
+            }) => {
+                let symbol = SYMBOLS[symbol % 2];
+                let mut msgs = Vec::new();
+                if *snapshot {
+                    *serial += 1;
+                    msgs.push(deep_snapshot(symbol, 1_000_000 + *serial));
+                }
+                for (price, qty, side) in trades {
+                    *serial += 1;
+                    msgs.push(MarketMsg::Trade {
+                        symbol: symbol.into(),
+                        price: Price(*price),
+                        qty: Qty(*qty),
+                        side: *side,
+                        ts: 1_000_000 + *serial,
+                    });
+                }
+                engine.warm_up(msgs)
+            }
+            Item::Extra(Extra::History { symbol, prices }) => {
+                let bars: Vec<Bar> = prices
+                    .iter()
+                    .zip(0_i64..)
+                    .map(|(p, k)| Bar {
+                        t: k * 60_000,
+                        open: Price(*p),
+                        high: Price(p + 10),
+                        low: Price(p - 10),
+                        close: Price(*p),
+                        volume: Qty(5),
+                    })
+                    .collect();
+                engine.on_history(SYMBOLS[symbol % 2], Timeframe::M1, &bars)
+            }
+            Item::Extra(Extra::HistoryFailed(s)) => {
+                engine.on_history_failed(SYMBOLS[s % 2], Timeframe::M1, "boom")
+            }
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(64))]
+
+        // Property 10 — validates Req 3.8, 3.9
+        #[test]
+        fn p10_account_events_equal_a_solo_run_with_warm_up_and_history(
+            n in 2..=5usize,
+            steps in vec(step(), 1..60),
+            extras in vec((any::<usize>(), extra()), 0..8),
+        ) {
+            let ids: Vec<AccountId> = NAMES[..n].iter().map(|s| acct(s)).collect();
+            let items = mix(resolve(&steps, n), &extras);
+
+            let mut engine = Engine::with_backfill();
+            let mut serial = 0_i64;
+            let mut per: BTreeMap<AccountId, Vec<Event>> = BTreeMap::new();
+            for item in &items {
+                let events = apply(&mut engine, item, &mut serial);
+                if matches!(item, Item::Extra(_)) {
+                    // Warm-up, history and subscribe never fill or ack an order.
+                    prop_assert!(
+                        events
+                            .iter()
+                            .all(|e| !matches!(e, Event::Fill { .. } | Event::OrderAck { .. })),
+                        "{:?} produced {:?}",
+                        item,
+                        events
+                    );
+                }
+                for event in events {
+                    if let Some(id) = account_of(&event).cloned() {
+                        per.entry(id).or_default().push(event);
+                    }
+                }
+            }
+
+            for id in &ids {
+                let mut solo = Engine::with_backfill();
+                let mut serial = 0_i64;
+                let mut solo_events = Vec::new();
+                for item in &items {
+                    if let Item::Base(Input::Command(cmd)) = item
+                        && command_account(cmd) != Some(id)
+                    {
+                        continue;
+                    }
+                    let events = apply(&mut solo, item, &mut serial);
+                    solo_events.extend(events.into_iter().filter(|e| account_of(e) == Some(id)));
+                }
+                let got = per.get(id).cloned().unwrap_or_default();
+                prop_assert_eq!(&got, &solo_events, "events of {}", id);
+                prop_assert_eq!(
+                    engine.accounts.get(id),
+                    solo.accounts.get(id),
+                    "paper account of {}",
+                    id
+                );
+                prop_assert_eq!(
+                    open_summary(&engine, id),
+                    open_summary(&solo, id),
+                    "open orders of {}",
+                    id
+                );
+            }
+        }
+    }
+
+    /// Req 3.8: orders open before a warm-up are neither filled nor acked by it, even when the
+    /// warm-up trades and book cross their prices. They stay open, and history changes nothing.
+    #[test]
+    fn warm_up_and_history_do_not_fill_or_ack_open_orders() {
+        let mut e = Engine::with_backfill();
+        e.on_market(deep_snapshot(BTC, 1_000));
+        let _ = e.on_command(Command::Subscribe {
+            symbol: BTC.into(),
+            timeframe: Timeframe::M1,
+        });
+        assert_eq!(e.take_history_requests().len(), 1);
+
+        // A resting buy limit below the ask, and a sell stop below the market.
+        let buy = place(
+            &mut e,
+            "w_a",
+            "a-1",
+            Side::Buy,
+            10,
+            OrderKind::Limit {
+                price: Price(100_500),
+            },
+        );
+        assert_eq!(buy, [ack("w_a", "a-1", OrderStatus::Accepted)]);
+        let stop = place(
+            &mut e,
+            "w_b",
+            "b-1",
+            Side::Sell,
+            10,
+            OrderKind::Stop {
+                stop_price: Price(98_000),
+            },
+        );
+        assert_eq!(stop, [ack("w_b", "b-1", OrderStatus::Accepted)]);
+        assert_eq!(e.matcher.open_count(), 2);
+
+        // Warm-up: asks cross the buy limit and trades cross both prices.
+        let events = e.warm_up(vec![
+            MarketMsg::BookSnapshot {
+                symbol: BTC.into(),
+                bids: vec![lv(99_000, 100)],
+                asks: vec![lv(100_000, 100)],
+                ts: 2_000,
+            },
+            MarketMsg::Trade {
+                symbol: BTC.into(),
+                price: Price(100_000),
+                qty: Qty(5),
+                side: Side::Buy,
+                ts: 2_001,
+            },
+            MarketMsg::Trade {
+                symbol: BTC.into(),
+                price: Price(97_000),
+                qty: Qty(5),
+                side: Side::Sell,
+                ts: 2_002,
+            },
+        ]);
+        assert!(
+            events
+                .iter()
+                .all(|ev| !matches!(ev, Event::Fill { .. } | Event::OrderAck { .. })),
+            "{events:?}"
+        );
+        assert_eq!(e.matcher.open_count(), 2);
+        assert_eq!(e.matcher.open_orders_for(&acct("w_a")).count(), 1);
+        assert_eq!(e.matcher.open_orders_for(&acct("w_b")).count(), 1);
+
+        // History and a failed fetch do not touch orders either.
+        let bar = Bar {
+            t: 0,
+            open: Price(100_000),
+            high: Price(100_010),
+            low: Price(99_990),
+            close: Price(100_000),
+            volume: Qty(5),
+        };
+        let hist = e.on_history(BTC, Timeframe::M1, &[bar]);
+        assert!(
+            hist.iter()
+                .all(|ev| !matches!(ev, Event::Fill { .. } | Event::OrderAck { .. }))
+        );
+        let failed = e.on_history_failed(BTC, Timeframe::M1, "boom");
+        assert!(account_of(&failed[0]).is_none());
+        assert_eq!(e.matcher.open_count(), 2);
+    }
+}

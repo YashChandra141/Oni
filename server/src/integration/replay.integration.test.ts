@@ -262,3 +262,166 @@ if (!HAVE_ENGINE) {
     );
   });
 }
+
+// ---------------------------------------------------------------------------------------------
+// Chart-and-tape-fix Task 10: replay warm-up, indicator history, and indicator alignment
+// (chart-and-tape-fix bugfix.md Req 2.3, 2.4, 2.6, 2.7).
+//
+// Real engine, `fixtures/demo.jsonl`, REPLAY_SPEED=1, one BTC-USD 1m subscription:
+//   - Req 2.3/2.4: after the warm-up, the snapshot holds 85 to 95 bars (not one bar);
+//   - Req 2.6: the snapshot carries one indicator point per bar, with the same set of `t`;
+//   - Req 2.4: every live `Indicators` event has `ts` equal to the `t` of the live `Candle` bar
+//     just before it (the candle open time);
+//   - Req 2.7: a second connection that subscribes after the first one's snapshot gets the
+//     server's cached snapshot, with indicator points.
+//
+// Timing: the "warm-up under 1 s" requirement applies to a RELEASE build only and is a manual
+// check. This test runs against the debug binary, asserts a generous bound (SNAPSHOT_BOUND_MS) and
+// logs the measured time. Every wait resolves on the awaited event and times out; the test is
+// capped at TEST_TIMEOUT_MS. It is skipped, with a message, when the engine binary is missing or
+// stale (see `engineBinary.ts`: <repo>/rust/target/debug/engine[.exe]).
+// ---------------------------------------------------------------------------------------------
+
+/** Generous debug-build bound for the warm-up snapshot (the 1 s bound is a manual release check). */
+const SNAPSHOT_BOUND_MS = 15_000;
+const LIVE_WAIT_MS = 25_000;
+const WARMUP_TEST_TIMEOUT_MS = 70_000;
+
+if (!HAVE_ENGINE) {
+  test.skip(`replay warm-up: no current engine binary at ${ENGINE_PATH}; run \`cargo build --manifest-path rust/Cargo.toml -p engine\` first`, () => {});
+} else {
+  describe("replay warm-up and indicator history (real engine binary, speed 1)", () => {
+    const procs: EngineProcess[] = [];
+    let running: RunningServer | undefined;
+    const sockets: WebSocket[] = [];
+
+    afterAll(async () => {
+      for (const s of sockets) s.close();
+      await within(running?.stop() ?? Promise.resolve(), 4_000, "the server and engine to stop");
+      await within(Promise.all(procs.map((p) => p.exited)), 4_000, "every engine process to exit");
+    });
+
+    async function connect(base: string): Promise<{ ws: WebSocket; inbox: Recorder<ServerMessage> }> {
+      const inbox = new Recorder<ServerMessage>();
+      const ws = new WebSocket(`ws://${base}/ws`);
+      sockets.push(ws);
+      ws.addEventListener("message", (e) => inbox.push(JSON.parse(String(e.data)) as ServerMessage));
+      const opened = new Promise<void>((resolveOpen, reject) => {
+        ws.addEventListener("open", () => resolveOpen(), { once: true });
+        ws.addEventListener("error", () => reject(new Error("websocket error")), { once: true });
+      });
+      await within(opened, WAIT_MS, "the WebSocket to open");
+      await inbox.until(() => inbox.items.length >= 2, "hello and session");
+      return { ws, inbox };
+    }
+
+    const isBtcSnapshot = (m: ServerMessage): CandleEvent | null => {
+      const c = btcCandle(m);
+      return c !== null && c.snapshot ? c : null;
+    };
+
+    test(
+      "snapshot has ~90 bars with matching indicator points; live indicators align; second subscriber is cached",
+      async () => {
+        const result = loadConfig({
+          DATA_MODE: "replay",
+          REPLAY_FIXTURE: "demo.jsonl",
+          REPLAY_SPEED: "1",
+          ENGINE_PATH,
+          ALLOWED_ORIGINS: "http://localhost:3000",
+          NODE_ENV: "test",
+        });
+        if (!result.ok) throw result.error;
+        const { config } = result;
+        expect(config.replaySpeed).toBe(1);
+
+        const sup = new EngineSupervisor({
+          config,
+          fixturesDir: resolveFromRoot("fixtures"),
+          spawn: (request) => {
+            const proc = spawnEngineProcess(request);
+            procs.push(proc);
+            return proc;
+          },
+          logger: logs,
+        });
+
+        const t0 = performance.now();
+        running = startServer({ config, port: 0, hostname: "127.0.0.1", supervisor: sup, logger: logs });
+        const base = `127.0.0.1:${running.port}`;
+
+        // First client: subscribe at once. The warm-up snapshot arrives when the fixture is loaded.
+        const first = await connect(base);
+        const tSubscribe = performance.now();
+        first.ws.send(JSON.stringify({ type: "subscribe", symbol: "BTC-USD", timeframe: "1m" }));
+
+        const bigSnapshot = () =>
+          first.inbox.items.find(({ value }) => (isBtcSnapshot(value)?.bars.length ?? 0) >= 85);
+        await first.inbox.until(() => bigSnapshot() !== undefined, "a BTC-USD 1m snapshot with >= 85 bars", SNAPSHOT_BOUND_MS);
+        const snap = bigSnapshot();
+        const snapEvent = snap === undefined ? null : isBtcSnapshot(snap.value);
+        if (snap === undefined || snapEvent === null) throw new Error("no warm-up snapshot");
+        const snapshotMs = ms(t0, snap.at);
+
+        // Req 2.3: 85 to 95 bars. Req 2.6: one indicator point per bar, same `t` set.
+        expect(snapEvent.bars.length).toBeGreaterThanOrEqual(85);
+        expect(snapEvent.bars.length).toBeLessThanOrEqual(95);
+        const barTimes = snapEvent.bars.map((b) => b.t);
+        const pointTimes = (snapEvent.indicators ?? []).map((p) => p.t);
+        expect(snapEvent.indicators).toBeDefined();
+        expect(pointTimes).toEqual(barTimes);
+        expect(new Set(pointTimes).size).toBe(pointTimes.length);
+
+        // Req 2.4: live Indicators ts equals the open time of the live Candle bar just before it.
+        const liveSeq = () =>
+          first.inbox.items
+            .map(({ value }) => eventOf(value))
+            .filter(
+              (e): e is CandleEvent | Extract<Event, { type: "indicators" }> =>
+                e !== null &&
+                ((e.type === "candle" && !e.snapshot && e.symbol === "BTC-USD" && e.timeframe === "1m") ||
+                  (e.type === "indicators" && e.symbol === "BTC-USD" && e.timeframe === "1m")),
+            );
+        await first.inbox.until(
+          () => liveSeq().some((e) => e.type === "indicators"),
+          "a live BTC-USD 1m Indicators event",
+          LIVE_WAIT_MS,
+        );
+        let lastBarT: number | null = null;
+        let checked = 0;
+        for (const e of liveSeq()) {
+          if (e.type === "candle") {
+            lastBarT = e.bars[e.bars.length - 1]?.t ?? null;
+          } else if (lastBarT !== null) {
+            expect(e.ts).toBe(lastBarT);
+            checked += 1;
+          }
+        }
+        expect(checked).toBeGreaterThan(0);
+
+        // Req 2.7: a second connection, after the first one's snapshot, gets a cached snapshot.
+        const second = await connect(base);
+        second.ws.send(JSON.stringify({ type: "subscribe", symbol: "BTC-USD", timeframe: "1m" }));
+        await second.inbox.until(
+          () => second.inbox.items.some(({ value }) => isBtcSnapshot(value) !== null),
+          "the cached BTC-USD 1m snapshot for the second subscriber",
+        );
+        const cached = second.inbox.items.map(({ value }) => isBtcSnapshot(value)).find((c) => c !== null) ?? null;
+        if (cached === null) throw new Error("no cached snapshot");
+        expect(cached.bars.length).toBeGreaterThanOrEqual(85);
+        expect(cached.indicators?.length ?? 0).toBeGreaterThan(0);
+        const cachedBars = new Set(cached.bars.map((b) => b.t));
+        for (const p of cached.indicators ?? []) expect(cachedBars.has(p.t)).toBe(true);
+
+        console.log(
+          `[replay.integration] warm-up snapshot ${snapshotMs} ms after server start ` +
+            `(${ms(tSubscribe, snap.at)} ms after subscribe; ${snapEvent.bars.length} bars, ` +
+            `${pointTimes.length} indicator points); debug-build bound ${SNAPSHOT_BOUND_MS} ms. ` +
+            `The 1 s warm-up requirement is a manual RELEASE-build check. ` +
+            `${checked} live Indicators ts values matched the candle open time.`,
+        );
+      },
+      WARMUP_TEST_TIMEOUT_MS,
+    );
+  });
+}

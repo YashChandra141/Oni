@@ -21,6 +21,14 @@
 /** Longest accepted line in bytes, without its terminator. Matches Rust `MAX_LINE_BYTES`. */
 export const MAX_LINE_BYTES = 64 * 1024;
 
+/**
+ * Longest accepted engine stdout (Event) line in bytes, without its terminator. Matches the
+ * Rust `protocol::MAX_EVENT_LINE_BYTES`. Larger than `MAX_LINE_BYTES` because a Candle snapshot
+ * of 500 bars plus 500 indicator points can exceed 64 KiB (Reqs 1.5, 2.6). Engine stdin keeps
+ * the 64 KiB `MAX_LINE_BYTES` limit.
+ */
+export const MAX_EVENT_LINE_BYTES = 512 * 1024;
+
 const LF = 0x0a;
 const CR = 0x0d;
 
@@ -107,6 +115,14 @@ export class LineSplitter {
     if (len === 0) return; // empty line: skipped (see header)
     out.push(this.#decoder.decode(concat(parts).subarray(0, len)));
   }
+}
+
+/**
+ * The splitter for engine stdout, used by supervisor.ts and its tests so both share one
+ * construction. Uses the `MAX_EVENT_LINE_BYTES` limit.
+ */
+export function createEngineStdoutSplitter(onOversized: (bytes: number) => void): LineSplitter {
+  return new LineSplitter({ maxBytes: MAX_EVENT_LINE_BYTES, onOversized });
 }
 
 function concat(parts: readonly Uint8Array[]): Uint8Array {

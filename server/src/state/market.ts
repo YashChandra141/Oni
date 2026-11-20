@@ -19,7 +19,7 @@
 //
 // Pure: no I/O, no timers, no clock. Every getter returns copies.
 
-import type { Bar, Event, Level, Price, Qty, Side, Timeframe } from "../protocol.ts";
+import type { Bar, Event, IndicatorPoint, Level, Price, Qty, Side, Timeframe } from "../protocol.ts";
 
 /** Most bars kept per (symbol, timeframe) (Req 8.7: up to 500 of the most recent candles). */
 export const MAX_SNAPSHOT_BARS = 500;
@@ -86,6 +86,28 @@ function bestLevel(levels: readonly Level[], side: "bid" | "ask"): Level | null 
   return best === null ? null : { ...best };
 }
 
+const TIMEFRAME_MS: Record<Timeframe, number> = {
+  "1m": 60_000,
+  "5m": 300_000,
+  "15m": 900_000,
+  "1h": 3_600_000,
+  "1d": 86_400_000,
+};
+
+/** Start of the UTC candle bucket (epoch ms) that contains `ts` for `tf`. */
+export function floorToTimeframe(ts: number, tf: Timeframe): number {
+  const ms = TIMEFRAME_MS[tf];
+  return Math.floor(ts / ms) * ms;
+}
+
+/** Sorted ascending by t, deduped by t (last wins), newest `max` kept. Returns a new array of copies. */
+function normalizePoints(points: readonly IndicatorPoint[], max: number = MAX_SNAPSHOT_BARS): IndicatorPoint[] {
+  const byT = new Map<number, IndicatorPoint>();
+  for (const p of points) byT.set(p.t, { t: p.t, values: { ...p.values } });
+  const sorted = [...byT.values()].sort((a, b) => a.t - b.t);
+  return sorted.length > max ? sorted.slice(sorted.length - max) : sorted;
+}
+
 function candleKey(symbol: string, timeframe: Timeframe): string {
   // Timeframes never contain "|", so the key is unambiguous.
   return `${timeframe}|${symbol}`;
@@ -96,6 +118,8 @@ export class MarketState {
   readonly #books = new Map<string, TopOfBook>();
   /** candleKey → cached bars, oldest first. */
   readonly #candles = new Map<string, Bar[]>();
+  /** candleKey → cached indicator points, ascending by t, at most 500. Present only with a snapshot. */
+  readonly #indicators = new Map<string, IndicatorPoint[]>();
 
   /** Applies one engine event. Events other than Trade, Book, and Candle are ignored. */
   apply(event: Event): void {
@@ -114,6 +138,9 @@ export class MarketState {
         return;
       case "candle":
         this.#applyCandle(event);
+        return;
+      case "indicators":
+        this.#applyIndicators(event);
         return;
       default:
         return;
@@ -160,12 +187,20 @@ export class MarketState {
   /** The cached bars as a `Candle { snapshot: true }` event for a new subscriber, or null. */
   snapshot(symbol: string, timeframe: Timeframe): CandleEvent | null {
     const bars = this.candles(symbol, timeframe);
-    return bars === null ? null : { type: "candle", symbol, timeframe, snapshot: true, bars };
+    if (bars === null) return null;
+    const event: CandleEvent = { type: "candle", symbol, timeframe, snapshot: true, bars };
+    // `indicators` is left off when there are no points, so a bars-only snapshot stays bars-only.
+    const points = this.#indicators.get(candleKey(symbol, timeframe));
+    if (points !== undefined && points.length > 0) {
+      event.indicators = points.map((p) => ({ t: p.t, values: { ...p.values } }));
+    }
+    return event;
   }
 
   /** Forgets the cached candles of one key (its last subscriber left, so the engine stops updating it). */
   dropCandles(symbol: string, timeframe: Timeframe): void {
     this.#candles.delete(candleKey(symbol, timeframe));
+    this.#indicators.delete(candleKey(symbol, timeframe));
   }
 
   /** Forgets everything (engine exit, Req 15.7). */
@@ -173,6 +208,7 @@ export class MarketState {
     this.#trades.clear();
     this.#books.clear();
     this.#candles.clear();
+    this.#indicators.clear();
   }
 
   /** A snapshot replaces the cached bars; a live update is merged into an existing snapshot. */
@@ -182,9 +218,19 @@ export class MarketState {
       const bars: Bar[] = [];
       mergeBars(bars, event.bars);
       this.#candles.set(key, bars);
+      this.#indicators.set(key, normalizePoints(event.indicators ?? []));
       return;
     }
     const cached = this.#candles.get(key);
     if (cached !== undefined) mergeBars(cached, event.bars);
+  }
+
+  /** A live indicators event is merged only into a key that already has a cached snapshot. */
+  #applyIndicators(event: Extract<Event, { type: "indicators" }>): void {
+    const points = this.#indicators.get(candleKey(event.symbol, event.timeframe));
+    if (points === undefined) return;
+    const t = floorToTimeframe(event.ts, event.timeframe);
+    const next = normalizePoints([...points, { t, values: event.values }]);
+    points.splice(0, points.length, ...next);
   }
 }

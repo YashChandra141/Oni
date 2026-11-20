@@ -31,7 +31,7 @@
 import { redactSecrets, type Config, type SecretSource } from "../config.ts";
 import { CommandSchema, parseEventLine, type Command, type Event, type Timeframe } from "../protocol.ts";
 import { Backoff } from "./backoff.ts";
-import { LineSplitter, MAX_LINE_BYTES } from "./lines.ts";
+import { createEngineStdoutSplitter, LineSplitter, MAX_EVENT_LINE_BYTES } from "./lines.ts";
 
 // ---------------------------------------------------------------------------------------------
 // Command classes
@@ -528,10 +528,11 @@ export class EngineSupervisor {
   // -------------------------------------------------------------------------------------------
 
   async #pumpStdout(stream: ReadableStream<Uint8Array>, generation: number): Promise<void> {
-    const splitter = new LineSplitter({
-      onOversized: (bytes) =>
-        this.#log.warn(`[engine] dropped an oversized stdout line (${bytes} bytes, limit ${MAX_LINE_BYTES})`),
-    });
+    // Engine stdout carries Events, which may be larger than a stdin Command (maxBytes:
+    // MAX_EVENT_LINE_BYTES, applied by the factory).
+    const splitter = createEngineStdoutSplitter((bytes) =>
+      this.#log.warn(`[engine] dropped an oversized stdout line (${bytes} bytes, limit ${MAX_EVENT_LINE_BYTES})`),
+    );
     const handle = (lines: string[]) => {
       for (const line of lines) this.#handleStdoutLine(line, generation);
     };

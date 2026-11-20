@@ -1,7 +1,9 @@
 // Indicator state in the Web UI store (Task 9.3, Req 26.3, 26.4).
 import { beforeEach, describe, expect, test } from "bun:test";
+import fc from "fast-check";
 import type { IndicatorValues, ServerMessage } from "../../shared/protocol/index";
-import { MAX_INDICATOR_POINTS, type IndicatorPoint } from "./indicatorData";
+import { bucketStartMs } from "./chartData";
+import { MAX_INDICATOR_POINTS, indicatorLineData, type IndicatorPoint } from "./indicatorData";
 import {
   applyEvent,
   applyServerMessage,
@@ -136,5 +138,197 @@ describe("indicator toggles", () => {
       useTerminalStore.getState().toggleIndicator("rsi");
       expect(useTerminalStore.getState().indicatorToggles.rsi).toBe(true);
     });
+  });
+});
+
+// Bug condition exploration (chart-and-tape-fix Task 1.2). Expected to FAIL on unfixed code:
+// the store keys indicator points by the trade time instead of the candle open time.
+describe("Property 1: indicator points align to candle open times (web store)", () => {
+  const TF_MS = { "1m": 60_000, "5m": 300_000 } as const;
+  const bucketStartMs = (ts: number, tf: "1m" | "5m"): number => Math.floor(ts / TF_MS[tf]) * TF_MS[tf];
+  const KEY = candleKey("BTC-USD", "1m");
+
+  test("three Indicators events inside one minute leave one point at the minute start", () => {
+    let state = initialState();
+    for (const [i, ts] of [180_120, 185_700, 189_100].entries()) {
+      state = applyServerMessage(state, indicators("BTC-USD", "1m", ts, { ema: i + 1 }));
+    }
+    const list = state.indicators[KEY] ?? [];
+    expect(times(list)).toEqual([180_000]);
+    expect(list[0]?.values.ema).toBe(3);
+  });
+
+  test("stored points are bucket-aligned, unique, ascending, capped, last event wins", () => {
+    fc.assert(
+      fc.property(
+        fc.constantFrom("1m" as const, "5m" as const),
+        fc.array(fc.integer({ min: 0, max: 400 * 3_600_000 }), { minLength: 1, maxLength: 700 }),
+        (tf, stamps) => {
+          let state = initialState();
+          stamps.forEach((ts, i) => {
+            state = applyServerMessage(state, indicators("BTC-USD", tf, ts, { ema: i }));
+          });
+          const list = state.indicators[candleKey("BTC-USD", tf)] ?? [];
+          const lastWins = new Map<number, number>();
+          stamps.forEach((ts, i) => lastWins.set(bucketStartMs(ts, tf), i));
+          const buckets = [...lastWins.keys()].sort((a, b) => a - b).slice(-MAX_INDICATOR_POINTS);
+          expect(times(list)).toEqual(buckets);
+          expect(list.length).toBeLessThanOrEqual(MAX_INDICATOR_POINTS);
+          for (const p of list) expect(p.values.ema).toBe(lastWins.get(p.t) ?? null);
+        },
+      ),
+      { numRuns: 100 },
+    );
+  });
+
+  test("indicatorLineData times are open times of stored candles", () => {
+    fc.assert(
+      fc.property(fc.array(fc.integer({ min: 0, max: 3_600_000 }), { minLength: 1, maxLength: 60 }), (stamps) => {
+        let state = initialState();
+        const openTimes = new Set<number>();
+        for (const ts of stamps) {
+          const t = bucketStartMs(ts, "1m");
+          openTimes.add(t);
+          state = applyServerMessage(state, {
+            type: "event",
+            event: {
+              type: "candle",
+              symbol: "BTC-USD",
+              timeframe: "1m",
+              snapshot: false,
+              bars: [{ t, open: "100", high: "100", low: "100", close: "100", volume: "1" }],
+            },
+          } as ServerMessage);
+          state = applyServerMessage(state, indicators("BTC-USD", "1m", ts, { ema: 1 }));
+        }
+        const stored = new Set((state.candles[KEY] ?? []).map((b) => b.t / 1000));
+        const line = indicatorLineData(state.indicators[KEY] ?? [], "ema", 2);
+        for (const p of line) expect(stored.has(p.time)).toBe(true);
+      }),
+      { numRuns: 100 },
+    );
+  });
+});
+
+// Bug condition exploration (chart-and-tape-fix Task 1.5). Expected to FAIL on unfixed code:
+// a candle snapshot replaces the bars but leaves the old indicator points in the store.
+describe("Property 4: a candle snapshot replaces stored indicator points (web store)", () => {
+  const MIN = 60_000;
+  const KEY = candleKey("BTC-USD", "1m");
+  const snapshotFrom = (startMin: number, count: number): ServerMessage =>
+    ({
+      type: "event",
+      event: {
+        type: "candle",
+        symbol: "BTC-USD",
+        timeframe: "1m",
+        snapshot: true,
+        bars: Array.from({ length: count }, (_, i) => ({
+          t: (startMin + i) * MIN,
+          open: "100",
+          high: "100",
+          low: "100",
+          close: "100",
+          volume: "1",
+        })),
+      },
+    }) as ServerMessage;
+
+  test("points at t = 0..9 min do not survive a snapshot starting at 20 min", () => {
+    let state = initialState();
+    for (let m = 0; m < 10; m += 1) {
+      state = applyServerMessage(state, indicators("BTC-USD", "1m", m * MIN, { ema: m }));
+    }
+    expect(times(state.indicators[KEY]).length).toBe(10);
+    state = applyServerMessage(state, snapshotFrom(20, 5));
+    const stale = times(state.indicators[KEY]).filter((t) => t < 20 * MIN);
+    expect(stale).toEqual([]);
+  });
+
+  test("for any stored points, no point older than the snapshot's first bar remains", () => {
+    fc.assert(
+      fc.property(
+        fc.array(fc.integer({ min: 0, max: 9 }), { minLength: 1, maxLength: 10 }),
+        fc.integer({ min: 20, max: 60 }),
+        (mins, startMin) => {
+          let state = initialState();
+          for (const m of mins) state = applyServerMessage(state, indicators("BTC-USD", "1m", m * MIN, { ema: m }));
+          state = applyServerMessage(state, snapshotFrom(startMin, 3));
+          expect(times(state.indicators[KEY]).filter((t) => t < startMin * MIN)).toEqual([]);
+        },
+      ),
+      { numRuns: 50 },
+    );
+  });
+});
+
+// Task 6.4: Property 1 over all five timeframes, with chartData.bucketStartMs as the oracle.
+// **Validates: Requirements 2.1, 2.2**
+describe("Property 1 (all timeframes): indicator points align to candle open times", () => {
+  const ALL_TFS = ["1m", "5m", "15m", "1h", "1d"] as const;
+  type Tf = (typeof ALL_TFS)[number];
+  const ev = (tf: Tf, ts: number, ema: number): ServerMessage => ({
+    type: "event",
+    event: { type: "indicators", symbol: "BTC-USD", timeframe: tf, ts, values: { ...EMPTY, ema } },
+  });
+
+  test("one point per bucket, strictly ascending, at most 500, last values win", () => {
+    fc.assert(
+      fc.property(
+        fc.constantFrom(...ALL_TFS),
+        fc.array(fc.integer({ min: 0, max: 2_000 * 86_400_000 }), { minLength: 1, maxLength: 700 }),
+        (tf, stamps) => {
+          let state = initialState();
+          stamps.forEach((ts, i) => {
+            state = applyServerMessage(state, ev(tf, ts, i));
+          });
+          const list = state.indicators[candleKey("BTC-USD", tf)] ?? [];
+          const lastWins = new Map<number, number>();
+          stamps.forEach((ts, i) => lastWins.set(bucketStartMs(ts, tf), i));
+          const expected = [...lastWins.keys()].sort((a, b) => a - b).slice(-MAX_INDICATOR_POINTS);
+          expect(times(list)).toEqual(expected);
+          expect(list.length).toBeLessThanOrEqual(MAX_INDICATOR_POINTS);
+          for (let i = 1; i < list.length; i += 1) expect(list[i]!.t).toBeGreaterThan(list[i - 1]!.t);
+          for (const p of list) expect(p.values.ema).toBe(lastWins.get(p.t) ?? null);
+        },
+      ),
+      { numRuns: 100 },
+    );
+  });
+
+  test("indicatorLineData with candleTimesMs returns only times in the candle set", () => {
+    fc.assert(
+      fc.property(
+        fc.array(fc.integer({ min: 0, max: 100_000 }), { minLength: 1, maxLength: 60 }),
+        fc.array(fc.integer({ min: 0, max: 100_000 }), { maxLength: 60 }),
+        (pointSecs, candleSecs) => {
+          const points = pointSecs.map((s, i) => pt(s * 1000, i));
+          const candleTimesMs = new Set(candleSecs.map((s) => s * 1000));
+          const line = indicatorLineData(points, "ema", 2, candleTimesMs);
+          const allowed = new Set([...candleTimesMs].map((ms) => ms / 1000));
+          for (const p of line) expect(allowed.has(p.time)).toBe(true);
+          for (let i = 1; i < line.length; i += 1) expect(line[i]!.time).toBeGreaterThan(line[i - 1]!.time);
+        },
+      ),
+      { numRuns: 100 },
+    );
+  });
+
+  test("non-finite or negative ts values are ignored", () => {
+    fc.assert(
+      fc.property(
+        fc.constantFrom(...ALL_TFS),
+        fc.constantFrom(Number.NaN, Infinity, -Infinity, -1, -60_000, -1e12),
+        fc.array(fc.integer({ min: 0, max: 1_000_000_000 }), { maxLength: 10 }),
+        (tf, bad, goodStamps) => {
+          let state = initialState();
+          for (const ts of goodStamps) state = applyServerMessage(state, ev(tf, ts, 1));
+          const before = state;
+          state = applyServerMessage(state, ev(tf, bad, 99));
+          expect(state.indicators).toEqual(before.indicators);
+        },
+      ),
+      { numRuns: 100 },
+    );
   });
 });

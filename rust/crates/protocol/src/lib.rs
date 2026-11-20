@@ -21,12 +21,12 @@ mod strategies;
 mod types;
 
 pub use codec::{
-    DecodeError, MAX_LINE_BYTES, MAX_REPLAY_SPEED, MIN_REPLAY_SPEED, decode_command, decode_line,
-    encode_line, is_valid_fixture_name,
+    DecodeError, MAX_EVENT_LINE_BYTES, MAX_LINE_BYTES, MAX_REPLAY_SPEED, MIN_REPLAY_SPEED,
+    decode_command, decode_line, encode_line, is_valid_fixture_name,
 };
 pub use command::Command;
 pub use error::ProtocolError;
-pub use event::{Bar, ErrorCode, Event, IndicatorValues, Level, OrderStatus};
+pub use event::{Bar, ErrorCode, Event, IndicatorPoint, IndicatorValues, Level, OrderStatus};
 pub use instrument::{INSTRUMENTS, Instrument, instrument, notional};
 pub use num::{MONEY_DECIMALS, Money, Price, Qty};
 pub use types::{AccountId, OrderId, OrderKind, Side, TimeMs, Timeframe, Venue};

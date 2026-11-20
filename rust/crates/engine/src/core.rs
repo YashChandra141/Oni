@@ -31,11 +31,28 @@
 //!
 //! Because snapshots are emitted synchronously from `on_command` and live updates only from
 //! later `on_market` calls, a key's snapshot always precedes its live updates.
+//!
+//! Event order on subscribe, warm-up, and backfill:
+//! - `subscribe` answers with the key's snapshot, then one `Indicators` event for the newest
+//!   bar (see above). In backfill mode (live only, [`Engine::with_backfill`]) the first
+//!   `subscribe` of a key also queues one [`HistoryRequest`] and marks the key `InFlight`; the
+//!   snapshot it returns holds the live bars only.
+//! - `warm_up` (replay only) emits nothing per message. It returns one snapshot per subscribed
+//!   key, then `Position` refreshes. It never touches the backfill state, and `Engine::new()`
+//!   never builds history requests.
+//! - `on_history` (live only) is a plain method call by the runtime, never a Command. For an
+//!   `InFlight` key it merges the venue bars older than the live bars, marks the key `Done`,
+//!   rebuilds the key's indicators from the merged ring, and, if the ring changed and the key
+//!   is subscribed, returns a fresh snapshot (the same events `subscribe` returns). Any other
+//!   state is a no-op. `on_history_failed` clears an `InFlight` key, so a later `subscribe`
+//!   retries, and returns one `feed_disconnected` Error. Each key requests at most once per run
+//!   unless a request failed.
 
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 use protocol::{
-    AccountId, Command, DecodeError, ErrorCode, Event, INSTRUMENTS, Price, TimeMs, Timeframe,
+    AccountId, Bar, Command, DecodeError, ErrorCode, Event, INSTRUMENTS, Price, TimeMs, Timeframe,
     instrument,
 };
 use tracing::debug;
@@ -65,9 +82,32 @@ struct BookState {
     dirty: bool,
 }
 
+/// Characters of a backfill failure reason kept in the Error message.
+const MAX_REASON_CHARS: usize = 200;
+
+/// Backfill progress of one (symbol, timeframe) key. An absent key has no state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BackfillState {
+    /// A request was queued and no result has arrived.
+    InFlight,
+    /// The history was merged; the key never requests again in this run.
+    Done,
+}
+
+/// A request for the runtime to fetch recent public candles of one key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HistoryRequest {
+    pub symbol: String,
+    pub timeframe: Timeframe,
+}
+
 /// Engine state.
 #[derive(Debug, Default)]
 pub struct Engine {
+    /// Backfill state per key. `None` outside backfill mode (replay), where no request is built.
+    backfill: Option<BTreeMap<(String, Timeframe), BackfillState>>,
+    /// Requests queued by `subscribe`, drained by [`Engine::take_history_requests`].
+    history_requests: Vec<HistoryRequest>,
     /// Paper_Accounts, created on the first `PlaceOrder` of each account (Req 14.1, 14.4).
     /// Every matcher fill goes to its account, followed by a `Position` event (Req 13.4), and a
     /// changed last trade price refreshes the unrealized P&L.
@@ -89,6 +129,87 @@ pub struct Engine {
 impl Engine {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// An engine for live mode: the first `subscribe` of each key queues a history request.
+    pub fn with_backfill() -> Self {
+        Self {
+            backfill: Some(BTreeMap::new()),
+            ..Self::default()
+        }
+    }
+
+    /// Drains the queued history requests, oldest first.
+    pub fn take_history_requests(&mut self) -> Vec<HistoryRequest> {
+        std::mem::take(&mut self.history_requests)
+    }
+
+    /// Takes the venue history of an `InFlight` key (design D1, D2). Any other state is a no-op.
+    ///
+    /// Merges the bars older than the live bars, marks the key `Done`, and, if the ring
+    /// changed, rebuilds the key's indicators from the merged ring. Returns the key's snapshot
+    /// events when the ring changed and the key is subscribed, otherwise nothing.
+    pub fn on_history(&mut self, symbol: &str, timeframe: Timeframe, bars: &[Bar]) -> Vec<Event> {
+        let key = (symbol.to_owned(), timeframe);
+        let Some(state) = self.backfill.as_mut().and_then(|s| s.get_mut(&key)) else {
+            return Vec::new();
+        };
+        if *state != BackfillState::InFlight {
+            return Vec::new();
+        }
+        *state = BackfillState::Done;
+        // No market message yet means `now` is still 0, which is never a real market time.
+        let market_now = (self.now != 0).then_some(self.now);
+        let merge = self
+            .candles
+            .merge_history(symbol, timeframe, bars, market_now);
+        debug!(
+            symbol,
+            %timeframe,
+            added = merge.added,
+            invalid = merge.invalid,
+            "candle history merged"
+        );
+        if !merge.changed {
+            return Vec::new();
+        }
+        let ring = self.candles.bars(symbol, timeframe);
+        self.indicators
+            .insert(key, SymbolIndicators::from_bars(&ring));
+        let subscribed = self
+            .subscriptions
+            .get(symbol)
+            .is_some_and(|tfs| tfs.contains(&timeframe));
+        if subscribed {
+            self.snapshot_events(symbol, timeframe)
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Reports a failed fetch. An `InFlight` key is cleared so the next `subscribe` retries; a
+    /// `Done` key keeps its state. Returns one `feed_disconnected` Error naming the key, with
+    /// the reason cut to 200 characters. The live bars are untouched.
+    pub fn on_history_failed(
+        &mut self,
+        symbol: &str,
+        timeframe: Timeframe,
+        reason: &str,
+    ) -> Vec<Event> {
+        if let Some(states) = self.backfill.as_mut() {
+            let key = (symbol.to_owned(), timeframe);
+            if states.get(&key) == Some(&BackfillState::InFlight) {
+                states.remove(&key);
+            }
+        }
+        let reason: String = reason.chars().take(MAX_REASON_CHARS).collect();
+        vec![Event::Error {
+            code: ErrorCode::FeedDisconnected,
+            message: format!(
+                "candle backfill for {} {timeframe} failed: {reason}",
+                echo_symbol(symbol)
+            ),
+        }]
     }
 
     /// An engine whose Paper_Account cap is `cap` instead of 1,000 (for tests, Req 14.5).
@@ -286,12 +407,13 @@ impl Engine {
                         timeframe,
                         snapshot: false,
                         bars: vec![bar],
+                        indicators: None,
                     });
                     if let Some(values) = values {
                         updates.push(Event::Indicators {
                             symbol: symbol.clone(),
                             timeframe,
-                            ts,
+                            ts: bar.t,
                             values,
                         });
                     }
@@ -402,29 +524,147 @@ impl Engine {
         if instrument(&symbol).is_none() {
             return vec![unknown_symbol(&symbol)];
         }
-        let bars = self.candles.bars(&symbol, timeframe);
-        let current = self
-            .indicators
-            .get(&(symbol.clone(), timeframe))
-            .and_then(SymbolIndicators::current);
         self.subscriptions
             .entry(symbol.clone())
             .or_default()
             .insert(timeframe);
+        // Backfill mode only: one request per key until it succeeds or fails.
+        if let Some(states) = self.backfill.as_mut()
+            && let Entry::Vacant(slot) = states.entry((symbol.clone(), timeframe))
+        {
+            slot.insert(BackfillState::InFlight);
+            self.history_requests.push(HistoryRequest {
+                symbol: symbol.clone(),
+                timeframe,
+            });
+        }
+        self.snapshot_events(&symbol, timeframe)
+    }
+
+    /// The answer for one key: `Candle { snapshot: true }` with up to 500 bars, then one
+    /// `Indicators` event for the newest bar when the key has any (Req 8.7, 10.2). Shared by
+    /// `subscribe` and `warm_up`.
+    fn snapshot_events(&self, symbol: &str, timeframe: Timeframe) -> Vec<Event> {
+        let bars = self.candles.bars(symbol, timeframe);
+        let current = self
+            .indicators
+            .get(&(symbol.to_owned(), timeframe))
+            .and_then(SymbolIndicators::current);
+        let indicators = self
+            .indicators
+            .get(&(symbol.to_owned(), timeframe))
+            .map(|state| {
+                // Merge-join: both sides are ascending by `t`.
+                let mut points = Vec::with_capacity(bars.len());
+                let mut history = state.history().iter().peekable();
+                for bar in &bars {
+                    while history.next_if(|p| p.t < bar.t).is_some() {}
+                    if let Some(point) = history.next_if(|p| p.t == bar.t) {
+                        points.push(*point);
+                    }
+                }
+                points
+            })
+            .unwrap_or_default();
         let mut events = vec![Event::Candle {
-            symbol: symbol.clone(),
+            symbol: symbol.to_owned(),
             timeframe,
             snapshot: true,
             bars,
+            indicators: Some(indicators),
         }];
-        // Req 10.2: show the current indicator values at once.
         if let Some((ts, values)) = current {
             events.push(Event::Indicators {
-                symbol,
+                symbol: symbol.to_owned(),
                 timeframe,
                 ts,
                 values,
             });
+        }
+        events
+    }
+
+    /// Applies replay warm-up messages (the old part of a fixture) to the state at once, with
+    /// no per-message output (Req 2.3, 2.4).
+    ///
+    /// The result equals playing the messages through `on_market`, except: no Trade, Book,
+    /// live Candle, live Indicators, or matcher events are produced (open orders do not fill
+    /// during warm-up), books are only marked dirty so each symbol's next message emits its
+    /// Book, and an invalid book delta is counted and logged at debug, with no Error event.
+    ///
+    /// With no messages it returns nothing. Otherwise it returns a snapshot for every
+    /// subscribed key (symbol order, then timeframe order), then a `Position` refresh for every
+    /// account with an open position in a symbol whose last price changed.
+    pub fn warm_up(&mut self, msgs: Vec<MarketMsg>) -> Vec<Event> {
+        if msgs.is_empty() {
+            return Vec::new();
+        }
+        let before = self.last_price.clone();
+        let mut invalid_deltas: u64 = 0;
+        for msg in msgs {
+            match msg {
+                MarketMsg::Trade {
+                    symbol,
+                    price,
+                    qty,
+                    ts,
+                    ..
+                } => {
+                    self.now = ts;
+                    self.last_price.insert(symbol.clone(), price);
+                    for (timeframe, bar) in self.candles.on_trade(&symbol, price, qty, ts) {
+                        self.indicators
+                            .entry((symbol.clone(), timeframe))
+                            .or_default()
+                            .update(&bar);
+                    }
+                }
+                MarketMsg::BookSnapshot {
+                    symbol,
+                    bids,
+                    asks,
+                    ts,
+                } => {
+                    self.now = ts;
+                    let state = self.books.entry(symbol).or_default();
+                    state.book.apply_snapshot(&bids, &asks);
+                    state.dirty = true;
+                }
+                MarketMsg::BookDelta {
+                    symbol,
+                    side,
+                    price,
+                    qty,
+                    ts,
+                } => {
+                    self.now = ts;
+                    let state = self.books.entry(symbol).or_default();
+                    if state.book.apply_delta(side, price, qty).is_ok() {
+                        state.dirty = true;
+                    } else {
+                        invalid_deltas = invalid_deltas.saturating_add(1);
+                    }
+                }
+            }
+        }
+        if invalid_deltas > 0 {
+            debug!(invalid_deltas, "warm-up discarded invalid book deltas");
+        }
+        let mut events = Vec::new();
+        for (symbol, timeframes) in &self.subscriptions {
+            for &timeframe in timeframes {
+                events.extend(self.snapshot_events(symbol, timeframe));
+            }
+        }
+        let changed: Vec<String> = self
+            .last_price
+            .iter()
+            .filter(|(symbol, price)| before.get(*symbol) != Some(*price))
+            .map(|(symbol, _)| symbol.clone())
+            .collect();
+        let none = BTreeSet::new();
+        for symbol in changed {
+            self.refresh_unrealized(&symbol, &none, &mut events);
         }
         events
     }
@@ -549,7 +789,40 @@ mod tests {
             timeframe,
             snapshot,
             bars,
+            indicators: None,
         }
+    }
+
+    fn with_indicators(event: Event, indicators: Option<Vec<protocol::IndicatorPoint>>) -> Event {
+        match event {
+            Event::Candle {
+                symbol,
+                timeframe,
+                snapshot,
+                bars,
+                ..
+            } => Event::Candle {
+                symbol,
+                timeframe,
+                snapshot,
+                bars,
+                indicators,
+            },
+            other => other,
+        }
+    }
+
+    /// The indicator points of a snapshot, asserted to cover exactly the bar times `ts`.
+    fn snapshot_indicators(event: &Event, ts: &[TimeMs]) -> Option<Vec<protocol::IndicatorPoint>> {
+        let Event::Candle {
+            indicators: Some(points),
+            ..
+        } = event
+        else {
+            panic!("snapshot without indicators: {event:?}");
+        };
+        assert_eq!(points.iter().map(|p| p.t).collect::<Vec<_>>(), ts);
+        Some(points.clone())
     }
 
     #[test]
@@ -935,7 +1208,10 @@ mod tests {
         for tf in Timeframe::ALL {
             assert_eq!(
                 engine.on_command(subscribe(BTC, tf)),
-                vec![candle(BTC, tf, true, Vec::new())]
+                vec![with_indicators(
+                    candle(BTC, tf, true, Vec::new()),
+                    Some(Vec::new())
+                )]
             );
         }
     }
@@ -953,7 +1229,13 @@ mod tests {
         let snapshot = engine.on_command(subscribe(BTC, Timeframe::M1));
         let expected = vec![bar(0, [100; 4], 1), bar(MIN, [110; 4], 2)];
         assert_eq!(snapshot.len(), 2);
-        assert_eq!(snapshot[0], candle(BTC, Timeframe::M1, true, expected));
+        assert_eq!(
+            snapshot[0],
+            with_indicators(
+                candle(BTC, Timeframe::M1, true, expected),
+                snapshot_indicators(&snapshot[0], &[0, MIN])
+            )
+        );
         assert!(matches!(
             &snapshot[1],
             Event::Indicators { timeframe: Timeframe::M1, ts, .. } if *ts == MIN
@@ -971,9 +1253,11 @@ mod tests {
                 vec![bar(MIN, [110, 110, 105, 105], 5)]
             )
         );
+        // chart-and-tape-fix bugfix 2.1: the live Indicators ts is the candle
+        // open time (the trade at MIN + 1 falls in the bar opening at MIN).
         assert!(matches!(
             &events[2],
-            Event::Indicators { timeframe: Timeframe::M1, ts, .. } if *ts == MIN + 1
+            Event::Indicators { timeframe: Timeframe::M1, ts, .. } if *ts == MIN
         ));
     }
 
@@ -1025,6 +1309,39 @@ mod tests {
         assert_eq!(engine.on_market(trade_msg(BTC, 101, 1, 1)).len(), 3);
     }
 
+    /// Property 8 (Req 3.2): a live `Candle` line, encoded as the engine writes it to stdout,
+    /// has no `indicators` key, and the subscribe answer ends with exactly one `Indicators`
+    /// event for the newest bar.
+    #[test]
+    fn live_candle_json_has_no_indicators_key_and_snapshot_ends_with_one_indicators() {
+        let mut engine = Engine::new();
+        engine.on_market(trade_msg(BTC, 100, 1, 0));
+        engine.on_market(trade_msg(BTC, 110, 2, MIN));
+
+        let answer = engine.on_command(subscribe(BTC, Timeframe::M1));
+        let indicators = answer
+            .iter()
+            .filter(|e| matches!(e, Event::Indicators { .. }))
+            .count();
+        assert_eq!(indicators, 1);
+        assert!(matches!(
+            answer.last(),
+            Some(Event::Indicators { timeframe: Timeframe::M1, ts, .. }) if *ts == MIN
+        ));
+
+        let live = engine.on_market(trade_msg(BTC, 105, 3, MIN + 1));
+        let mut candles = 0;
+        for event in &live {
+            let line = protocol::encode_line(event).unwrap();
+            if matches!(event, Event::Candle { .. }) {
+                candles += 1;
+                assert!(line.contains("\"type\":\"candle\""), "{line}");
+                assert!(!line.contains("\"indicators\":"), "{line}");
+            }
+        }
+        assert_eq!(candles, 1);
+    }
+
     #[test]
     fn unsubscribe_stops_updates_and_resubscribe_sends_a_new_snapshot() {
         let mut engine = Engine::new();
@@ -1041,11 +1358,21 @@ mod tests {
         let snapshot = engine.on_command(subscribe(BTC, Timeframe::M1));
         let bars = vec![bar(0, [100; 4], 1), bar(MIN, [120; 4], 2)];
         assert_eq!(snapshot.len(), 2);
-        assert_eq!(snapshot[0], candle(BTC, Timeframe::M1, true, bars.clone()));
+        let points = snapshot_indicators(&snapshot[0], &[0, MIN]);
+        assert_eq!(
+            snapshot[0],
+            with_indicators(
+                candle(BTC, Timeframe::M1, true, bars.clone()),
+                points.clone()
+            )
+        );
         // Subscribing again while subscribed also resends the snapshot.
         let again = engine.on_command(subscribe(BTC, Timeframe::M1));
         assert_eq!(again.len(), 2);
-        assert_eq!(again[0], candle(BTC, Timeframe::M1, true, bars));
+        assert_eq!(
+            again[0],
+            with_indicators(candle(BTC, Timeframe::M1, true, bars), points)
+        );
         assert_eq!(engine.on_market(trade_msg(BTC, 121, 1, MIN)).len(), 3);
     }
 
@@ -1076,11 +1403,14 @@ mod tests {
         assert_eq!(events.len(), 1 + 2 * Timeframe::ALL.len());
         for (i, tf) in Timeframe::ALL.into_iter().enumerate() {
             assert_eq!(events[1 + 2 * i], expected[i], "{tf}");
+            // chart-and-tape-fix bugfix 2.1: Indicators ts is the candle open time of the
+            // timeframe (the 2 * MIN trade opens a new 1m bar; higher bars open at 0).
+            let open = if tf == Timeframe::M1 { 2 * MIN } else { 0 };
             assert!(
                 matches!(
                     &events[2 + 2 * i],
                     Event::Indicators { symbol, timeframe, ts, .. }
-                        if symbol == BTC && *timeframe == tf && *ts == 2 * MIN
+                        if symbol == BTC && *timeframe == tf && *ts == open
                 ),
                 "{tf}: {:?}",
                 events[2 + 2 * i]
@@ -1206,6 +1536,7 @@ mod tests {
                     timeframe,
                     snapshot,
                     bars,
+                    ..
                 } = event
                 {
                     assert_eq!(symbol, BTC);
@@ -1234,6 +1565,133 @@ mod tests {
         for symbol in [ETH, "SOL-USD"] {
             assert!(!engine.candles.bars(symbol, Timeframe::M1).is_empty());
         }
+    }
+
+    // Backfill bookkeeping (Task 3.4, Req 2.5, 2.6).
+
+    fn req(symbol: &str, timeframe: Timeframe) -> HistoryRequest {
+        HistoryRequest {
+            symbol: symbol.into(),
+            timeframe,
+        }
+    }
+
+    /// A valid 1m venue bar at minute `m`.
+    fn venue_bar(m: i64) -> Bar {
+        bar(m * MIN, [100, 110, 90, 105], 5)
+    }
+
+    #[test]
+    fn replay_engine_queues_no_history_requests() {
+        let mut engine = Engine::new();
+        engine.on_command(subscribe(BTC, Timeframe::M1));
+        engine.on_command(subscribe(ETH, Timeframe::M5));
+        assert!(engine.take_history_requests().is_empty());
+        // No state, so history is ignored.
+        assert!(
+            engine
+                .on_history(BTC, Timeframe::M1, &[venue_bar(1)])
+                .is_empty()
+        );
+        assert!(engine.candles.bars(BTC, Timeframe::M1).is_empty());
+    }
+
+    #[test]
+    fn backfill_queues_one_request_per_key() {
+        let mut engine = Engine::with_backfill();
+        engine.on_command(subscribe(BTC, Timeframe::M1));
+        engine.on_command(subscribe(BTC, Timeframe::M1));
+        engine.on_command(subscribe(BTC, Timeframe::M5));
+        engine.on_command(unsubscribe(BTC, Timeframe::M1));
+        engine.on_command(subscribe(BTC, Timeframe::M1));
+        assert_eq!(
+            engine.take_history_requests(),
+            [req(BTC, Timeframe::M1), req(BTC, Timeframe::M5)]
+        );
+        assert!(engine.take_history_requests().is_empty());
+        // A finished key never asks again.
+        engine.on_history(BTC, Timeframe::M1, &[venue_bar(1)]);
+        engine.on_command(subscribe(BTC, Timeframe::M1));
+        assert!(engine.take_history_requests().is_empty());
+    }
+
+    #[test]
+    fn on_history_merges_snapshots_and_later_calls_do_nothing() {
+        let mut engine = Engine::with_backfill();
+        engine.on_command(subscribe(BTC, Timeframe::M1));
+        engine.on_market(trade_msg(BTC, 100, 1, 10 * MIN + 5));
+        let live = engine.candles.bars(BTC, Timeframe::M1);
+        assert_eq!(live.len(), 1);
+
+        // Minute 10 and 11 are at or after the cutoff and are dropped.
+        let venue: Vec<Bar> = (7..=11).map(venue_bar).collect();
+        let events = engine.on_history(BTC, Timeframe::M1, &venue);
+        let merged = engine.candles.bars(BTC, Timeframe::M1);
+        let times: Vec<TimeMs> = merged.iter().map(|b| b.t).collect();
+        assert_eq!(times, [7 * MIN, 8 * MIN, 9 * MIN, 10 * MIN]);
+        assert_eq!(merged.last(), live.last());
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            &events[0],
+            Event::Candle { snapshot: true, bars, .. } if *bars == merged
+        ));
+        assert!(matches!(
+            &events[1],
+            Event::Indicators { ts, .. } if *ts == 10 * MIN
+        ));
+        let expected = SymbolIndicators::from_bars(&merged);
+        let key = (BTC.to_owned(), Timeframe::M1);
+        let actual = engine.indicators.get(&key).map(SymbolIndicators::history);
+        assert_eq!(actual, Some(expected.history()));
+
+        // A second result for the same key is ignored.
+        let more: Vec<Bar> = (1..=6).map(venue_bar).collect();
+        assert!(engine.on_history(BTC, Timeframe::M1, &more).is_empty());
+        assert_eq!(engine.candles.bars(BTC, Timeframe::M1), merged);
+    }
+
+    #[test]
+    fn on_history_for_an_unsubscribed_key_merges_without_events() {
+        let mut engine = Engine::with_backfill();
+        engine.on_command(subscribe(BTC, Timeframe::M1));
+        engine.on_command(unsubscribe(BTC, Timeframe::M1));
+        engine.on_market(trade_msg(BTC, 100, 1, 10 * MIN + 5));
+        let venue: Vec<Bar> = (8..=9).map(venue_bar).collect();
+        assert!(engine.on_history(BTC, Timeframe::M1, &venue).is_empty());
+        assert_eq!(engine.candles.bars(BTC, Timeframe::M1).len(), 3);
+        // The key is done: a later subscribe sends the merged snapshot and no new request.
+        engine.take_history_requests();
+        let events = engine.on_command(subscribe(BTC, Timeframe::M1));
+        assert!(matches!(
+            &events[0],
+            Event::Candle { snapshot: true, bars, .. } if bars.len() == 3
+        ));
+        assert!(engine.take_history_requests().is_empty());
+    }
+
+    #[test]
+    fn on_history_failed_reports_truncates_and_allows_a_retry() {
+        let mut engine = Engine::with_backfill();
+        engine.on_command(subscribe(BTC, Timeframe::M1));
+        engine.on_market(trade_msg(BTC, 100, 1, 10 * MIN + 5));
+        assert_eq!(engine.take_history_requests().len(), 1);
+
+        let reason = "é".repeat(300);
+        let events = engine.on_history_failed(BTC, Timeframe::M1, &reason);
+        assert_eq!(events.len(), 1);
+        let Event::Error { code, message } = &events[0] else {
+            panic!("expected an error event, got {:?}", events[0]);
+        };
+        assert_eq!(*code, ErrorCode::FeedDisconnected);
+        assert!(message.contains(BTC));
+        assert!(message.contains(&Timeframe::M1.to_string()));
+        assert_eq!(message.matches('é').count(), 200);
+        // Live bars are kept.
+        assert_eq!(engine.candles.bars(BTC, Timeframe::M1).len(), 1);
+
+        // The next subscribe asks again.
+        engine.on_command(subscribe(BTC, Timeframe::M1));
+        assert_eq!(engine.take_history_requests(), [req(BTC, Timeframe::M1)]);
     }
 }
 

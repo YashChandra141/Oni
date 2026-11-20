@@ -2,6 +2,7 @@
 import type { AccountId } from "./AccountId";
 import type { Bar } from "./Bar";
 import type { ErrorCode } from "./ErrorCode";
+import type { IndicatorPoint } from "./IndicatorPoint";
 import type { IndicatorValues } from "./IndicatorValues";
 import type { Level } from "./Level";
 import type { Money } from "./Money";
@@ -19,4 +20,9 @@ import type { Timeframe } from "./Timeframe";
  * `order_rejected`, `fill`, `position`) carry the `account_id` of the Paper_Account they belong
  * to, so the server can route them to that account's connections only (Req 1.9, 17.7).
  */
-export type Event = { "type": "candle", symbol: string, timeframe: Timeframe, snapshot: boolean, bars: Array<Bar>, } | { "type": "trade", symbol: string, price: Price, qty: Qty, side: Side, ts: number, } | { "type": "book", symbol: string, bids: Array<Level>, asks: Array<Level>, spread: Price | null, imbalance_bps: number, ts: number, } | { "type": "indicators", symbol: string, timeframe: Timeframe, ts: number, values: IndicatorValues, } | { "type": "order_ack", account_id: AccountId, order_id: OrderId, status: OrderStatus, } | { "type": "order_rejected", account_id: AccountId, order_id: OrderId, reason: string, } | { "type": "fill", account_id: AccountId, order_id: OrderId, symbol: string, side: Side, price: Price, qty: Qty, fee: Money, remaining: Qty, ts: number, } | { "type": "position", account_id: AccountId, symbol: string, qty: Qty, avg_entry: Price | null, realized: Money, unrealized: Money, } | { "type": "heartbeat", ts: number, } | { "type": "pong", id: number, } | { "type": "error", code: ErrorCode, message: string, };
+export type Event = { "type": "candle", symbol: string, timeframe: Timeframe, snapshot: boolean, bars: Array<Bar>, 
+/**
+ * Indicator values per history bar. Only snapshots carry them; live updates omit the
+ * key, so their JSON is unchanged.
+ */
+indicators?: Array<IndicatorPoint>, } | { "type": "trade", symbol: string, price: Price, qty: Qty, side: Side, ts: number, } | { "type": "book", symbol: string, bids: Array<Level>, asks: Array<Level>, spread: Price | null, imbalance_bps: number, ts: number, } | { "type": "indicators", symbol: string, timeframe: Timeframe, ts: number, values: IndicatorValues, } | { "type": "order_ack", account_id: AccountId, order_id: OrderId, status: OrderStatus, } | { "type": "order_rejected", account_id: AccountId, order_id: OrderId, reason: string, } | { "type": "fill", account_id: AccountId, order_id: OrderId, symbol: string, side: Side, price: Price, qty: Qty, fee: Money, remaining: Qty, ts: number, } | { "type": "position", account_id: AccountId, symbol: string, qty: Qty, avg_entry: Price | null, realized: Money, unrealized: Money, } | { "type": "heartbeat", ts: number, } | { "type": "pong", id: number, } | { "type": "error", code: ErrorCode, message: string, };

@@ -19,7 +19,7 @@ export function StatusBar() {
   return (
     <header
       aria-label="Status bar"
-      className="crt-panel col-span-3 flex items-center gap-4 px-2 py-1 text-xs"
+      className="crt-panel flex items-center gap-4 px-2 py-1 text-xs"
     >
       <span className="font-bold tracking-widest">ONI</span>
       {connected ? (

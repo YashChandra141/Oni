@@ -18,6 +18,7 @@ Requirements 34.3, 34.4, 35, 36.3, 36.4.
 - [ ] Colors: candles are green (up) and red (down); indicator lines and the status line are colored.
 - [ ] Block and braille characters: candle bodies and wicks are solid with no gaps or `?` boxes. Indicator lines are smooth.
 - [ ] Candles arrive and the chart updates continuously from the replay. The UI feels smooth with no flicker.
+- [ ] History and indicators: after the replay warm-up, the chart opens with history candles (about 90 one-minute candles with the demo fixture), not a single candle. The EMA and VWAP lines are drawn across the history candles, not only over the newest one. Switch to another timeframe and back to 1m: no stale indicator segments remain (no leftover line pieces from the other timeframe, and no gaps or jumps in the lines).
 - [ ] Mouse wheel up zooms in (fewer, wider candles). Wheel down zooms out.
 - [ ] Left-button drag on the chart pans back and forward. Dragging right at the newest candle does not go past it.
 - [ ] Hovering the chart shows the crosshair. Moving the mouse out of the chart clears it.

@@ -27,6 +27,7 @@ import type {
   DataMode,
   ErrorCode,
   Event,
+  IndicatorPoint,
   IndicatorValues,
   InstrumentInfo,
   Level,
@@ -183,6 +184,9 @@ export const IndicatorValuesSchema = z.object({
   atr: indicator,
 });
 
+/** One indicator sample for a candle history snapshot (chart-and-tape-fix, Req 2.6). */
+export const IndicatorPointSchema = z.object({ t: TimeMsSchema, values: IndicatorValuesSchema });
+
 export const InstrumentInfoSchema = z.object({
   symbol: z.string(),
   short: z.string(),
@@ -221,6 +225,7 @@ export const EventSchema = z.discriminatedUnion("type", [
     timeframe: TimeframeSchema,
     snapshot: z.boolean(),
     bars: z.array(BarSchema),
+    indicators: z.array(IndicatorPointSchema).optional(),
   }),
   z.object({
     type: z.literal("trade"),
@@ -418,6 +423,7 @@ export type ProtocolSchemaChecks = [
   Assert<Same<typeof BarSchema, Bar>>,
   Assert<Same<typeof LevelSchema, Level>>,
   Assert<Same<typeof IndicatorValuesSchema, IndicatorValues>>,
+  Assert<Same<typeof IndicatorPointSchema, IndicatorPoint>>,
   Assert<Same<typeof InstrumentInfoSchema, InstrumentInfo>>,
   Assert<Same<typeof PreviewActionSchema, PreviewAction>>,
   Assert<Same<typeof OrderPreviewSchema, OrderPreview>>,

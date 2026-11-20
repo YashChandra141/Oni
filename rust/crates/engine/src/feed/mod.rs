@@ -1,6 +1,7 @@
 //! Normalized market data (design §2 "Core"). The replay feed and the live Coinbase adapter both
 //! produce [`MarketMsg`] values, so the engine core handles a single format (Req 7).
 
+pub mod backfill;
 pub mod backpack;
 pub mod backpack_parse;
 pub mod coinbase;
@@ -8,6 +9,8 @@ pub mod coinbase_parse;
 pub mod fixture;
 pub mod http;
 pub mod replay;
+#[cfg(test)]
+mod safety_preservation_tests;
 #[cfg(test)]
 pub(crate) mod strategies;
 pub mod synth;

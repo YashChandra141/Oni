@@ -25,6 +25,7 @@ import type {
   Venue,
 } from "../../shared/protocol/index";
 import { BOOK_LEVELS, moveBookCursor, type CursorDirection } from "./bookView";
+import { bucketStartMs } from "./chartData";
 import {
   DEFAULT_INDICATOR_TOGGLES,
   MAX_INDICATOR_POINTS,
@@ -84,6 +85,8 @@ export interface Selection {
 
 /** One trade as shown in the tape and the last-trade readout. */
 export interface TapeEntry {
+  /** Stable unique id from `nextTapeId`; use as the React row key. */
+  readonly id: number;
   readonly symbol: string;
   readonly price: string;
   readonly qty: string;
@@ -205,12 +208,19 @@ export interface TerminalState {
   readonly candles: Readonly<Record<string, readonly Bar[]>>;
   /** Indicator values, oldest first, by `candleKey(symbol, timeframe)` (Req 26.4). */
   readonly indicators: Readonly<Record<string, readonly IndicatorPoint[]>>;
+  /**
+   * Per series key: `snapshot` counts candle snapshots, `rewrite` counts live bars older than the
+   * newest stored bar. The chart uses them to choose `setData` over `series.update`.
+   */
+  readonly seriesVersion: Readonly<Record<string, { readonly snapshot: number; readonly rewrite: number }>>;
   /** Which indicators the chart shows (Req 26.3). */
   readonly indicatorToggles: IndicatorToggles;
   /** The most recent trade per symbol. */
   readonly lastTrade: Readonly<Record<string, TapeEntry>>;
   /** Recent trades, newest first, at most `MAX_TAPE`. */
   readonly tape: readonly TapeEntry[];
+  /** Id given to the next tape entry; starts at 1 and never repeats (stable row keys). */
+  readonly nextTapeId: number;
   /** Latest order book per symbol. */
   readonly book: Readonly<Record<string, BookState>>;
   readonly ticket: TicketState;
@@ -288,9 +298,11 @@ export function initialState(): TerminalState {
     selection: { symbol: DEFAULT_SYMBOL, timeframe: DEFAULT_TIMEFRAME },
     candles: {},
     indicators: {},
+    seriesVersion: {},
     indicatorToggles: DEFAULT_INDICATOR_TOGGLES,
     lastTrade: {},
     tape: [],
+    nextTapeId: 1,
     book: {},
     ticket: { symbol: DEFAULT_SYMBOL, side: null, price: null, qty: null },
     bookCursor: null,
@@ -613,21 +625,71 @@ export function mergeBar(bars: readonly Bar[], bar: Bar): readonly Bar[] {
   return tail([bar, ...bars], MAX_CANDLES);
 }
 
-/** Applies a `candle` event: a snapshot replaces the list, a live event merges each bar. */
+/** Sorts ascending by `t`, keeps the last of equal `t`, and keeps the newest `max`. */
+function normalizeByTime<T extends { readonly t: number }>(items: readonly T[], max: number): readonly T[] {
+  const byTime = new Map<number, T>();
+  for (const item of items) byTime.set(item.t, item);
+  return tail([...byTime.values()].sort((a, b) => a.t - b.t), max);
+}
+
+/**
+ * The snapshot's indicator history. The wire data is still untrusted at runtime, so malformed
+ * points are skipped.
+ */
+function snapshotIndicatorPoints(
+  event: Extract<Event, { type: "candle" }>,
+): readonly IndicatorPoint[] {
+  const raw = event.indicators;
+  if (!Array.isArray(raw)) return [];
+  const points: IndicatorPoint[] = [];
+  for (const item of raw as readonly unknown[]) {
+    if (typeof item !== "object" || item === null) continue;
+    const { t, values } = item as { readonly t?: unknown; readonly values?: unknown };
+    if (typeof t !== "number" || !Number.isFinite(t) || t < 0) continue;
+    if (typeof values !== "object" || values === null) continue;
+    points.push({ t: bucketStartMs(t, event.timeframe), values: values as IndicatorPoint["values"] });
+  }
+  return normalizeByTime(points, MAX_INDICATOR_POINTS);
+}
+
+/**
+ * Applies a `candle` event. A snapshot replaces the bars and the indicator points together and
+ * bumps `seriesVersion.snapshot`. A live event merges each bar; a bar older than the newest stored
+ * bar bumps `seriesVersion.rewrite` (Req 2.7, 2.8, 3.2).
+ */
 export function applyCandleEvent(
   state: TerminalState,
   event: Extract<Event, { type: "candle" }>,
 ): TerminalState {
   const incoming = Array.isArray(event.bars) ? event.bars : [];
   const key = candleKey(event.symbol, event.timeframe);
-  let bars: readonly Bar[];
+  const version = state.seriesVersion[key] ?? { snapshot: 0, rewrite: 0 };
   if (event.snapshot) {
-    bars = tail(incoming, MAX_CANDLES);
-  } else {
-    bars = state.candles[key] ?? [];
-    for (const bar of incoming) bars = mergeBar(bars, bar);
+    return {
+      ...state,
+      candles: { ...state.candles, [key]: normalizeByTime(incoming, MAX_CANDLES) },
+      indicators: { ...state.indicators, [key]: snapshotIndicatorPoints(event) },
+      seriesVersion: {
+        ...state.seriesVersion,
+        [key]: { snapshot: version.snapshot + 1, rewrite: version.rewrite },
+      },
+    };
   }
-  return { ...state, candles: { ...state.candles, [key]: bars } };
+  let bars: readonly Bar[] = state.candles[key] ?? [];
+  let rewrites = 0;
+  for (const bar of incoming) {
+    const newest = bars[bars.length - 1];
+    if (newest !== undefined && bar.t < newest.t) rewrites += 1;
+    bars = mergeBar(bars, bar);
+  }
+  return {
+    ...state,
+    candles: { ...state.candles, [key]: bars },
+    seriesVersion:
+      rewrites === 0
+        ? state.seriesVersion
+        : { ...state.seriesVersion, [key]: { snapshot: version.snapshot, rewrite: version.rewrite + rewrites } },
+  };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -667,10 +729,11 @@ export function applyIndicatorsEvent(
   state: TerminalState,
   event: Extract<Event, { type: "indicators" }>,
 ): TerminalState {
-  if (typeof event.ts !== "number" || !Number.isFinite(event.ts)) return state;
+  if (typeof event.ts !== "number" || !Number.isFinite(event.ts) || event.ts < 0) return state;
   const key = candleKey(event.symbol, event.timeframe);
+  // One point per candle bucket, keyed by the candle open time; the latest values win.
   const points = mergeIndicatorPoint(state.indicators[key] ?? [], {
-    t: event.ts,
+    t: bucketStartMs(event.ts, event.timeframe),
     values: event.values,
   });
   return { ...state, indicators: { ...state.indicators, [key]: points } };
@@ -694,6 +757,7 @@ export function applyEvent(state: TerminalState, event: Event): TerminalState {
       return applyCandleEvent(state, event);
     case "trade": {
       const entry: TapeEntry = {
+        id: state.nextTapeId,
         symbol: event.symbol,
         price: event.price,
         qty: event.qty,
@@ -702,6 +766,7 @@ export function applyEvent(state: TerminalState, event: Event): TerminalState {
       };
       return {
         ...state,
+        nextTapeId: state.nextTapeId + 1,
         lastTrade: { ...state.lastTrade, [event.symbol]: entry },
         tape: [entry, ...state.tape].slice(0, MAX_TAPE),
       };

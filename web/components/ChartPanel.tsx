@@ -43,13 +43,14 @@ import {
   barsToVolume,
   formatChartTime,
   formatDisplayNumber,
-  planSeriesUpdate,
+  chartSyncState,
+  planChartSync,
+  shouldReposition,
   priceFormatFor,
   readOhlc,
   readValue,
-  seriesShape,
   timeframeLabels,
-  type SeriesShape,
+  type ChartSyncState,
 } from "../lib/chartData";
 import { chartActionForKey, indicatorToggleForKey } from "../lib/chartKeys";
 import {
@@ -60,6 +61,7 @@ import {
   LINE_COLORS,
   RSI_GUIDES,
   indicatorLineData,
+  indicatorLineUpdates,
   legendEntries,
   paneOfLine,
   toggleOfLine,
@@ -125,6 +127,10 @@ export default function ChartPanel() {
   const selectTimeframe = useTerminalStore((state) => state.selectTimeframe);
   const storedBars = useTerminalStore((state) => state.candles[candleKey(symbol, timeframe)]);
   const bars = storedBars ?? NO_BARS;
+  const snapshotCount =
+    useTerminalStore((state) => state.seriesVersion[candleKey(symbol, timeframe)]?.snapshot) ?? 0;
+  const rewriteCount =
+    useTerminalStore((state) => state.seriesVersion[candleKey(symbol, timeframe)]?.rewrite) ?? 0;
   const priceDecimals =
     useTerminalStore((state) => state.instruments[symbol]?.price_decimals) ?? DEFAULT_PRICE_DECIMALS;
   const qtyDecimals =
@@ -141,7 +147,7 @@ export default function ChartPanel() {
   const candleRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const volumeRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   /** What the series currently holds; null before the first data and after a chart rebuild. */
-  const appliedRef = useRef<SeriesShape | null>(null);
+  const appliedRef = useRef<ChartSyncState | null>(null);
   /** The symbol and timeframe the view was last positioned for. */
   const viewKeyRef = useRef<string | null>(null);
   /** True until the first non-empty data for the current view has set the visible range. */
@@ -150,8 +156,8 @@ export default function ChartPanel() {
   const activeRef = useRef({ hover: false, focus: false });
   /** The indicator line series that exist now; a line toggled off has its series removed. */
   const linesRef = useRef<Partial<Record<IndicatorLine, ISeriesApi<"Line">>>>({});
-  /** What each line series currently holds, as for the candles. */
-  const lineAppliedRef = useRef<Partial<Record<IndicatorLine, SeriesShape>>>({});
+  /** What the line series group currently holds (one state for all lines, as for the candles). */
+  const lineSyncRef = useRef<ChartSyncState | null>(null);
   const [readout, setReadout] = useState<Readout | null>(null);
 
   useEffect(() => {
@@ -268,7 +274,7 @@ export default function ChartPanel() {
     viewKeyRef.current = null;
     needsFitRef.current = true;
     linesRef.current = {};
-    lineAppliedRef.current = {};
+    lineSyncRef.current = null;
 
     return () => {
       observer.disconnect();
@@ -279,7 +285,7 @@ export default function ChartPanel() {
       volumeRef.current = null;
       appliedRef.current = null;
       linesRef.current = {};
-      lineAppliedRef.current = {};
+      lineSyncRef.current = null;
     };
   }, []);
 
@@ -301,20 +307,25 @@ export default function ChartPanel() {
       needsFitRef.current = true;
     }
 
-    const candles = barsToCandles(bars, priceDecimals);
-    const volume = barsToVolume(bars, qtyDecimals);
-    const next = seriesShape(`${viewKey}|${priceDecimals}|${qtyDecimals}`, candles);
+    const input = {
+      key: `${viewKey}|${priceDecimals}|${qtyDecimals}`,
+      snapshot: snapshotCount,
+      rewrite: rewriteCount,
+      bars,
+    };
+    const prev = appliedRef.current;
+    const plan = planChartSync(prev, input);
 
-    if (planSeriesUpdate(appliedRef.current, next) === "update") {
-      const lastCandle = candles[candles.length - 1];
-      const lastVolume = volume[volume.length - 1];
-      if (lastCandle !== undefined) candleSeries.update(lastCandle);
-      if (lastVolume !== undefined && lastVolume.time === lastCandle?.time) {
-        volumeSeries.update(lastVolume);
-      }
+    if (plan.kind === "update") {
+      // Only the bars at or after the previous newest bar; ascending order is guaranteed.
+      for (const point of barsToCandles(plan.bars, priceDecimals)) candleSeries.update(point);
+      for (const point of barsToVolume(plan.bars, qtyDecimals)) volumeSeries.update(point);
     } else {
+      // Every snapshot (also a fresh one on the same key) repositions the view (Req 2.8).
+      if (shouldReposition(prev, input)) needsFitRef.current = true;
+      const candles = barsToCandles(bars, priceDecimals);
       candleSeries.setData(candles);
-      volumeSeries.setData(volume);
+      volumeSeries.setData(barsToVolume(bars, qtyDecimals));
       if (needsFitRef.current && candles.length > 0) {
         const range = initialVisibleRange(candles.length);
         if (range === null) chart.timeScale().fitContent();
@@ -322,8 +333,8 @@ export default function ChartPanel() {
         needsFitRef.current = false;
       }
     }
-    appliedRef.current = next;
-  }, [bars, symbol, timeframe, priceDecimals, qtyDecimals]);
+    appliedRef.current = chartSyncState(input);
+  }, [bars, snapshotCount, rewriteCount, symbol, timeframe, priceDecimals, qtyDecimals]);
 
   // Indicator lines (Req 26.1-26.4): a toggled-off line has no series (removed, so no stale data
   // and no empty sub-pane); a toggled-on line gets a series and is fed like the candles.
@@ -331,8 +342,21 @@ export default function ChartPanel() {
     const chart = chartRef.current;
     if (chart === null) return;
     const lines = linesRef.current;
-    const applied = lineAppliedRef.current;
-    const viewKey = `${symbol}|${timeframe}|${priceDecimals}`;
+    const input = {
+      key: `${symbol}|${timeframe}|${priceDecimals}`,
+      snapshot: snapshotCount,
+      rewrite: rewriteCount,
+      bars,
+    };
+    const plan = planChartSync(lineSyncRef.current, input);
+    // Points without a stored candle time would add time-axis slots, so they are dropped.
+    const setTimes = new Set<number>(bars.map((b) => b.t));
+    const updateTimes =
+      plan.kind === "update" ? new Set<number>(plan.bars.map((b) => b.t)) : setTimes;
+    const updatePoints =
+      plan.kind === "update"
+        ? indicatorPoints.filter((p) => updateTimes.has(p.t))
+        : indicatorPoints;
 
     for (const line of ALL_LINES) {
       const enabled = toggles[toggleOfLine(line)];
@@ -341,11 +365,12 @@ export default function ChartPanel() {
         if (series !== undefined) {
           chart.removeSeries(series);
           delete lines[line];
-          delete applied[line];
         }
         continue;
       }
+      let created = false;
       if (series === undefined) {
+        created = true;
         const pane = paneOfLine(line);
         series = chart.addSeries(LineSeries, lineOptions(line, priceDecimals), pane);
         if (line === "rsi") {
@@ -365,23 +390,20 @@ export default function ChartPanel() {
         }
         if (pane === 1) series.getPane().setStretchFactor(SUB_PANE_STRETCH);
         lines[line] = series;
-        delete applied[line];
       }
 
-      const data = indicatorLineData(indicatorPoints, line, priceDecimals);
-      const next = seriesShape(viewKey, data);
-      const plan = planSeriesUpdate(applied[line] ?? null, next);
-      const last = data[data.length - 1];
-      if (plan === "update" && last !== undefined) {
-        series.update(last);
+      if (plan.kind === "update" && !created) {
+        for (const point of indicatorLineUpdates(updatePoints, line, priceDecimals, updateTimes)) {
+          series.update(point);
+        }
       } else {
-        // A full replace also follows a change of price decimals (part of `viewKey`).
+        // A full replace also follows a change of price decimals (part of the sync key).
         series.applyOptions({ priceFormat: lineOptions(line, priceDecimals).priceFormat });
-        series.setData(data);
+        series.setData(indicatorLineData(indicatorPoints, line, priceDecimals, setTimes));
       }
-      applied[line] = next;
     }
-  }, [indicatorPoints, toggles, symbol, timeframe, priceDecimals]);
+    lineSyncRef.current = chartSyncState(input);
+  }, [indicatorPoints, bars, toggles, snapshotCount, rewriteCount, symbol, timeframe, priceDecimals]);
 
   // Keyboard: timeframe digits always (outside text inputs); zoom and pan while the chart is
   // hovered or focused.
