@@ -125,7 +125,14 @@ export interface Publisher {
 /** The supervisor surface the gateway needs. It does not include the order sender. */
 export type GatewaySupervisor = Pick<
   EngineSupervisor,
-  "running" | "sessionId" | "sendControl" | "setSubscriptionProvider" | "onEvent" | "onNotice" | "onClearAccount"
+  | "running"
+  | "sessionId"
+  | "sendControl"
+  | "setSubscriptionProvider"
+  | "onEvent"
+  | "onNotice"
+  | "onClearAccount"
+  | "onSessionStart"
 >;
 
 /** The Auth_Service surface the gateway needs (TokenService satisfies it). */

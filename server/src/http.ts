@@ -1,16 +1,13 @@
-// Hono app for the plain HTTP endpoints (design §3, Req 17.5, 17.8).
+// Hono app for the plain HTTP endpoints (design §3, oni-terminal-v2 Req 1.9).
 //
-// Task 3.5 has only `GET /health`. /orders, /positions, /journal, /quote/:symbol, and
-// /candles/:symbol arrive with Tasks 11 and 14.
-//
-// `/health` never queries a database (Req 17.8, design §3 Journal): Render polls it, and a
-// query there would keep Neon's compute awake. The `db` field is the placeholder "unknown"
-// until the Journal exists (Task 11). Task 11 replaces it with the in-memory Journal_Status
-// ("up" | "down"), read from `JournalQueue.status()`.
+// `/health` reads memory only and never touches a database (there is none). It reports the
+// Engine state, the status of the configured venue (or `replay`), and the Latency_Histogram
+// p50/p95, which stay null until Task 13.2 wires the histogram. It has no `db` field (Req 1.9).
+// The activity routes (/orders, /journal, /positions) are mounted from `activityRoutes`.
 
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import type { AuthVariables } from "./auth/bearer.ts";
+import type { ActivityEnv } from "./activity/routes.ts";
 import { checkOrigin, normalizeOrigin } from "./gateway/origin.ts";
 
 /** What `/health` reads. The EngineSupervisor satisfies it. */
@@ -19,17 +16,35 @@ export interface EngineHealth {
   readonly sessionId: string | null;
 }
 
-/** Paths the REST routes use (Task 11.4, 14); CORS applies to them as to `/auth/*`. */
+/** The Venue_Status values of the design (Req 9). */
+export type VenueStatusKind = "connecting" | "connected" | "stale" | "down" | "disabled";
+
+export interface VenueHealth {
+  readonly venue: string;
+  readonly status: VenueStatusKind;
+}
+
+/** Latency_Histogram summary (Req 33.12). Null until Task 13.2 records samples. */
+export interface LatencyHealth {
+  readonly p50_ms: number | null;
+  readonly p95_ms: number | null;
+}
+
+/** Paths the REST routes use; CORS applies to them as to `/auth/*`. */
 const CORS_PATHS = ["/auth/*", "/orders", "/positions", "/journal", "/quote/*", "/candles/*"] as const;
 
 export interface HttpDeps {
   readonly engine: EngineHealth;
   /** Auth routes from `createAuthRoutes` (Task 18.6). Omitted in tests that do not need them. */
   readonly auth?: Hono;
-  /** Journal_Status reader for `/health`: memory only, never a query (Req 17.8). */
-  readonly journalStatus?: () => "up" | "down";
-  /** `/orders`, `/journal`, `/positions`, `/quote`, `/candles` from `createJournalRoutes` (Task 11.4). */
-  readonly state?: Hono<{ Variables: AuthVariables }>;
+  /** Venue statuses for `/health`, read from memory. Defaults to none. */
+  readonly venues?: () => readonly VenueHealth[];
+  /** Latency summary for `/health`. Defaults to nulls (Task 13.2 fills it in). */
+  readonly latency?: () => LatencyHealth;
+  /** `/orders`, `/journal`, `/positions` from `activityRoutes`. */
+  readonly activity?: Hono<ActivityEnv>;
+  /** `/quote/:symbol`, `/candles/:symbol` from `marketRoutes`. */
+  readonly market?: Hono;
   /**
    * ALLOWED_ORIGINS. When given, CORS is enabled for those origins only (no credentials, so
    * Authorization travels as a header, never as a cookie).
@@ -41,19 +56,41 @@ export interface HealthBody {
   readonly ok: true;
   /** Wording from the design.md endpoint table. */
   readonly engine: "running" | "stopped";
-  /** Journal_Status from memory (Req 17.5); "unknown" only when no journal is wired (tests). */
-  readonly db: "up" | "down" | "unknown";
-  /** Session_Id of the latest engine start (Req 20.18), or null before the first start. */
+  /** Session_Id of the latest engine start, or null before the first start. */
   readonly session_id: string | null;
+  /** One entry for the configured venue, or `replay` (Req 1.9). */
+  readonly venues: readonly VenueHealth[];
+  readonly latency: LatencyHealth;
 }
 
-export function healthBody(engine: EngineHealth, db: () => "up" | "down" | "unknown" = () => "unknown"): HealthBody {
+export const NO_LATENCY: LatencyHealth = Object.freeze({ p50_ms: null, p95_ms: null });
+
+export function healthBody(
+  engine: EngineHealth,
+  venues: () => readonly VenueHealth[] = () => [],
+  latency: () => LatencyHealth = () => NO_LATENCY,
+): HealthBody {
   return {
     ok: true,
     engine: engine.running ? "running" : "stopped",
-    db: db(),
     session_id: engine.sessionId,
+    venues: venues(),
+    latency: latency(),
   };
+}
+
+/**
+ * The status of the one configured venue, until the engine emits VenueStatus events (Task 9):
+ * `down` while the engine is stopped; `connected` for replay (the fixture is local); `connecting`
+ * for a live venue, whose real state the server does not know yet.
+ */
+export function configuredVenueHealth(
+  config: { readonly dataMode: "replay" | "live"; readonly liveVenue: string },
+  engine: EngineHealth,
+): VenueHealth {
+  const venue = config.dataMode === "replay" ? "replay" : config.liveVenue;
+  if (!engine.running) return { venue, status: "down" };
+  return { venue, status: config.dataMode === "replay" ? "connected" : "connecting" };
 }
 
 export function createHttpApp(deps: HttpDeps): Hono {
@@ -73,10 +110,11 @@ export function createHttpApp(deps: HttpDeps): Hono {
   }
 
   if (deps.auth !== undefined) app.route("/", deps.auth);
-  if (deps.state !== undefined) app.route("/", deps.state);
+  if (deps.activity !== undefined) app.route("/", deps.activity);
+  if (deps.market !== undefined) app.route("/", deps.market);
 
-  // Req 17.5: always 200 while the process is serving; reads memory only (Req 17.8).
-  app.get("/health", (c) => c.json(healthBody(deps.engine, deps.journalStatus), 200));
+  // Req 1.9: always 200 while the process is serving; reads memory only.
+  app.get("/health", (c) => c.json(healthBody(deps.engine, deps.venues, deps.latency), 200));
 
   app.notFound((c) => c.json({ error: "not_found" }, 404));
 

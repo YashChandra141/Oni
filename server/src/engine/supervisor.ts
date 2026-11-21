@@ -269,6 +269,7 @@ export class EngineSupervisor {
   readonly #noticeListeners = new Set<Listener<EngineNotice>>();
   readonly #statusListeners = new Set<Listener<EngineStatus>>();
   readonly #clearAccountListeners = new Set<Listener<void>>();
+  readonly #sessionStartListeners = new Set<Listener<string>>();
 
   constructor(options: EngineSupervisorOptions) {
     this.#config = options.config;
@@ -315,6 +316,14 @@ export class EngineSupervisor {
   /** Called on every engine exit: cached Positions and open orders are void (Req 15.7). */
   onClearAccount(listener: () => void): () => void {
     return subscribe(this.#clearAccountListeners, listener);
+  }
+
+  /**
+   * Called on every engine start with the new Session_Id, before the engine's first event is
+   * read. The Activity_Log clears here, so it holds the current engine run only (oni-terminal-v2 Req 2.1).
+   */
+  onSessionStart(listener: (sessionId: string) => void): () => void {
+    return subscribe(this.#sessionStartListeners, listener);
   }
 
   /** Spawns the engine (Req 15.1). Does nothing if it is already running or restarting. */
@@ -406,8 +415,10 @@ export class EngineSupervisor {
     const generation = this.#generation;
     this.#proc = proc;
     this.#state = "running";
-    this.#sessionId = this.#randomUUID();
+    const sessionId = this.#randomUUID();
+    this.#sessionId = sessionId;
     this.#backoff.markStarted();
+    for (const listener of this.#sessionStartListeners) this.#call(listener, sessionId);
 
     void this.#pumpStdout(proc.stdout, generation);
     void this.#pumpStderr(proc.stderr);

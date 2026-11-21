@@ -1,7 +1,7 @@
 // Docker smoke test (Req 41.3, 41.6), run by the `docker-smoke` CI job against the running
-// Server_Image: wait for /health db "up" (Migrations applied by the Start_Script), open /ws,
-// place a paper order on the guest account through CommandText -> Preview -> Confirm, receive a
-// Fill, and poll /journal for the order and fill rows.
+// Server_Image: wait for /health engine "running", open /ws, place a paper order on the guest
+// account through CommandText -> Preview -> Confirm, receive a Fill, and poll /journal (the
+// in-memory Activity_Log, oni-terminal-v2 Req 2) for the order and fill rows.
 //
 // Usage: bun server/scripts/smoke.ts            (env: SMOKE_BASE_URL, SMOKE_ORIGIN)
 // Exits 0 on success, 1 with a clear message on failure. Paper only; talks to localhost.
@@ -15,9 +15,15 @@ const ORDER_TEXT = "BUY BTC 0.001";
 const HEALTH_TIMEOUT_MS = 120_000;
 const ORDER_ATTEMPTS = 6;
 const FILL_WAIT_MS = 10_000;
-const JOURNAL_TIMEOUT_MS = 30_000;
+const ACTIVITY_TIMEOUT_MS = 30_000;
 
-const HealthSchema = z.object({ ok: z.literal(true), engine: z.string(), db: z.string() });
+// oni-terminal-v2 Req 1.9: no `db` field; engine state, venue statuses, and latency.
+const HealthSchema = z.object({
+  ok: z.literal(true),
+  engine: z.string(),
+  venues: z.array(z.object({ venue: z.string(), status: z.string() })),
+  latency: z.object({ p50_ms: z.number().nullable(), p95_ms: z.number().nullable() }),
+});
 const WsMessageSchema = z
   .object({ type: z.string() })
   .passthrough();
@@ -30,7 +36,7 @@ const EventMessageSchema = z.object({
   type: z.literal("event"),
   event: z.object({ type: z.string(), order_id: z.string().optional(), account_id: z.string().optional(), reason: z.string().optional() }).passthrough(),
 });
-const JournalRowsSchema = z.array(
+const ActivityRowsSchema = z.array(
   z.object({ type: z.string(), order_id: z.string(), account_id: z.string() }).passthrough(),
 );
 
@@ -48,18 +54,19 @@ async function waitForHealth(): Promise<void> {
       const parsed = HealthSchema.safeParse(await res.json());
       if (!parsed.success) {
         last = "unexpected /health body";
-      } else if (parsed.data.db === "up" && parsed.data.engine === "running") {
-        step(`/health ok: engine ${parsed.data.engine}, db ${parsed.data.db}`);
+      } else if (parsed.data.engine === "running") {
+        const venues = parsed.data.venues.map((v) => `${v.venue}=${v.status}`).join(",");
+        step(`/health ok: engine ${parsed.data.engine}, venues ${venues}`);
         return;
       } else {
-        last = `engine=${parsed.data.engine} db=${parsed.data.db}`;
+        last = `engine=${parsed.data.engine}`;
       }
     } catch (err) {
       last = err instanceof Error ? err.name : "fetch failed";
     }
     await sleep(1_000);
   }
-  throw new SmokeError(`/health did not report engine running and db "up" within ${HEALTH_TIMEOUT_MS} ms (last: ${last})`);
+  throw new SmokeError(`/health did not report engine running within ${HEALTH_TIMEOUT_MS} ms (last: ${last})`);
 }
 
 interface Inbox {
@@ -155,8 +162,8 @@ async function placeUntilFill(inbox: Inbox): Promise<string> {
   throw new SmokeError(`no Fill after ${ORDER_ATTEMPTS} order attempts`);
 }
 
-async function waitForJournal(orderId: string): Promise<void> {
-  const deadline = Date.now() + JOURNAL_TIMEOUT_MS;
+async function waitForActivity(orderId: string): Promise<void> {
+  const deadline = Date.now() + ACTIVITY_TIMEOUT_MS;
   let last = "no response";
   while (Date.now() < deadline) {
     try {
@@ -164,7 +171,7 @@ async function waitForJournal(orderId: string): Promise<void> {
       if (res.status !== 200) {
         last = `HTTP ${res.status}`;
       } else {
-        const rows = JournalRowsSchema.parse(await res.json());
+        const rows = ActivityRowsSchema.parse(await res.json());
         const mine = rows.filter((r) => r.order_id === orderId && r.account_id === "guest");
         const hasOrder = mine.some((r) => r.type === "order");
         const hasFill = mine.some((r) => r.type === "fill");
@@ -179,7 +186,7 @@ async function waitForJournal(orderId: string): Promise<void> {
     }
     await sleep(1_000);
   }
-  throw new SmokeError(`/journal lacked the order and fill rows for ${orderId} within ${JOURNAL_TIMEOUT_MS} ms (last: ${last})`);
+  throw new SmokeError(`/journal lacked the order and fill rows for ${orderId} within ${ACTIVITY_TIMEOUT_MS} ms (last: ${last})`);
 }
 
 async function main(): Promise<void> {
@@ -190,7 +197,7 @@ async function main(): Promise<void> {
     step("connected to /ws");
     send(inbox.ws, { type: "subscribe", symbol: "BTC-USD", timeframe: "1m" });
     const orderId = await placeUntilFill(inbox);
-    await waitForJournal(orderId);
+    await waitForActivity(orderId);
   } finally {
     inbox.ws.close();
   }

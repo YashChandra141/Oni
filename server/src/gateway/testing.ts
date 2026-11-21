@@ -23,6 +23,7 @@ export class FakeSupervisor implements GatewaySupervisor {
   readonly #events = new Set<(e: Event) => void>();
   readonly #notices = new Set<(n: EngineNotice) => void>();
   readonly #clears = new Set<() => void>();
+  readonly #sessionStarts = new Set<(sessionId: string) => void>();
 
   sendControl(cmd: ControlCommand): boolean {
     this.sent.push(cmd);
@@ -49,8 +50,21 @@ export class FakeSupervisor implements GatewaySupervisor {
     return () => this.#clears.delete(listener);
   }
 
+  onSessionStart(listener: (sessionId: string) => void): () => void {
+    this.#sessionStarts.add(listener);
+    return () => this.#sessionStarts.delete(listener);
+  }
+
+  /** Like the real supervisor: each start is a new engine session. */
   start(): void {
     this.started += 1;
+    if (this.sessionId !== null) this.emitSessionStart(this.sessionId);
+  }
+
+  /** Simulates an engine (re)start with a new Session_Id. */
+  emitSessionStart(sessionId: string): void {
+    this.sessionId = sessionId;
+    for (const l of this.#sessionStarts) l(sessionId);
   }
 
   stop(): Promise<void> {

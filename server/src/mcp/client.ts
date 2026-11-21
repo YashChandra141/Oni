@@ -98,7 +98,7 @@ export class TerminalError extends Error {
   }
 }
 
-/** `GET /quote/:symbol` (journal/routes.ts, state/market.ts `Quote`). */
+/** `GET /quote/:symbol` (state/routes.ts, state/market.ts `Quote`). */
 export const QuoteResponseSchema = z.object({
   symbol: z.string(),
   last: z

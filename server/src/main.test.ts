@@ -49,7 +49,58 @@ describe("startServer", () => {
     expect(supervisor.started).toBe(1);
     const res = await fetch(`http://${base}/health`);
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, engine: "running", db: "up", session_id: "session-1" });
+    // oni-terminal-v2 Req 1.9: no db field; one venue entry (replay) and null latency for now.
+    expect(await res.json()).toEqual({
+      ok: true,
+      engine: "running",
+      session_id: "session-1",
+      venues: [{ venue: "replay", status: "connected" }],
+      latency: { p50_ms: null, p95_ms: null },
+    });
+  });
+
+  test("engine Fill and OrderRejected events reach the Activity_Log; a new engine session clears it (Req 2.1, 2.2)", async () => {
+    // A Router order record, so the engine rejection can inherit its source.
+    running.activity.append({
+      kind: "order",
+      venue: "replay",
+      accountId: "guest",
+      orderId: "o_r",
+      symbol: "BTC-USD",
+      side: "buy",
+      qty: 5n,
+      orderKind: "market",
+      price: null,
+      source: "tui",
+      ts: 1,
+    });
+    supervisor.emitEvent({
+      type: "fill",
+      account_id: "guest",
+      order_id: "o_f",
+      symbol: "BTC-USD",
+      side: "sell",
+      price: "6400000",
+      qty: "10",
+      fee: "3",
+      remaining: "0",
+      ts: 2,
+    });
+    supervisor.emitEvent({ type: "order_rejected", account_id: "guest", order_id: "o_r", reason: "insufficient_balance" });
+
+    const rows = (await (await fetch(`http://${base}/journal`)).json()) as Record<string, unknown>[];
+    expect(rows[0]).toMatchObject({ type: "rejection", order_id: "o_r", reason: "insufficient_balance", source: "tui", venue: "replay", qty: "5" });
+    expect(rows[1]).toMatchObject({ type: "fill", order_id: "o_f", venue: "replay", price: "6400000", fee: "3" });
+    expect(rows[2]).toMatchObject({ type: "order", order_id: "o_r" });
+
+    supervisor.emitSessionStart("session-2");
+    expect(await (await fetch(`http://${base}/journal`)).json()).toEqual([]);
+  });
+
+  test("an Authorization header that is not a valid token gets 401 on /orders but not on /health", async () => {
+    const headers = { Authorization: "Bearer nope" };
+    expect((await fetch(`http://${base}/orders`, { headers })).status).toBe(401);
+    expect((await fetch(`http://${base}/health`, { headers })).status).toBe(200);
   });
 
   test("rejects a /ws upgrade from a foreign Origin with 403 (Req 17.2)", async () => {

@@ -31,13 +31,13 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
 
 ## Tasks
 
-- [ ] 1. Remove the database
-  - [ ] 1.1 Add the in-memory Activity_Log
+- [x] 1. Remove the database
+  - [x] 1.1 Add the in-memory Activity_Log
     - Create `server/src/activity/log.ts`: bounded per-account store (1,000 records per account, 1,000 accounts, injectable bounds), append-order listing with a limit of 1 to 1,000, drop of a whole account when the account bound is exceeded
     - Create `server/src/activity/routes.ts` for `/orders`, `/journal`, and `/positions` scoped to the caller's account (Bearer token or `guest`)
     - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.16, 2.18, 2.19_
 
-  - [ ] 1.2 Rewire the server to the Activity_Log
+  - [x] 1.2 Rewire the server to the Activity_Log
     - Replace every Journal and Journal_Queue use in `router.ts`, the gateway, and the REST routes with Activity_Log appends
     - Remove the `db` field and Journal_Status from `/health`; report Engine state, each Live_Venue status, and latency p50 and p95 (filled in by task 10.2)
     - Remove Migration retry logic and `503` journal responses
@@ -65,7 +65,7 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
     - **Property 2: Activity_Log bounds**
     - **Validates: Requirements 2.4, 2.5, 2.19**
 
-- [ ] 2. Protocol changes (protocol v3)
+- [x] 2. Protocol changes (protocol v3)
   - [ ] 2.1 Add core types, commands, and events to the protocol crate
     - In `rust/crates/protocol/src/`: `Venue` (coinbase, backpack, jupiter, raydium, replay) with `kind()`, `Timeframe::H4`, `Ticker`, `VenueStatusKind`, `PairHealth`, `WireEvent` (flatten plus `emit_us`), and the other types in the design's Types table
     - Add `venue` to `Subscribe`, `Unsubscribe`, `PlaceOrder`, `Candle`, `Trade`, `Book`, `Indicators`, `OrderAck`, `OrderRejected`, and `Fill`; add `synthetic` to `Book` and `Trade`
@@ -96,7 +96,7 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
     - proptest in `protocol/src/properties.rs` for Rust; fast-check Zod parse of JSON samples for the mirrors; reject invalid venue, provider id, and account id
     - **Validates: Requirements 15.1, 33.2, 34.10**
 
-- [ ] 3. Symbol registry, 4h timeframe, and 24h stats
+- [x] 3. Symbol registry, 4h timeframe, and 24h stats
   - [ ] 3.1 Ten-symbol Instrument_Table
     - In `protocol/src/instrument.rs` add BNB, XRP, DOGE, JUP, WIF, BONK, PEPE with the decimals from the design table; keep BTC, ETH, SOL decimals unchanged
     - Add a table test: tick at most 0.02% of `reference_price`, lot no coarser than the finest listing-venue increment, `price_decimals + qty_decimals <= 10`

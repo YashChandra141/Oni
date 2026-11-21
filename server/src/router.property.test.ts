@@ -149,5 +149,6 @@ describe("Property P35: Router account derivation (Req 18.5, 18.6)", () => {
     expect(h.sent[0]?.account_id).toBe("w_Abc123");
     expect(JSON.stringify(h.sent)).not.toContain("w_victim");
     expect(h.records.map((r) => r.accountId)).toEqual(["w_Abc123"]);
+    expect(h.log.listActivity("w_victim")).toEqual([]);
   });
 });

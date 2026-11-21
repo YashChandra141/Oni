@@ -21,22 +21,17 @@ import { PreviewStore } from "./commands/previews.ts";
 import { createOpenAiProvider } from "./llm/openai.ts";
 import { LlmOrderParser } from "./llm/parser.ts";
 import type { LlmProvider } from "./llm/provider.ts";
-import { classifyPrismaError } from "./journal/classify.ts";
-import { createLazyPrismaStore } from "./journal/lazy.ts";
-import { fromFillEvent, fromRejectedEvent, fromRouterRecord } from "./journal/map.ts";
-import { MemoryJournalStore } from "./journal/memory.ts";
-import { JournalQueue } from "./journal/queue.ts";
-import { createJournalRoutes } from "./journal/routes.ts";
-import type { JournalStore } from "./journal/store.ts";
+import { ActivityLog, MAX_LIST_LIMIT } from "./activity/log.ts";
+import { activityRoutes } from "./activity/routes.ts";
 import { EngineSupervisor, type Logger, spawnEngineProcess } from "./engine/supervisor.ts";
 import { SubscriptionRegistry } from "./gateway/clients.ts";
 import { checkOrigin } from "./gateway/origin.ts";
 import { type ClientData, Gateway, type GatewaySupervisor } from "./gateway/ws.ts";
-import { createHttpApp } from "./http.ts";
+import { configuredVenueHealth, createHttpApp } from "./http.ts";
+import type { Event } from "./protocol.ts";
 import { defaultLimits } from "./risk/limits.ts";
 import {
   Router,
-  type RouterJournal,
   type RouterSender,
   closedOrderSender,
   createOrderIdGenerator,
@@ -44,6 +39,7 @@ import {
 } from "./router.ts";
 import { AccountState } from "./state/account.ts";
 import { MarketState } from "./state/market.ts";
+import { marketRoutes } from "./state/routes.ts";
 
 /** Repository root (server/src → ../..). */
 export const REPO_ROOT = resolve(import.meta.dir, "..", "..");
@@ -67,15 +63,12 @@ export interface AppDeps {
    * creates it once from the supervisor. Without one every order is rejected `engine_unavailable`.
    */
   readonly orderSender?: RouterSender;
-  /** Receives the Router's order and rejection records. Overrides `journalQueue` for the Router (tests). */
-  readonly journal?: RouterJournal;
   /**
-   * The Journal_Queue (Task 11.4). When given with `journalStore`, the Router's records and the
-   * engine's Fill and OrderRejected events are enqueued, `/health` reports its status, and
-   * `/orders`, `/journal`, `/positions`, `/quote`, `/candles` are served.
+   * Activity_Log of the current engine run (oni-terminal-v2 Req 2.1). Defaults to a new one. It
+   * gets the Router's order and rejection records and the engine's Fill and OrderRejected events,
+   * is cleared on every engine start, and backs `/orders`, `/journal`, `/positions`.
    */
-  readonly journalQueue?: JournalQueue;
-  readonly journalStore?: Pick<JournalStore, "listOrders" | "listJournal">;
+  readonly activity?: ActivityLog;
   readonly registry?: SubscriptionRegistry;
   /** LLM_Provider for `?` orders. Null or unset disables them (Req 23.7). `startServer` builds it from OPENAI_API_KEY. */
   readonly llm?: LlmProvider | null;
@@ -107,6 +100,8 @@ export interface App {
   readonly accounts: AccountState;
   /** The only path to the engine for order Commands (Req 18). */
   readonly router: Router;
+  /** Orders, fills, and rejections of the current engine run (oni-terminal-v2 Req 2.1). */
+  readonly activity: ActivityLog;
   readonly fetch: (req: Request, server: Server<ClientData>) => Response | Promise<Response> | undefined;
   readonly websocket: ReturnType<Gateway["handlers"]>;
 }
@@ -170,31 +165,23 @@ export function createApp(deps: AppDeps): App {
   auth.onLogout((jti) => gateway.handleLogout(jti));
 
   // The Router: the only module that writes order Commands (Req 18.1, 18.3). Account ids come
-  // from the gateway's verified sessions (Req 18.5). The journal is a no-op until Task 11.4.
+  // from the gateway's verified sessions (Req 18.5).
   const logger = deps.logger ?? { info: console.log, warn: console.warn, error: console.error };
-  // Journal (Task 11.4): every enqueue is a synchronous in-memory push, never a database wait
-  // (Req 20.8). Records carry the Session_Id of the engine run at enqueue time (Req 20.18).
-  const queue = deps.journalQueue;
-  const newId = (): string => crypto.randomUUID();
-  const routerJournal: RouterJournal =
-    deps.journal ??
-    (queue === undefined
-      ? { enqueue: () => {} }
-      : {
-          enqueue: (record) =>
-            queue.enqueue(fromRouterRecord(record, { sessionId: deps.supervisor.sessionId, now: record.ts, newId })),
-        });
-  if (queue !== undefined) {
-    deps.supervisor.onEvent((event) => {
-      try {
-        const ctx = { sessionId: deps.supervisor.sessionId, now: now(), newId };
-        if (event.type === "fill") queue.enqueue(fromFillEvent(event, ctx));
-        else if (event.type === "order_rejected") queue.enqueue(fromRejectedEvent(event, ctx));
-      } catch (err) {
-        logger.error(`[journal] mapping ${event.type} failed: ${err instanceof Error ? err.name : "unknown"}`);
-      }
-    });
-  }
+
+  // Activity_Log (oni-terminal-v2 Req 2.1, 2.2): synchronous in-memory appends. It holds the
+  // current engine run only, so it is emptied on every engine start.
+  const activity = deps.activity ?? new ActivityLog();
+  deps.supervisor.onSessionStart(() => activity.clear());
+  // Until protocol v3 puts a venue on events (Task 2.x), every record carries the configured
+  // live venue, or `replay`.
+  const venue = (): string => (deps.config.dataMode === "replay" ? "replay" : deps.config.liveVenue);
+  deps.supervisor.onEvent((event) => {
+    try {
+      recordEngineEvent(activity, event, venue(), now());
+    } catch (err) {
+      logger.error(`[activity] recording ${event.type} failed: ${err instanceof Error ? err.name : "unknown"}`);
+    }
+  });
 
   const router = new Router({
     sender: deps.orderSender ?? closedOrderSender,
@@ -202,7 +189,8 @@ export function createApp(deps: AppDeps): App {
     risk: { limits: defaultLimits(), killSwitch: deps.config.killSwitch },
     market: marketPrices(market),
     accounts,
-    journal: routerJournal,
+    activity,
+    venue,
     now,
     newOrderId: createOrderIdGenerator(),
     pendingRequests: gateway.pendingRequests,
@@ -234,25 +222,14 @@ export function createApp(deps: AppDeps): App {
     previews.discardForConnection(connectionId);
   });
 
-  const stateRoutes =
-    queue === undefined || deps.journalStore === undefined
-      ? undefined
-      : createJournalRoutes({
-          tokens,
-          store: deps.journalStore,
-          status: () => queue.status(),
-          markUnreachable: () => queue.markUnreachable(),
-          sessionId: () => deps.supervisor.sessionId,
-          accounts,
-          market,
-        });
-
   const http = createHttpApp({
     engine: deps.supervisor,
     auth: authRoutes,
     allowedOrigins: deps.config.allowedOrigins,
-    ...(queue === undefined ? {} : { journalStatus: () => queue.status() }),
-    ...(stateRoutes === undefined ? {} : { state: stateRoutes }),
+    // Req 1.9: one entry for the configured venue (or replay) until VenueStatus events (Task 9).
+    venues: () => [configuredVenueHealth(deps.config, deps.supervisor)],
+    activity: activityRoutes({ log: activity, positions: accounts, auth: tokens }),
+    market: marketRoutes({ market }),
   });
 
   const fetch = (req: Request, server: Server<ClientData>): Response | Promise<Response> | undefined => {
@@ -266,7 +243,47 @@ export function createApp(deps: AppDeps): App {
     return jsonResponse({ error: "websocket_upgrade_required" }, 426);
   };
 
-  return { auth, gateway, market, accounts, router, fetch, websocket: gateway.handlers() };
+  return { auth, gateway, market, accounts, router, activity, fetch, websocket: gateway.handlers() };
+}
+
+/**
+ * Appends the Activity_Log record of an engine event (oni-terminal-v2 Req 2.2): a fill record for
+ * a Fill, and a rejection record for an engine OrderRejected. The rejection keeps the source and
+ * order fields of the Router's order record for that order id, when the log still has one (an
+ * engine rejection of a Cancel for an unknown id has none). Other events are ignored.
+ */
+export function recordEngineEvent(log: ActivityLog, event: Event, venue: string, now: number): void {
+  if (event.type === "fill") {
+    log.append({
+      kind: "fill",
+      venue,
+      accountId: event.account_id,
+      orderId: event.order_id,
+      symbol: event.symbol,
+      side: event.side,
+      price: BigInt(event.price),
+      qty: BigInt(event.qty),
+      fee: BigInt(event.fee),
+      remaining: BigInt(event.remaining),
+      ts: event.ts,
+    });
+  } else if (event.type === "order_rejected") {
+    const order = log.listOrders(event.account_id, MAX_LIST_LIMIT).find((r) => r.orderId === event.order_id);
+    log.append({
+      kind: "rejection",
+      venue: order?.venue ?? venue,
+      accountId: event.account_id,
+      orderId: event.order_id,
+      reason: event.reason,
+      symbol: order?.symbol ?? null,
+      side: order?.side ?? null,
+      qty: order?.qty ?? null,
+      orderKind: order?.orderKind ?? null,
+      price: order?.price ?? null,
+      source: order?.source ?? null,
+      ts: now,
+    });
+  }
 }
 
 export interface StartServerOptions {
@@ -285,16 +302,8 @@ export interface StartServerOptions {
   /** Replay fixture directory for the default supervisor. Defaults to `<repo>/fixtures`. */
   readonly fixturesDir?: string;
   readonly logger?: Logger;
-  /**
-   * Journal store. Defaults to MemoryJournalStore when DATABASE_URL is unset (Req 16.6) and to the
-   * Prisma store (loaded lazily) otherwise.
-   */
-  readonly journalStore?: JournalStore;
-  /**
-   * Whether the Journal schema is ready. Defaults to true when there is no DATABASE_URL and to
-   * false otherwise; the Start_Script calls `journal.setMigrated(...)` after `prisma migrate deploy`.
-   */
-  readonly journalMigrated?: boolean;
+  /** Activity_Log. Defaults to a new, empty one. */
+  readonly activity?: ActivityLog;
 }
 
 export interface RunningServer {
@@ -304,8 +313,8 @@ export interface RunningServer {
   readonly market: MarketState;
   readonly accounts: AccountState;
   readonly router: Router;
-  /** The Journal_Queue; the Start_Script calls `setMigrated` on it. */
-  readonly journal: JournalQueue;
+  /** Orders, fills, and rejections of the current engine run. */
+  readonly activity: ActivityLog;
   readonly supervisor: GatewaySupervisor & { start(): void; stop(): Promise<void> };
   /** The bound port (useful with port 0). */
   readonly port: number;
@@ -328,20 +337,6 @@ export function startServer(options: StartServerOptions): RunningServer {
   // The order writer is created once and goes straight to the Router (Req 18.3).
   const orderSender = supervisor.createOrderSender?.() ?? closedOrderSender;
 
-  const log = options.logger ?? { info: console.log, warn: console.warn, error: console.error };
-  const redact = (text: string): string => redactSecrets(text, config);
-  const databaseUrl = config.databaseUrl;
-  const store: JournalStore =
-    options.journalStore ??
-    (databaseUrl === undefined ? new MemoryJournalStore() : createLazyPrismaStore(config, log, redact));
-  const journal = new JournalQueue({
-    store,
-    classify: classifyPrismaError,
-    logger: log,
-    redact,
-    migrated: options.journalMigrated ?? databaseUrl === undefined,
-  });
-
   // Req 23.7: no OPENAI_API_KEY, no provider, no plain-English orders.
   const openaiApiKey = config.openaiApiKey;
   const llm =
@@ -358,8 +353,7 @@ export function startServer(options: StartServerOptions): RunningServer {
     supervisor,
     llm,
     orderSender,
-    journalQueue: journal,
-    journalStore: store,
+    ...(options.activity === undefined ? {} : { activity: options.activity }),
     ...(options.logger === undefined ? {} : { logger: options.logger }),
   });
 
@@ -378,9 +372,6 @@ export function startServer(options: StartServerOptions): RunningServer {
       await supervisor.stop();
       app.gateway.dispose();
       await server.stop(true);
-      // SIGTERM path: write what is queued, give up after 5 s (design Decision J4).
-      await journal.flush(5_000);
-      await store.close().catch(() => {});
     })();
     return stopping;
   };
@@ -392,7 +383,7 @@ export function startServer(options: StartServerOptions): RunningServer {
     market: app.market,
     accounts: app.accounts,
     router: app.router,
-    journal,
+    activity: app.activity,
     supervisor,
     port: server.port ?? 0,
     stop,
@@ -402,10 +393,6 @@ export function startServer(options: StartServerOptions): RunningServer {
 if (import.meta.main) {
   const config = loadConfigOrExit();
   const running = startServer({ config });
-  if (config.databaseUrl !== undefined) {
-    // Migrations are applied by server/scripts/start.ts; started directly, the writer holds records.
-    console.warn("[server] DATABASE_URL is set but Migrations were not applied: run server/scripts/start.ts");
-  }
   const mode =
     config.dataMode === "replay" ? `replay mode, ${config.replayFixture} at ${config.replaySpeed}x` : "live mode";
   console.log(`[server] listening on port ${running.port} (${mode})`);

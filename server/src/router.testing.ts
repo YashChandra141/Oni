@@ -1,6 +1,7 @@
 // Shared Router test harness (Tasks 11.2 and 11.6). Not a test file: importing it registers no
-// tests. The real Risk_Engine, AccountState, and MarketState are used; the engine sender,
-// journal, clock, and gateway hooks are small recording fakes.
+// tests. The real Risk_Engine, AccountState, MarketState, and ActivityLog are used; the engine
+// sender, clock, and gateway hooks are small recording fakes.
+import { ActivityLog } from "./activity/log.ts";
 import type { OrderCommand } from "./engine/supervisor.ts";
 import type { Event } from "./protocol.ts";
 import { type RiskLimits, defaultLimits } from "./risk/limits.ts";
@@ -9,7 +10,7 @@ import {
   type OrderRejectedEvent,
   type OrderSource,
   Router,
-  type RouterJournalRecord,
+  type RouterActivityRecord,
   type RouterSession,
   type SubmitOrder,
   createOrderIdGenerator,
@@ -52,12 +53,16 @@ export function harness(options: HarnessOptions = {}) {
       return state.accept;
     },
   };
-  const records: RouterJournalRecord[] = [];
-  const journal = {
-    throwOnEnqueue: false,
-    enqueue(record: RouterJournalRecord): void {
-      if (journal.throwOnEnqueue) throw new Error("journal is down");
+  // The real Activity_Log, wrapped so a test sees each record in append order across accounts
+  // and can make the append throw.
+  const log = new ActivityLog();
+  const records: RouterActivityRecord[] = [];
+  const activity = {
+    throwOnAppend: false,
+    append(record: RouterActivityRecord): void {
+      if (activity.throwOnAppend) throw new Error("activity log is broken");
       records.push(record);
+      log.append(record);
     },
   };
   const pending = new Map<string, string>();
@@ -78,7 +83,8 @@ export function harness(options: HarnessOptions = {}) {
     risk,
     market: marketPrices(market),
     accounts,
-    journal,
+    activity,
+    venue: () => "replay",
     now: () => clock.ms,
     newOrderId: createOrderIdGenerator(() => "abc123"),
     pendingRequests: { set: (orderId, connectionId) => void pending.set(orderId, connectionId) },
@@ -92,5 +98,5 @@ export function harness(options: HarnessOptions = {}) {
   const acceptOrder = (accountId: string, orderId: string): void =>
     accounts.apply({ type: "order_ack", account_id: accountId, order_id: orderId, status: "accepted" });
 
-  return { router, clock, state, sent, sender, records, journal, pending, expired, rejected, logs, accounts, market, risk, setPosition, acceptOrder };
+  return { router, clock, state, sent, sender, records, activity, log, pending, expired, rejected, logs, accounts, market, risk, setPosition, acceptOrder };
 }

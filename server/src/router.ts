@@ -21,11 +21,12 @@
 //                          the connection's rate window (Req 18.2, 19). The window is stored
 //                          back even when the order is rejected, because an attempt counts.
 //   then the PlaceOrder is sent. A `false` from the sender (engine went down) is
-//   `engine_unavailable`. After a successful send the Router journals the order, records a note
-//   in the account cache, and remembers the requester so an engine OrderRejected reaches it.
+//   `engine_unavailable`. After a successful send the Router appends the order to the
+//   Activity_Log, records a note in the account cache, and remembers the requester so an engine
+//   OrderRejected reaches it.
 //
-// Journal writes are synchronous in-memory enqueues. A throwing journal is logged and never
-// blocks an order (Req 20.8, 20.9).
+// Activity_Log appends are synchronous in-memory pushes (oni-terminal-v2 Req 2.1, 2.2). A
+// throwing append is logged and never blocks an order.
 //
 // Cancel, CancelAll, ResetAccount: they act on the session's account only and skip the Risk
 // Engine, since they reduce exposure (design "Router"). The kill switch and the rate limit do
@@ -47,6 +48,7 @@ import {
   fromBigInt,
   toBigInt,
 } from "./protocol.ts";
+import type { ActivityOrder, ActivityRejection } from "./activity/log.ts";
 import type { RiskLimits } from "./risk/limits.ts";
 import { type RateWindow, type RejectReason, type RiskOrderKind, type RiskResult, checkOrder } from "./risk/risk.ts";
 import type { AccountView, OrderNote } from "./state/account.ts";
@@ -118,42 +120,15 @@ export interface RouterAccounts extends AccountView {
   noteOrder?(accountId: AccountId, orderId: OrderId, note: OrderNote): void;
 }
 
-export interface RouterOrderRecord {
-  readonly kind: "order";
-  readonly accountId: AccountId;
-  readonly orderId: OrderId;
-  readonly symbol: string;
-  readonly side: Side;
-  readonly qty: bigint;
-  readonly orderKind: "market" | "limit" | "stop";
-  /** Limit price or stop price in ticks; null for a market order. */
-  readonly price: bigint | null;
-  readonly source: OrderSource;
-  /** Epoch milliseconds. */
-  readonly ts: number;
-}
+/** The Router's order records (oni-terminal-v2 Req 2.2). */
+export type RouterOrderRecord = Omit<ActivityOrder, "seq">;
+/** The Router's (Risk_Engine and pre-checks) rejection records, with the source (Req 2.2). */
+export type RouterRejectionRecord = Omit<ActivityRejection, "seq">;
+export type RouterActivityRecord = RouterOrderRecord | RouterRejectionRecord;
 
-export interface RouterRejectionRecord {
-  readonly kind: "rejection";
-  readonly accountId: AccountId;
-  readonly orderId: OrderId;
-  readonly reason: string;
-  /** Order fields, null when the input was too malformed to read them. */
-  readonly symbol: string | null;
-  readonly side: Side | null;
-  readonly qty: bigint | null;
-  readonly orderKind: "market" | "limit" | "stop" | null;
-  readonly price: bigint | null;
-  readonly source: OrderSource;
-  /** Epoch milliseconds. */
-  readonly ts: number;
-}
-
-export type RouterJournalRecord = RouterOrderRecord | RouterRejectionRecord;
-
-/** Synchronous in-memory enqueue (Task 11.4 supplies the real queue). Must not await a database. */
-export interface RouterJournal {
-  enqueue(record: RouterJournalRecord): void;
+/** The Activity_Log as the Router needs it: a synchronous in-memory append. `ActivityLog` satisfies it. */
+export interface RouterActivity {
+  append(record: RouterActivityRecord): unknown;
 }
 
 export interface RouterDeps {
@@ -163,7 +138,13 @@ export interface RouterDeps {
   readonly risk: { limits: RiskLimits; killSwitch: boolean };
   readonly market: MarketPrices;
   readonly accounts: RouterAccounts;
-  readonly journal: RouterJournal;
+  /** Activity_Log of the current engine run (oni-terminal-v2 Req 2.1, 2.2). */
+  readonly activity: RouterActivity;
+  /**
+   * Venue written on each record: the configured live venue, or `replay`. Task 2.x replaces it
+   * with the venue of the confirmed Order_Preview once protocol v3 carries one.
+   */
+  readonly venue: () => string;
   /** Epoch milliseconds. */
   readonly now: () => number;
   readonly newOrderId: () => OrderId;
@@ -370,8 +351,9 @@ export class Router {
     };
     if (!this.#send(command)) return fail("engine_unavailable");
 
-    this.#journal({
+    this.#record({
       kind: "order",
+      venue: this.#venue(),
       accountId,
       orderId,
       symbol: order.symbol,
@@ -480,19 +462,28 @@ export class Router {
     }
   }
 
-  #journal(record: RouterJournalRecord): void {
+  #venue(): string {
     try {
-      this.#deps.journal.enqueue(record);
+      return this.#deps.venue();
+    } catch {
+      return "replay";
+    }
+  }
+
+  #record(record: RouterActivityRecord): void {
+    try {
+      this.#deps.activity.append(record);
     } catch (err) {
-      // Never block trading on the journal (Req 20.8, 20.9).
-      this.#deps.logger.error(`[router] journal enqueue failed: ${err instanceof Error ? err.name : "unknown"}`);
+      // Never block trading on the Activity_Log.
+      this.#deps.logger.error(`[router] activity append failed: ${err instanceof Error ? err.name : "unknown"}`);
     }
   }
 
   #reject(orderId: OrderId, origin: OrderOrigin, input: SubmitOrder, reason: RouterRejectReason): SubmitResult {
     const accountId = origin.session.accountId;
-    this.#journal({
+    this.#record({
       kind: "rejection",
+      venue: this.#venue(),
       accountId,
       orderId,
       reason,

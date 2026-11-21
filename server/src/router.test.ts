@@ -1,6 +1,6 @@
 // Router unit tests (Task 11.2): Req 15.5, 18.1, 18.2, 18.3, 18.5, 46.5, 19.7. The real
-// Risk_Engine, AccountState, and MarketState are used; the sender, journal, clock, and gateway
-// hooks are small recording fakes. `harness()` lives in router.testing.ts (shared with the
+// Risk_Engine, AccountState, MarketState, and ActivityLog are used; the sender, clock, and
+// gateway hooks are small recording fakes. `harness()` lives in router.testing.ts (shared with the
 // Task 11.6 property tests).
 import { describe, expect, test } from "bun:test";
 import { OrderIdSchema } from "./protocol.ts";
@@ -13,7 +13,7 @@ import { MarketState } from "./state/market.ts";
 const conn = (id: string, session: RouterSession = GUEST) => originOf(id, session);
 
 describe("submit: approval", () => {
-  test("sends one PlaceOrder with the session account and exact wire shape, then journals and notes it", () => {
+  test("sends one PlaceOrder with the session account and exact wire shape, then logs and notes it", () => {
     const h = harness();
     const wallet = walletSession("Abc123");
     const result = h.router.submit(limitBuy(), conn("c1", wallet));
@@ -33,6 +33,7 @@ describe("submit: approval", () => {
     expect(h.records).toEqual([
       {
         kind: "order",
+        venue: "replay",
         accountId: "w_Abc123",
         orderId: "o_1_abc123",
         symbol: "BTC-USD",
@@ -44,6 +45,9 @@ describe("submit: approval", () => {
         ts: START_MS,
       },
     ]);
+    // The record reached the Activity_Log of the session's account (oni-terminal-v2 Req 2.2).
+    expect(h.log.listOrders("w_Abc123")).toMatchObject([{ orderId: "o_1_abc123", venue: "replay", source: "web" }]);
+    expect(h.log.listOrders("guest")).toEqual([]);
     expect(h.pending.get("o_1_abc123")).toBe("c1");
     expect(h.rejected).toEqual([]);
 
@@ -63,18 +67,18 @@ describe("submit: approval", () => {
     expect(h.records.map((r) => r.kind === "order" && r.orderKind)).toEqual(["market", "stop"]);
   });
 
-  test("records the source on the journal record", () => {
+  test("records the source on the activity record", () => {
     const h = harness();
     h.router.submit(limitBuy(), originOf("c1", GUEST, "mcp"));
     expect(h.records[0]).toMatchObject({ kind: "order", source: "mcp" });
   });
 
-  test("a throwing journal never blocks the order (Req 20.8)", () => {
+  test("a throwing Activity_Log append never blocks the order", () => {
     const h = harness();
-    h.journal.throwOnEnqueue = true;
+    h.activity.throwOnAppend = true;
     expect(h.router.submit(limitBuy(), conn("c1")).ok).toBe(true);
     expect(h.sent).toHaveLength(1);
-    expect(h.logs.some((l) => l.includes("journal enqueue failed"))).toBe(true);
+    expect(h.logs.some((l) => l.includes("activity append failed"))).toBe(true);
   });
 });
 
@@ -97,7 +101,7 @@ describe("submit: risk reasons (Req 18.2, 19.7)", () => {
       },
     ]);
     expect(h.records).toMatchObject([
-      { kind: "rejection", reason, accountId: origin.session.accountId, orderId: result.orderId, symbol: "BTC-USD", side: "buy", source: "web" },
+      { kind: "rejection", reason, venue: "replay", accountId: origin.session.accountId, orderId: result.orderId, symbol: "BTC-USD", side: "buy", source: "web" },
     ]);
     expect(h.pending.size).toBe(0);
   }
