@@ -123,7 +123,9 @@ impl Subscription {
     }
 
     fn to_message(&self) -> ClientMessage {
+        // Task 16.3 makes the TUI venue-aware; until then it subscribes to `replay`.
         ClientMessage::Subscribe {
+            venue: protocol::Venue::Replay,
             symbol: self.symbol.clone(),
             timeframe: self.timeframe,
         }
@@ -148,10 +150,14 @@ impl SubscriptionSet {
     /// Updates the set from an outgoing message. Only `subscribe` and `unsubscribe` matter.
     pub fn observe(&mut self, message: &ClientMessage) {
         match message {
-            ClientMessage::Subscribe { symbol, timeframe } => {
+            ClientMessage::Subscribe {
+                symbol, timeframe, ..
+            } => {
                 self.insert(Subscription::new(symbol.clone(), *timeframe));
             }
-            ClientMessage::Unsubscribe { symbol, timeframe } => {
+            ClientMessage::Unsubscribe {
+                symbol, timeframe, ..
+            } => {
                 self.subs
                     .retain(|s| !(s.symbol == *symbol && s.timeframe == *timeframe));
             }
@@ -411,6 +417,7 @@ mod tests {
 
     fn sub(symbol: &str, timeframe: Timeframe) -> ClientMessage {
         ClientMessage::Subscribe {
+            venue: protocol::Venue::Replay,
             symbol: symbol.to_owned(),
             timeframe,
         }
@@ -418,6 +425,7 @@ mod tests {
 
     fn unsub(symbol: &str, timeframe: Timeframe) -> ClientMessage {
         ClientMessage::Unsubscribe {
+            venue: protocol::Venue::Replay,
             symbol: symbol.to_owned(),
             timeframe,
         }
@@ -494,9 +502,14 @@ mod tests {
         let hello = ServerMessage::Hello {
             protocol_version: protocol::PROTOCOL_VERSION,
             data_mode: DataMode::Replay,
-            venue: None,
+            live_venues: Vec::new(),
+            venue_status: Vec::new(),
+            default_venue: protocol::Venue::Replay,
+            starting_balance: protocol::Money(0),
             engine_running: true,
             instruments: InstrumentInfo::all(),
+            providers: Vec::new(),
+            news_enabled: false,
         };
         encode_line(&hello).unwrap().trim_end().to_owned()
     }

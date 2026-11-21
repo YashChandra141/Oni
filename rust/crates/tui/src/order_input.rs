@@ -343,7 +343,12 @@ fn submit_ticket(app: &mut App, side: Side, now_ms: i64) -> KeyOutcome {
             let request_id = app.request_ids.next(now_ms);
             // Ticket orders are not typed, so they stay out of the command history.
             app.account.command_sent(&request_id);
-            KeyOutcome::send(ClientMessage::CommandText { request_id, text })
+            // Task 16.3 sends the TUI's Active_Venue; until then the server picks its default.
+            KeyOutcome::send(ClientMessage::CommandText {
+                request_id,
+                text,
+                venue: None,
+            })
         }
     }
 }
@@ -360,7 +365,12 @@ fn submit_command(app: &mut App, now_ms: i64) -> KeyOutcome {
     push_history(&mut app.command.history, &text);
     app.command.history_index = None;
     app.command.submitted = Some(request_id.clone());
-    KeyOutcome::send(ClientMessage::CommandText { request_id, text })
+    // Task 16.3 sends the TUI's Active_Venue; until then the server picks its default.
+    KeyOutcome::send(ClientMessage::CommandText {
+        request_id,
+        text,
+        venue: None,
+    })
 }
 
 /// Enter or Y in a dialog: sends `flatten_all` or `cancel_all` for the confirm dialog, or
@@ -554,6 +564,7 @@ mod tests {
     fn place_action() -> PreviewAction {
         PreviewAction::Place {
             symbol: "BTC-USD".into(),
+            venue: protocol::Venue::Replay,
             side: Side::Buy,
             qty: Qty(10_000_000),
             kind: OrderKind::Limit {
@@ -757,7 +768,10 @@ mod tests {
         let outcome = send_key(&mut app, ch('b'));
         assert!(outcome.changed);
         assert_eq!(outcome.messages.len(), 1);
-        let ClientMessage::CommandText { request_id, text } = &outcome.messages[0] else {
+        let ClientMessage::CommandText {
+            request_id, text, ..
+        } = &outcome.messages[0]
+        else {
             panic!("expected command_text, got {:?}", outcome.messages[0]);
         };
         assert_eq!(text, "BUY BTC-USD 0.1 LMT 64000.00");
@@ -863,7 +877,10 @@ mod tests {
         send_key(&mut app, ch(':'));
         type_text(&mut app, "BUY BTC 1");
         let outcome = send_key(&mut app, press(KeyCode::Enter));
-        let ClientMessage::CommandText { request_id, text } = &outcome.messages[0] else {
+        let ClientMessage::CommandText {
+            request_id, text, ..
+        } = &outcome.messages[0]
+        else {
             panic!("expected command_text");
         };
         assert_eq!(text, "BUY BTC 1");
@@ -945,6 +962,7 @@ mod tests {
         for id in ["o-1", "o-2"] {
             app.account.apply_event(
                 &Event::OrderAck {
+                    venue: protocol::Venue::Replay,
                     account_id: account.clone(),
                     order_id: OrderId::new(id).unwrap(),
                     status: OrderStatus::Accepted,

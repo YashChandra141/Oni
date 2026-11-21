@@ -31,26 +31,31 @@ function candle(
   snapshot: boolean,
   list: Bar[],
 ): ServerMessage {
-  return { type: "event", event: { type: "candle", symbol, timeframe, snapshot, bars: list } };
+  return { type: "event", event: { type: "candle", venue: "replay", symbol, timeframe, snapshot, bars: list } };
 }
 
 function trade(ts: number, symbol = "BTC-USD", price = "6400012"): ServerMessage {
   return {
     type: "event",
-    event: { type: "trade", symbol, price, qty: "1000000", side: "buy", ts },
+    event: { type: "trade", venue: "replay", symbol, price, qty: "1000000", side: "buy", synthetic: false, ts },
   };
 }
 
 const HELLO: ServerMessage = {
   type: "hello",
-  protocol_version: 2,
+  protocol_version: 3,
   data_mode: "live",
-  venue: "backpack",
+  live_venues: ["backpack"],
+  venue_status: [{ venue: "backpack", status: "connected" }],
+  default_venue: "backpack",
+  starting_balance: "1000000000000000",
   engine_running: true,
   instruments: [
-    { symbol: "BTC-USD", short: "BTC", price_decimals: 2, qty_decimals: 8 },
-    { symbol: "ETH-USD", short: "ETH", price_decimals: 2, qty_decimals: 8 },
+    { symbol: "BTC-USD", short: "BTC", price_decimals: 2, qty_decimals: 8, venues: ["coinbase", "backpack"] },
+    { symbol: "ETH-USD", short: "ETH", price_decimals: 2, qty_decimals: 8, venues: ["coinbase", "backpack"] },
   ],
+  providers: [],
+  news_enabled: false,
 };
 
 function times(list: readonly Bar[] | undefined): number[] {
@@ -74,9 +79,11 @@ describe("hello and session", () => {
   test("hello stores the server info and the instrument table", () => {
     const state = applyServerMessage(initialState(), HELLO);
     expect(state.hello).toEqual({
-      protocolVersion: 2,
+      protocolVersion: 3,
       dataMode: "live",
       venue: "backpack",
+      liveVenues: ["backpack"],
+      defaultVenue: "backpack",
       engineRunning: true,
     });
     expect(Object.keys(state.instruments)).toEqual(["BTC-USD", "ETH-USD"]);
@@ -87,11 +94,18 @@ describe("hello and session", () => {
     const first = applyServerMessage(initialState(), HELLO);
     const second = applyServerMessage(first, {
       type: "hello",
-      protocol_version: 2,
+      protocol_version: 3,
       data_mode: "replay",
-      venue: null,
+      live_venues: [],
+      venue_status: [],
+      default_venue: "replay",
+      starting_balance: "1000000000000000",
       engine_running: false,
-      instruments: [{ symbol: "SOL-USD", short: "SOL", price_decimals: 2, qty_decimals: 8 }],
+      instruments: [
+        { symbol: "SOL-USD", short: "SOL", price_decimals: 2, qty_decimals: 8, venues: ["coinbase", "backpack"] },
+      ],
+      providers: [],
+      news_enabled: false,
     });
     expect(Object.keys(second.instruments)).toEqual(["SOL-USD"]);
     expect(second.hello?.dataMode).toBe("replay");
@@ -180,7 +194,7 @@ describe("candles", () => {
   });
 
   test("a candle event without a bars array does not throw", () => {
-    const bad = { type: "candle", symbol: "BTC-USD", timeframe: "1m", snapshot: true } as unknown as Event;
+    const bad = { type: "candle", venue: "replay", symbol: "BTC-USD", timeframe: "1m", snapshot: true } as unknown as Event;
     const state = applyEvent(initialState(), bad);
     expect(state.candles[candleKey("BTC-USD", "1m")]).toEqual([]);
   });
@@ -328,5 +342,28 @@ describe("useTerminalStore", () => {
     useTerminalStore.getState().selectSymbol("SOL-USD");
     useTerminalStore.getState().selectTimeframe("15m");
     expect(useTerminalStore.getState().selection).toEqual({ symbol: "SOL-USD", timeframe: "15m" });
+  });
+});
+
+describe("protocol v3 messages", () => {
+  test("an event_batch applies its events in order", () => {
+    const events = [trade(1, "BTC-USD", "100"), trade(2, "BTC-USD", "200")].flatMap((m) =>
+      m.type === "event" ? [{ ...m.event, emit_us: null }] : [],
+    );
+    const state = applyServerMessage(initialState(), { type: "event_batch", events });
+    expect(state.tape.map((t) => t.price)).toEqual(["200", "100"]);
+    expect(state.lastTrade["BTC-USD"]?.price).toBe("200");
+  });
+
+  test("new venue, ticker, AI, news, and TWAP messages leave the state unchanged", () => {
+    const start = initialState();
+    const messages: ServerMessage[] = [
+      { type: "providers", available: [], default: null, selected: null },
+      { type: "news", available: false, items: [], updated_at: null },
+      { type: "ai_error", request_id: "r", reason: "timeout", message: "slow" },
+      { type: "event", event: { type: "venue_status", venue: "jupiter", status: "down", ts: 1 } },
+      { type: "event", event: { type: "reference_venue", symbol: "BTC-USD", venue: null } },
+    ];
+    for (const message of messages) expect(applyServerMessage(start, message)).toBe(start);
   });
 });

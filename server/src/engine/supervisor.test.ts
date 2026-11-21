@@ -22,11 +22,9 @@ import {
 
 const enc = new TextEncoder();
 
-const DB_PASSWORD = "hunter2pw";
+const API_KEY = "sk-test-key-123";
 const SECRETS: SecretSource = {
-  openaiApiKey: "sk-test-key-123",
-  databaseUrl: `postgres://user:${DB_PASSWORD}@db.example/app`,
-  directUrl: undefined,
+  openaiApiKey: API_KEY,
 };
 
 /** A controllable engine process: stdout/stderr streams, a stdin sink, and an exit promise. */
@@ -142,7 +140,7 @@ function harness(
       requests.push(request);
       if (failures > 0) {
         failures -= 1;
-        throw new Error(`spawn failed near ${SECRETS.databaseUrl}`);
+        throw new Error(`spawn failed near ${SECRETS.openaiApiKey}`);
       }
       const engine = new FakeEngine();
       engines.push(engine);
@@ -180,6 +178,7 @@ function harness(
 const PLACE: OrderCommand = {
   type: "place_order",
   account_id: "guest",
+  venue: "replay",
   order_id: "o_1_abc",
   symbol: "BTC-USD",
   side: "buy",
@@ -213,7 +212,7 @@ describe("engine command line and environment", () => {
   });
 
   test("the engine environment has no secrets", () => {
-    const env = engineEnv({ PATH: "/bin", OPENAI_API_KEY: "k", DATABASE_URL: "u", DIRECT_URL: "d", TEST_DATABASE_URL: "t" });
+    const env = engineEnv({ PATH: "/bin", OPENAI_API_KEY: "k" });
     expect(env).toEqual({ PATH: "/bin" });
   });
 
@@ -260,12 +259,12 @@ describe("EngineSupervisor stdout and stderr", () => {
   test("stderr is forwarded with the [engine] prefix and redacted (Req 15.6, 16.4)", async () => {
     const h = harness();
     h.sup.start();
-    h.latest().err(`INFO engine starting\nWARN connect ${SECRETS.databaseUrl} failed\nlast line`);
+    h.latest().err(`INFO engine starting\nWARN connect ${SECRETS.openaiApiKey} failed\nlast line`);
     h.latest().exit(0);
     await tick();
     const lines = h.logs.filter((l) => l.line.startsWith("[engine]")).map((l) => l.line);
     expect(lines).toEqual(["[engine] INFO engine starting", "[engine] WARN connect [redacted] failed", "[engine] last line"]);
-    expect(h.logs.some((l) => l.line.includes(DB_PASSWORD))).toBe(false);
+    expect(h.logs.some((l) => l.line.includes(API_KEY))).toBe(false);
   });
 });
 
@@ -312,13 +311,13 @@ describe("EngineSupervisor stdin", () => {
   test("StartReplay is sent first, then the resent subscriptions (Req 15.4)", async () => {
     const h = harness();
     h.sup.setSubscriptionProvider(() => [
-      { symbol: "BTC-USD", timeframe: "1m" },
-      { symbol: "ETH-USD", timeframe: "1h" },
+      { venue: "replay", symbol: "BTC-USD", timeframe: "1m" },
+      { venue: "coinbase", symbol: "ETH-USD", timeframe: "1h" },
     ]);
     const expected: Command[] = [
       { type: "start_replay", fixture: "demo.jsonl", speed: 1 },
-      { type: "subscribe", symbol: "BTC-USD", timeframe: "1m" },
-      { type: "subscribe", symbol: "ETH-USD", timeframe: "1h" },
+      { type: "subscribe", venue: "replay", symbol: "BTC-USD", timeframe: "1m" },
+      { type: "subscribe", venue: "coinbase", symbol: "ETH-USD", timeframe: "1h" },
     ];
     h.sup.start();
     expect(h.latest().commands()).toEqual(expected);
@@ -339,9 +338,11 @@ describe("EngineSupervisor stdin", () => {
 
   test("live mode sends no StartReplay", () => {
     const h = harness({ dataMode: "live" });
-    h.sup.setSubscriptionProvider(() => [{ symbol: "SOL-USD", timeframe: "5m" }]);
+    h.sup.setSubscriptionProvider(() => [{ venue: "backpack", symbol: "SOL-USD", timeframe: "5m" }]);
     h.sup.start();
-    expect(h.latest().commands()).toEqual([{ type: "subscribe", symbol: "SOL-USD", timeframe: "5m" }]);
+    expect(h.latest().commands()).toEqual([
+      { type: "subscribe", venue: "backpack", symbol: "SOL-USD", timeframe: "5m" },
+    ]);
   });
 });
 
@@ -376,7 +377,7 @@ describe("EngineSupervisor lifecycle", () => {
     expect(h.sup.running).toBe(true);
     const errors = h.logs.filter((l) => l.level === "error");
     expect(errors).toHaveLength(2);
-    expect(errors.some((l) => l.line.includes(DB_PASSWORD))).toBe(false);
+    expect(errors.some((l) => l.line.includes(API_KEY))).toBe(false);
   });
 
   test("account_reset is sent only on restart (Req 15.7)", async () => {

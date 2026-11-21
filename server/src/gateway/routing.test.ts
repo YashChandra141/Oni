@@ -44,8 +44,20 @@ function setup() {
   return { clock, tokens, supervisor, gateway, connect, auth };
 }
 
-const ack = (account_id: string, order_id = "o1"): Event => ({ type: "order_ack", account_id, order_id, status: "accepted" });
-const rejected = (account_id: string, order_id = "o1"): Event => ({ type: "order_rejected", account_id, order_id, reason: "risk" });
+const ack = (account_id: string, order_id = "o1"): Event => ({
+  type: "order_ack",
+  account_id,
+  venue: "replay",
+  order_id,
+  status: "accepted",
+});
+const rejected = (account_id: string, order_id = "o1"): Event => ({
+  type: "order_rejected",
+  account_id,
+  venue: "replay",
+  order_id,
+  reason: "risk",
+});
 const eventsOf = (ws: FakeSocket) => ws.messages().filter((m) => m.type === "event");
 const sessionsOf = (ws: FakeSocket) => ws.messages().filter((m) => m.type === "session");
 

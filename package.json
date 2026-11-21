@@ -10,8 +10,7 @@
   "scripts": {
     "check": "bun run check:rust && bun run check:ts",
     "check:rust": "cargo fmt --manifest-path rust/Cargo.toml --all -- --check && cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets -- -D warnings && cargo test --manifest-path rust/Cargo.toml --workspace && cargo build --manifest-path rust/Cargo.toml -p engine",
-    "db:generate": "bun run --cwd server db:generate",
-    "check:ts": "bun run db:generate && bun run typecheck && bun test",
+    "check:ts": "bun run typecheck && bun test",
     "typecheck": "tsc --noEmit -p shared && tsc --noEmit -p server && tsc --noEmit -p web",
     "gen:protocol": "cargo test --manifest-path rust/Cargo.toml -p protocol export_bindings",
     "test": "bun test"

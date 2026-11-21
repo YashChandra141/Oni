@@ -21,10 +21,11 @@ use crate::client::{ClientMessage, DataMode, NoticeKind, ServerMessage};
 use crate::codec::{decode_command, decode_line, encode_line};
 use crate::command::Command;
 use crate::event::{ErrorCode, Event, IndicatorValues};
+use crate::num::Money;
 use crate::strategies::{
     SPECIAL_CHARS, account_id, any_client_message, any_command, any_event, any_server_message,
     finite_f64, fixture_name, free_text, invalid_account_id, known_symbol, long_text, order_id,
-    timeframe, valid_command, venue,
+    timeframe, valid_command, venue, wire_event,
 };
 use crate::types::{AccountId, OrderKind, Venue};
 
@@ -100,7 +101,10 @@ fn satisfies_range_rules(command: &Command) -> bool {
         })
     };
     match command {
-        Command::Subscribe { symbol, .. } | Command::Unsubscribe { symbol, .. } => known(symbol),
+        Command::Subscribe { symbol, .. }
+        | Command::Unsubscribe { symbol, .. }
+        | Command::SubscribeTicker { symbol, .. }
+        | Command::UnsubscribeTicker { symbol, .. } => known(symbol),
         Command::PlaceOrder {
             symbol, qty, kind, ..
         } => {
@@ -134,12 +138,14 @@ fn command_account_id(command: &Command) -> Option<&str> {
         | Command::ResetAccount { account_id } => Some(account_id.as_str()),
         Command::Subscribe { .. }
         | Command::Unsubscribe { .. }
+        | Command::SubscribeTicker { .. }
+        | Command::UnsubscribeTicker { .. }
         | Command::StartReplay { .. }
         | Command::Ping { .. } => None,
     }
 }
 
-/// Whether `event` is one of the four account Events that carry an `account_id` (Req 1.9).
+/// Whether `event` is one of the account Events that carry an `account_id` (Req 1.9, 16.4).
 fn event_has_account_id(event: &Event) -> bool {
     matches!(
         event,
@@ -147,6 +153,7 @@ fn event_has_account_id(event: &Event) -> bool {
             | Event::OrderRejected { .. }
             | Event::Fill { .. }
             | Event::Position { .. }
+            | Event::Balance { .. }
     )
 }
 
@@ -157,6 +164,14 @@ fn server_message_has_account_id(message: &ServerMessage) -> bool {
         ServerMessage::Session { .. } => true,
         ServerMessage::Event { event } => event_has_account_id(event),
         ServerMessage::Hello { .. }
+        | ServerMessage::EventBatch { .. }
+        | ServerMessage::Providers { .. }
+        | ServerMessage::Analysis { .. }
+        | ServerMessage::ScanResult { .. }
+        | ServerMessage::StrategyDraft { .. }
+        | ServerMessage::AiError { .. }
+        | ServerMessage::News { .. }
+        | ServerMessage::Twap { .. }
         | ServerMessage::Preview { .. }
         | ServerMessage::ParseError { .. }
         | ServerMessage::Notice { .. }
@@ -227,6 +242,8 @@ fn assert_decode_is_well_behaved(line: &str) -> Result<(), TestCaseError> {
 const COMMAND_TAGS: &[&str] = &[
     "subscribe",
     "unsubscribe",
+    "subscribe_ticker",
+    "unsubscribe_ticker",
     "place_order",
     "cancel",
     "cancel_all",
@@ -238,6 +255,7 @@ const COMMAND_TAGS: &[&str] = &[
 const COMMAND_FIELDS: &[&str] = &[
     "type",
     "account_id",
+    "venue",
     "symbol",
     "timeframe",
     "order_id",
@@ -465,6 +483,13 @@ proptest! {
         assert_indicator_bits(&event)?;
     }
 
+    // Property P1 — validates Req 2.3, 33.2
+    // `WireEvent` (an Event plus `emit_us`) round-trips through its flattened JSON.
+    #[test]
+    fn p1_wire_event_round_trips(wire in wire_event()) {
+        assert_round_trip(&wire)?;
+    }
+
     // Property P1 — validates Req 2.3
     #[test]
     fn p1_client_message_round_trips(message in any_client_message()) {
@@ -602,9 +627,14 @@ proptest! {
         assert_round_trip(&ServerMessage::Hello {
             protocol_version: crate::PROTOCOL_VERSION,
             data_mode: DataMode::Live,
-            venue: Some(live_venue),
+            live_venues: vec![live_venue],
+            venue_status: Vec::new(),
+            default_venue: live_venue,
+            starting_balance: Money(0),
             engine_running: true,
             instruments: Vec::new(),
+            providers: Vec::new(),
+            news_enabled: false,
         })?;
     }
 }
@@ -616,10 +646,12 @@ fn notice_kind_wire_name(kind: NoticeKind) -> &'static str {
         NoticeKind::AccountReset => "account_reset",
         NoticeKind::EngineDown => "engine_down",
         NoticeKind::EngineUp => "engine_up",
-        NoticeKind::LlmDisabled => "llm_disabled",
+        NoticeKind::AiDisabled => "ai_disabled",
         NoticeKind::AuthFailed => "auth_failed",
         NoticeKind::SessionExpired => "session_expired",
         NoticeKind::SignedOut => "signed_out",
+        NoticeKind::SlowClient => "slow_client",
+        NoticeKind::ProviderChanged => "provider_changed",
     }
 }
 
@@ -627,6 +659,9 @@ fn venue_wire_name(venue: Venue) -> &'static str {
     match venue {
         Venue::Coinbase => "coinbase",
         Venue::Backpack => "backpack",
+        Venue::Jupiter => "jupiter",
+        Venue::Raydium => "raydium",
+        Venue::Replay => "replay",
     }
 }
 
@@ -639,10 +674,12 @@ fn p1_every_notice_kind_and_venue_round_trips() {
         NoticeKind::AccountReset,
         NoticeKind::EngineDown,
         NoticeKind::EngineUp,
-        NoticeKind::LlmDisabled,
+        NoticeKind::AiDisabled,
         NoticeKind::AuthFailed,
         NoticeKind::SessionExpired,
         NoticeKind::SignedOut,
+        NoticeKind::SlowClient,
+        NoticeKind::ProviderChanged,
     ];
     for kind in kinds {
         let message = ServerMessage::Notice {
@@ -656,16 +693,21 @@ fn p1_every_notice_kind_and_venue_round_trips() {
         assert_eq!(serde_json::to_string(&message).unwrap(), expected);
         assert_round_trip(&message).unwrap();
     }
-    for venue in [Venue::Coinbase, Venue::Backpack] {
+    for venue in Venue::ALL {
         let message = ServerMessage::Hello {
             protocol_version: crate::PROTOCOL_VERSION,
             data_mode: DataMode::Live,
-            venue: Some(venue),
+            live_venues: vec![venue],
+            venue_status: Vec::new(),
+            default_venue: venue,
+            starting_balance: Money(0),
             engine_running: false,
             instruments: Vec::new(),
+            providers: Vec::new(),
+            news_enabled: false,
         };
         let expected = format!(
-            r#"{{"type":"hello","protocol_version":2,"data_mode":"live","venue":"{}","engine_running":false,"instruments":[]}}"#,
+            r#"{{"type":"hello","protocol_version":3,"data_mode":"live","live_venues":["{0}"],"venue_status":[],"default_venue":"{0}","starting_balance":"0","engine_running":false,"instruments":[],"providers":[],"news_enabled":false}}"#,
             venue_wire_name(venue)
         );
         assert_eq!(serde_json::to_string(&message).unwrap(), expected);

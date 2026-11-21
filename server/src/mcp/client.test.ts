@@ -21,6 +21,7 @@ const QUOTE = {
 const FILL = {
   type: "fill",
   account_id: "guest",
+  venue: "replay",
   order_id: "o1",
   symbol: "BTC-USD",
   side: "buy",
@@ -227,10 +228,10 @@ describe("place", () => {
     const { client, sockets } = wsClient(
       orderScript((ws) => {
         // Another account's events are ignored.
-        ws.receive(event({ type: "order_ack", account_id: "w_other", order_id: "x9", status: "accepted" }));
-        ws.receive(event({ type: "order_ack", account_id: "guest", order_id: "o1", status: "accepted" }));
+        ws.receive(event({ type: "order_ack", account_id: "w_other", venue: "replay", order_id: "x9", status: "accepted" }));
+        ws.receive(event({ type: "order_ack", account_id: "guest", venue: "replay", order_id: "o1", status: "accepted" }));
         ws.receive(event(FILL));
-        ws.receive(event({ type: "order_ack", account_id: "guest", order_id: "o1", status: "filled" }));
+        ws.receive(event({ type: "order_ack", account_id: "guest", venue: "replay", order_id: "o1", status: "filled" }));
       }),
     );
     const outcome = await client.place("BUY BTC 0.01");
@@ -252,7 +253,7 @@ describe("place", () => {
   test("reports the Router or Risk_Engine rejection reason", async () => {
     const { client } = wsClient(
       orderScript((ws) => {
-        ws.receive(event({ type: "order_rejected", account_id: "guest", order_id: "o2", reason: "max_order_value" }));
+        ws.receive(event({ type: "order_rejected", account_id: "guest", venue: "replay", order_id: "o2", reason: "max_order_value" }));
       }),
     );
     const outcome = await client.place("BUY BTC 100");
@@ -275,7 +276,7 @@ describe("place", () => {
   test("an accepted order without fills is open after the settle window", async () => {
     const { client } = wsClient(
       orderScript((ws) => {
-        ws.receive(event({ type: "order_ack", account_id: "guest", order_id: "o3", status: "accepted" }));
+        ws.receive(event({ type: "order_ack", account_id: "guest", venue: "replay", order_id: "o3", status: "accepted" }));
       }),
     );
     const outcome = await client.place("BUY BTC 0.01 LMT 60000");
@@ -286,8 +287,8 @@ describe("place", () => {
   test("uses the session's account for correlation", async () => {
     const { client } = wsClient(
       orderScript((ws) => {
-        ws.receive(event({ type: "order_rejected", account_id: "guest", order_id: "g1", reason: "rate_limit" }));
-        ws.receive(event({ type: "order_ack", account_id: "w_abc", order_id: "o4", status: "accepted" }));
+        ws.receive(event({ type: "order_rejected", account_id: "guest", venue: "replay", order_id: "g1", reason: "rate_limit" }));
+        ws.receive(event({ type: "order_ack", account_id: "w_abc", venue: "replay", order_id: "o4", status: "accepted" }));
         ws.receive(event({ ...FILL, account_id: "w_abc", order_id: "o4" }));
       }),
       { accountId: "w_abc" },

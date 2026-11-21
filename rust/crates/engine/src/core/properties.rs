@@ -26,7 +26,7 @@
 use proptest::collection::vec;
 use proptest::prelude::*;
 use proptest::sample::{Index, select, subsequence};
-use protocol::{Command, Event, TimeMs, Timeframe};
+use protocol::{Command, Event, TimeMs, Timeframe, Venue};
 
 use super::Engine;
 use crate::feed::MarketMsg;
@@ -36,6 +36,15 @@ use crate::feed::strategies::{known_symbol, valid_market_msg};
 use crate::feed::synth::{DEFAULT_START_MS, SynthConfig, SynthSymbol, synth};
 
 const MIN: TimeMs = 60_000;
+
+/// A `subscribe` Command on the replay venue.
+fn subscribe_cmd(symbol: &str, timeframe: Timeframe) -> Command {
+    Command::Subscribe {
+        venue: Venue::Replay,
+        symbol: symbol.to_owned(),
+        timeframe,
+    }
+}
 
 /// One engine input, in arrival order.
 #[derive(Debug, Clone)]
@@ -97,10 +106,16 @@ fn timeframe() -> impl Strategy<Value = Timeframe> + Clone {
 
 fn command() -> impl Strategy<Value = Command> {
     prop_oneof![
-        2 => (known_symbol(), timeframe())
-            .prop_map(|(symbol, timeframe)| Command::Subscribe { symbol, timeframe }),
-        1 => (known_symbol(), timeframe())
-            .prop_map(|(symbol, timeframe)| Command::Unsubscribe { symbol, timeframe }),
+        2 => (known_symbol(), timeframe()).prop_map(|(symbol, timeframe)| Command::Subscribe {
+            venue: Venue::Replay,
+            symbol,
+            timeframe,
+        }),
+        1 => (known_symbol(), timeframe()).prop_map(|(symbol, timeframe)| Command::Unsubscribe {
+            venue: Venue::Replay,
+            symbol,
+            timeframe,
+        }),
     ]
 }
 
@@ -229,7 +244,7 @@ proptest! {
         steps in trade_steps(),
     ) {
         let mut engine = Engine::new();
-        let _ = engine.on_command(Command::Subscribe { symbol: symbol.clone(), timeframe });
+        let _ = engine.on_command(subscribe_cmd(&symbol, timeframe));
         let mut ts = start;
         let mut seen = 0;
         for (price, qty, gap) in steps {
@@ -254,6 +269,7 @@ proptest! {
 fn bug_indicators_ts_concrete_trade_at_61234() {
     let mut engine = Engine::new();
     let _ = engine.on_command(Command::Subscribe {
+        venue: Venue::Replay,
         symbol: "BTC-USD".into(),
         timeframe: Timeframe::M1,
     });
@@ -293,6 +309,7 @@ fn bug_subscribe_answer_has_indicator_history() {
         });
     }
     let answer = engine.on_command(Command::Subscribe {
+        venue: Venue::Replay,
         symbol: "BTC-USD".into(),
         timeframe: Timeframe::M1,
     });
@@ -425,7 +442,7 @@ proptest! {
 
         let mut engine = Engine::new();
         for timeframe in Timeframe::ALL {
-            let _ = engine.on_command(Command::Subscribe { symbol: symbol.clone(), timeframe });
+            let _ = engine.on_command(subscribe_cmd(&symbol, timeframe));
         }
         let mut refs: BTreeMap<Timeframe, reference::RefIndicators> = Timeframe::ALL
             .into_iter()
@@ -481,7 +498,7 @@ proptest! {
 
         // The subscribe answer's bars equal the reference bars for every timeframe.
         for timeframe in Timeframe::ALL {
-            let answer = engine.on_command(Command::Subscribe { symbol: symbol.clone(), timeframe });
+            let answer = engine.on_command(subscribe_cmd(&symbol, timeframe));
             let bars = answer.iter().find_map(|e| match e {
                 Event::Candle { snapshot: true, bars, .. } => Some(bars.clone()),
                 _ => None,
@@ -528,6 +545,7 @@ fn engine_with(keys: &[(String, Timeframe)]) -> Engine {
     let mut engine = Engine::new();
     for (symbol, timeframe) in keys {
         let _ = engine.on_command(Command::Subscribe {
+            venue: Venue::Replay,
             symbol: symbol.clone(),
             timeframe: *timeframe,
         });
@@ -613,6 +631,7 @@ proptest! {
             for (symbol, timeframes) in &played.subscriptions.clone() {
                 for &tf in timeframes {
                     expected.extend(played.on_command(Command::Subscribe {
+                        venue: Venue::Replay,
                         symbol: symbol.clone(),
                         timeframe: tf,
                     }));
@@ -631,7 +650,7 @@ proptest! {
 
 mod backfill_merge {
     use proptest::prelude::*;
-    use protocol::{Bar, Command, Event, Price, Qty, Side};
+    use protocol::{Bar, Command, Event, Price, Qty, Side, Venue};
 
     use crate::candles::properties::{BASE, MergeCase, late_trades, merge_case};
     use crate::candles::{CandleBuilder, MAX_BARS};
@@ -643,6 +662,7 @@ mod backfill_merge {
 
     fn subscribe(timeframe: protocol::Timeframe) -> Command {
         Command::Subscribe {
+            venue: Venue::Replay,
             symbol: SYM.into(),
             timeframe,
         }
@@ -797,7 +817,7 @@ mod snapshot_history {
     use proptest::prelude::*;
     use protocol::{
         Bar, Command, Event, IndicatorPoint, IndicatorValues, MAX_EVENT_LINE_BYTES, Price, Qty,
-        Side, TimeMs, Timeframe, encode_line,
+        Side, TimeMs, Timeframe, Venue, encode_line,
     };
 
     use crate::candles::properties::{BASE, MergeCase, merge_case};
@@ -876,7 +896,11 @@ mod snapshot_history {
             let MergeCase { tf, trades, venue, .. } = case;
             let len = tf.millis();
             let key = (SYM.to_owned(), tf);
-            let subscribe = Command::Subscribe { symbol: SYM.into(), timeframe: tf };
+            let subscribe = Command::Subscribe {
+                venue: Venue::Replay,
+                symbol: SYM.into(),
+                timeframe: tf,
+            };
 
             let mut engine = Engine::with_backfill();
             let _ = engine.on_command(subscribe.clone());
@@ -977,6 +1001,7 @@ mod snapshot_history {
             .map(|b| IndicatorPoint { t: b.t, values })
             .collect();
         let event = Event::Candle {
+            venue: Venue::Replay,
             symbol: "BTC-USD".into(),
             timeframe: Timeframe::M1,
             snapshot: true,

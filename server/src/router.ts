@@ -45,6 +45,8 @@ import {
   type OrderKind,
   OrderIdSchema,
   type Side,
+  type Venue,
+  VenueSchema,
   fromBigInt,
   toBigInt,
 } from "./protocol.ts";
@@ -81,6 +83,12 @@ export interface SubmitOrder {
   readonly side: Side;
   readonly qty: bigint;
   readonly kind: RiskOrderKind;
+  /**
+   * Venue of the confirmed Order_Preview. Absent means the Router's default venue (`deps.venue`).
+   * A present value must be one of the five Venue identifiers; anything else is `invalid_order`.
+   * It is never an account field (trading-safety rule 10).
+   */
+  readonly venue?: Venue;
 }
 
 export type RouterRejectReason = RejectReason | "engine_unavailable" | "session_expired" | "invalid_order";
@@ -111,9 +119,9 @@ export interface RouterSender {
 export const closedOrderSender: RouterSender = Object.freeze({ send: (): boolean => false });
 
 export interface MarketPrices {
-  lastPrice(symbol: string): bigint | null;
-  bestBid(symbol: string): bigint | null;
-  bestAsk(symbol: string): bigint | null;
+  lastPrice(symbol: string, venue?: Venue): bigint | null;
+  bestBid(symbol: string, venue?: Venue): bigint | null;
+  bestAsk(symbol: string, venue?: Venue): bigint | null;
 }
 
 export interface RouterAccounts extends AccountView {
@@ -141,10 +149,10 @@ export interface RouterDeps {
   /** Activity_Log of the current engine run (oni-terminal-v2 Req 2.1, 2.2). */
   readonly activity: RouterActivity;
   /**
-   * Venue written on each record: the configured live venue, or `replay`. Task 2.x replaces it
-   * with the venue of the confirmed Order_Preview once protocol v3 carries one.
+   * Default venue: the configured live venue, or `replay`. Used for an order request that
+   * carries no venue. The venue of a confirmed Order_Preview (Task 9.x) overrides it.
    */
-  readonly venue: () => string;
+  readonly venue: () => Venue;
   /** Epoch milliseconds. */
   readonly now: () => number;
   readonly newOrderId: () => OrderId;
@@ -180,16 +188,16 @@ function positivePrice(value: bigint | null | undefined): bigint | null {
 /** Reads last trade price and best bid/ask from the market state as bigint ticks. */
 export function marketPrices(market: Pick<MarketState, "lastTrade" | "topOfBook">): MarketPrices {
   return {
-    lastPrice: (symbol) => {
-      const last = market.lastTrade(symbol);
+    lastPrice: (symbol, venue) => {
+      const last = market.lastTrade(symbol, venue);
       return last === null ? null : positivePrice(toBigInt(last.price));
     },
-    bestBid: (symbol) => {
-      const level = market.topOfBook(symbol)?.bid ?? null;
+    bestBid: (symbol, venue) => {
+      const level = market.topOfBook(symbol, venue)?.bid ?? null;
       return level === null ? null : positivePrice(toBigInt(level.price));
     },
-    bestAsk: (symbol) => {
-      const level = market.topOfBook(symbol)?.ask ?? null;
+    bestAsk: (symbol, venue) => {
+      const level = market.topOfBook(symbol, venue)?.ask ?? null;
       return level === null ? null : positivePrice(toBigInt(level.price));
     },
   };
@@ -218,13 +226,16 @@ function normalizeKind(raw: unknown): RiskOrderKind | null {
 function normalizeOrder(input: SubmitOrder): SubmitOrder | null {
   const raw: unknown = input;
   if (typeof raw !== "object" || raw === null) return null;
-  const r = raw as { symbol?: unknown; side?: unknown; qty?: unknown; kind?: unknown };
+  const r = raw as { symbol?: unknown; side?: unknown; qty?: unknown; kind?: unknown; venue?: unknown };
   if (typeof r.symbol !== "string" || instrumentBySymbol(r.symbol) === undefined) return null;
   if (r.side !== "buy" && r.side !== "sell") return null;
   if (typeof r.qty !== "bigint" || r.qty <= 0n || r.qty > I64_MAX) return null;
   const kind = normalizeKind(r.kind);
   if (kind === null) return null;
-  return { symbol: r.symbol, side: r.side, qty: r.qty, kind };
+  if (r.venue === undefined) return { symbol: r.symbol, side: r.side, qty: r.qty, kind };
+  const venue = VenueSchema.safeParse(r.venue);
+  if (!venue.success) return null;
+  return { symbol: r.symbol, side: r.side, qty: r.qty, kind, venue: venue.data };
 }
 
 function wireKind(kind: RiskOrderKind): OrderKind {
@@ -305,6 +316,9 @@ export class Router {
     // 3. Malformed request.
     const order = normalizeOrder(input);
     if (order === null) return fail("invalid_order");
+    // The order's venue (from the confirmed preview) or the default; one value for the market
+    // lookups, the PlaceOrder, and the Activity_Log record.
+    const venue = order.venue ?? this.#venue();
 
     // 4. Risk_Engine (Req 18.2). Position and open orders are the order's account's.
     let risk: RiskResult;
@@ -323,9 +337,9 @@ export class Router {
           killSwitch: deps.risk.killSwitch,
           positionLots: deps.accounts.positionLots(accountId, order.symbol),
           openOrderCount: deps.accounts.openOrderCount(accountId),
-          lastPrice: deps.market.lastPrice(order.symbol),
-          bestBid: deps.market.bestBid(order.symbol),
-          bestAsk: deps.market.bestAsk(order.symbol),
+          lastPrice: deps.market.lastPrice(order.symbol, venue),
+          bestBid: deps.market.bestBid(order.symbol, venue),
+          bestAsk: deps.market.bestAsk(order.symbol, venue),
           rate: this.#rates.get(origin.connectionId) ?? [],
           now: deps.now(),
         },
@@ -343,6 +357,7 @@ export class Router {
     const command: OrderCommand = {
       type: "place_order",
       account_id: accountId,
+      venue,
       order_id: orderId,
       symbol: order.symbol,
       side: order.side,
@@ -353,7 +368,7 @@ export class Router {
 
     this.#record({
       kind: "order",
-      venue: this.#venue(),
+      venue,
       accountId,
       orderId,
       symbol: order.symbol,
@@ -462,7 +477,7 @@ export class Router {
     }
   }
 
-  #venue(): string {
+  #venue(): Venue {
     try {
       return this.#deps.venue();
     } catch {
@@ -481,9 +496,12 @@ export class Router {
 
   #reject(orderId: OrderId, origin: OrderOrigin, input: SubmitOrder, reason: RouterRejectReason): SubmitResult {
     const accountId = origin.session.accountId;
+    // A malformed request may carry a bad venue: record the default then.
+    const requested = VenueSchema.safeParse((input as { venue?: unknown } | null)?.venue);
+    const venue = requested.success ? requested.data : this.#venue();
     this.#record({
       kind: "rejection",
-      venue: this.#venue(),
+      venue,
       accountId,
       orderId,
       reason,
@@ -493,7 +511,13 @@ export class Router {
     });
     this.#deps.logger.info(`[router] order ${orderId} rejected for ${accountId}: ${reason}`);
     try {
-      this.#deps.onRejected(origin.connectionId, { type: "order_rejected", account_id: accountId, order_id: orderId, reason });
+      this.#deps.onRejected(origin.connectionId, {
+        type: "order_rejected",
+        account_id: accountId,
+        venue,
+        order_id: orderId,
+        reason,
+      });
     } catch (err) {
       this.#deps.logger.error(`[router] rejection hook failed: ${err instanceof Error ? err.name : "unknown"}`);
     }

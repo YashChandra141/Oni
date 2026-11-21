@@ -5,7 +5,6 @@
 rust/target
 web/*
 !web/package.json
-server/src/generated
 **/.env
 **/.env.*
 !**/.env.example

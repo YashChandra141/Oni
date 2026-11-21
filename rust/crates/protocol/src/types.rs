@@ -25,7 +25,7 @@ pub enum Side {
 
 /// Candle interval, aligned to UTC boundaries.
 ///
-/// On the wire: `"1m"`, `"5m"`, `"15m"`, `"1h"`, `"1d"`.
+/// On the wire: `"1m"`, `"5m"`, `"15m"`, `"1h"`, `"4h"`, `"1d"`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, TS)]
 #[ts(export, export_to = crate::TS_EXPORT_DIR)]
 pub enum Timeframe {
@@ -37,13 +37,22 @@ pub enum Timeframe {
     M15,
     #[serde(rename = "1h")]
     H1,
+    #[serde(rename = "4h")]
+    H4,
     #[serde(rename = "1d")]
     D1,
 }
 
 impl Timeframe {
-    /// Every timeframe, in the order of the keys 1 to 5.
-    pub const ALL: [Timeframe; 5] = [Self::M1, Self::M5, Self::M15, Self::H1, Self::D1];
+    /// Every timeframe, shortest first.
+    pub const ALL: [Timeframe; 6] = [
+        Self::M1,
+        Self::M5,
+        Self::M15,
+        Self::H1,
+        Self::H4,
+        Self::D1,
+    ];
 
     /// Length of one interval in milliseconds.
     pub const fn millis(self) -> i64 {
@@ -52,6 +61,7 @@ impl Timeframe {
             Self::M5 => 5 * 60_000,
             Self::M15 => 15 * 60_000,
             Self::H1 => 60 * 60_000,
+            Self::H4 => 4 * 60 * 60_000,
             Self::D1 => 24 * 60 * 60_000,
         }
     }
@@ -63,6 +73,7 @@ impl Timeframe {
             Self::M5 => "5m",
             Self::M15 => "15m",
             Self::H1 => "1h",
+            Self::H4 => "4h",
             Self::D1 => "1d",
         }
     }
@@ -192,15 +203,162 @@ impl<'de> Deserialize<'de> for AccountId {
     }
 }
 
-/// Source of live public market data, chosen by `LIVE_VENUE` (Req 1.11, design Decision A5).
+/// A source of market data: one of the four live public feeds, or recorded fixtures
+/// (Req 15.1, 15.2, design "Types").
 ///
-/// On the wire: `"coinbase"`, `"backpack"`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+/// On the wire: `"coinbase"`, `"backpack"`, `"jupiter"`, `"raydium"`, `"replay"`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
 #[serde(rename_all = "snake_case")]
 #[ts(export, export_to = crate::TS_EXPORT_DIR)]
 pub enum Venue {
     Coinbase,
     Backpack,
+    Jupiter,
+    Raydium,
+    /// Recorded fixtures. Fixture lines carry no venue and are tagged `replay` on read.
+    #[default]
+    Replay,
+}
+
+impl Venue {
+    /// Every venue, in wire order.
+    pub const ALL: [Venue; 5] = [
+        Self::Coinbase,
+        Self::Backpack,
+        Self::Jupiter,
+        Self::Raydium,
+        Self::Replay,
+    ];
+
+    /// The four live venues, in the default `LIVE_VENUES` order.
+    pub const LIVE: [Venue; 4] = [Self::Coinbase, Self::Backpack, Self::Jupiter, Self::Raydium];
+
+    /// Whether the venue has a real order book (`Cex`) or only prices (`Dex`). Replay is `Cex`.
+    pub const fn kind(self) -> VenueKind {
+        match self {
+            Self::Coinbase | Self::Backpack | Self::Replay => VenueKind::Cex,
+            Self::Jupiter | Self::Raydium => VenueKind::Dex,
+        }
+    }
+
+    /// Wire name, e.g. `"backpack"`.
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Coinbase => "coinbase",
+            Self::Backpack => "backpack",
+            Self::Jupiter => "jupiter",
+            Self::Raydium => "raydium",
+            Self::Replay => "replay",
+        }
+    }
+}
+
+impl fmt::Display for Venue {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+/// How a [`Venue`] supplies market data. A `Dex` venue has prices only, so its book is
+/// synthetic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = crate::TS_EXPORT_DIR)]
+pub enum VenueKind {
+    Cex,
+    Dex,
+}
+
+/// Connection state of one venue.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = crate::TS_EXPORT_DIR)]
+pub enum VenueStatusKind {
+    Connected,
+    Connecting,
+    Stale,
+    Down,
+    Disabled,
+}
+
+/// Health of one (venue, symbol) pair.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = crate::TS_EXPORT_DIR)]
+pub enum PairHealth {
+    Ok,
+    Stale,
+    Suspect,
+}
+
+/// 24-hour statistics of one (venue, symbol) pair, from the 1h bar series.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = crate::TS_EXPORT_DIR)]
+pub struct Ticker {
+    pub open: Price,
+    pub high: Price,
+    pub low: Price,
+    pub last: Price,
+    /// `null` when the venue supplies no volume (DEX venues).
+    pub volume: Option<crate::num::Qty>,
+    pub change_bps: i32,
+    /// True while fewer than 24 hourly bars back the window.
+    pub partial: bool,
+}
+
+/// An AI Copilot action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = crate::TS_EXPORT_DIR)]
+pub enum CopilotAction {
+    Analyze,
+    Ask,
+    CreateStrategy,
+    Scan,
+}
+
+/// Direction of an AI analysis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = crate::TS_EXPORT_DIR)]
+pub enum AnalysisBias {
+    Long,
+    Short,
+    Neutral,
+}
+
+/// An LLM provider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = crate::TS_EXPORT_DIR)]
+pub enum ProviderId {
+    Openai,
+    Anthropic,
+    Nvidia,
+    Ollama,
+}
+
+/// One news headline. External text: clients show it, nothing executes it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = crate::TS_EXPORT_DIR)]
+pub struct NewsItem {
+    pub id: String,
+    pub title: String,
+    pub source: String,
+    pub url: String,
+    #[ts(type = "number")]
+    pub published_at: TimeMs,
+    pub symbols: Vec<String>,
+}
+
+/// State of a TWAP plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = crate::TS_EXPORT_DIR)]
+pub enum TwapStatus {
+    Active,
+    Done,
+    Canceled,
 }
 
 #[cfg(test)]
@@ -230,6 +388,7 @@ mod tests {
             ("5m", 300_000),
             ("15m", 900_000),
             ("1h", 3_600_000),
+            ("4h", 14_400_000),
             ("1d", 86_400_000),
         ];
         for (tf, (name, millis)) in Timeframe::ALL.into_iter().zip(expected) {
@@ -327,5 +486,64 @@ mod tests {
         assert_eq!(parse::<Venue>("\"backpack\"").unwrap(), Venue::Backpack);
         assert!(parse::<Venue>("\"Backpack\"").is_err());
         assert!(parse::<Venue>("\"binance\"").is_err());
+    }
+
+    #[test]
+    fn venue_names_kinds_and_lists() {
+        for venue in Venue::ALL {
+            assert_eq!(json(&venue), format!("\"{}\"", venue.name()));
+            assert_eq!(parse::<Venue>(&json(&venue)).unwrap(), venue);
+        }
+        let live = [
+            Venue::Coinbase,
+            Venue::Backpack,
+            Venue::Jupiter,
+            Venue::Raydium,
+        ];
+        assert_eq!(Venue::LIVE, live);
+        assert_eq!(Venue::Coinbase.kind(), VenueKind::Cex);
+        assert_eq!(Venue::Backpack.kind(), VenueKind::Cex);
+        assert_eq!(Venue::Replay.kind(), VenueKind::Cex);
+        assert_eq!(Venue::Jupiter.kind(), VenueKind::Dex);
+        assert_eq!(Venue::Raydium.kind(), VenueKind::Dex);
+    }
+
+    #[test]
+    fn small_enums_use_snake_case() {
+        assert_eq!(json(&VenueStatusKind::Connecting), "\"connecting\"");
+        assert_eq!(json(&PairHealth::Suspect), "\"suspect\"");
+        assert_eq!(json(&CopilotAction::CreateStrategy), "\"create_strategy\"");
+        assert_eq!(json(&AnalysisBias::Neutral), "\"neutral\"");
+        assert_eq!(json(&ProviderId::Nvidia), "\"nvidia\"");
+        assert_eq!(json(&TwapStatus::Canceled), "\"canceled\"");
+    }
+
+    #[test]
+    fn ticker_and_news_item_round_trip() {
+        let ticker = Ticker {
+            open: Price(1),
+            high: Price(3),
+            low: Price(1),
+            last: Price(2),
+            volume: None,
+            change_bps: -25,
+            partial: true,
+        };
+        let expected = concat!(
+            r#"{"open":"1","high":"3","low":"1","last":"2","volume":null,"#,
+            r#""change_bps":-25,"partial":true}"#
+        );
+        assert_eq!(json(&ticker), expected);
+        assert_eq!(parse::<Ticker>(expected).unwrap(), ticker);
+
+        let item = NewsItem {
+            id: "n1".into(),
+            title: "t".into(),
+            source: "s".into(),
+            url: "https://example.com/a".into(),
+            published_at: 5,
+            symbols: vec!["BTC-USD".into()],
+        };
+        assert_eq!(parse::<NewsItem>(&json(&item)).unwrap(), item);
     }
 }

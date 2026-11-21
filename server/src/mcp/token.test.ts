@@ -161,11 +161,12 @@ describe("tool results never contain the token (Req 24.11)", () => {
       if (msg.type === "authenticate") sock.receive(session("w_abc", "abc"));
       if (msg.type === "command_text") sock.receive(previewReply(msg.request_id));
       if (msg.type === "confirm") {
-        sock.receive(event({ type: "order_ack", account_id: "w_abc", order_id: "o1", status: "accepted" }));
+        sock.receive(event({ type: "order_ack", account_id: "w_abc", venue: "replay", order_id: "o1", status: "accepted" }));
         sock.receive(
           event({
             type: "fill",
             account_id: "w_abc",
+            venue: "replay",
             order_id: "o1",
             symbol: "BTC-USD",
             side: "buy",

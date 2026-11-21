@@ -17,9 +17,15 @@
 //   every `hello`. A notice `auth_failed`, `session_expired`, or `signed_out` clears the stored
 //   token (done here, not in the store reducer, so the reducers stay pure).
 
-import type { ClientMessage, ServerMessage, Timeframe } from "../../shared/protocol/index";
+import type { ClientMessage, ServerMessage, Timeframe, Venue } from "../../shared/protocol/index";
 import type { TokenSource } from "./auth";
 import { createBackoff, nextDelay, resetBackoff } from "./backoff";
+
+/**
+ * The venue every web subscription names. Protocol v3 subscriptions carry a venue; the venue
+ * picker and the per-venue panels arrive in Task 14.3, so the web UI uses `replay` until then.
+ */
+export const WEB_VENUE: Venue = "replay";
 
 /** How often the client sends a `ping` while the socket is open. */
 export const PING_INTERVAL_MS = 15_000;
@@ -218,7 +224,7 @@ export function createTerminalSocket(url: string, deps: SocketDeps): TerminalSoc
       deps.onEvent({ type: "open" });
       // Req 33.3: resubscribe before anything else goes out.
       for (const sub of subs.values()) {
-        transmit({ type: "subscribe", symbol: sub.symbol, timeframe: sub.timeframe });
+        transmit({ type: "subscribe", venue: WEB_VENUE, symbol: sub.symbol, timeframe: sub.timeframe });
       }
       schedulePing();
     };
@@ -272,10 +278,10 @@ export function createTerminalSocket(url: string, deps: SocketDeps): TerminalSoc
   return {
     send,
     subscribe(symbol, timeframe) {
-      send({ type: "subscribe", symbol, timeframe });
+      send({ type: "subscribe", venue: WEB_VENUE, symbol, timeframe });
     },
     unsubscribe(symbol, timeframe) {
-      send({ type: "unsubscribe", symbol, timeframe });
+      send({ type: "unsubscribe", venue: WEB_VENUE, symbol, timeframe });
     },
     close() {
       if (closed) return;

@@ -14,10 +14,6 @@ import {
   type EnvRecord,
 } from "./config.ts";
 
-const DB_PASSWORD = "s3cr3t-db-pw";
-const DIRECT_PASSWORD = "s3cr3t-direct-pw";
-const DATABASE_URL = `postgresql://app:${DB_PASSWORD}@ep-example-pooler.us-east-2.aws.neon.tech/haunted?sslmode=require`;
-const DIRECT_URL = `postgres://app:${DIRECT_PASSWORD}@ep-example.us-east-2.aws.neon.tech/haunted?sslmode=require`;
 const OPENAI_API_KEY = "sk-test-0123456789abcdef";
 /** 40 ASCII characters = 40 UTF-8 bytes. */
 const SESSION_SECRET = "test-session-secret-0123456789-abcdefghi";
@@ -69,29 +65,23 @@ describe("loadConfig defaults (Req 16.1)", () => {
     expect(config.killSwitch).toBe(false);
     expect(config.openaiApiKey).toBeUndefined();
     expect(config.openaiModel).toBe(DEFAULT_OPENAI_MODEL);
-    expect(config.databaseUrl).toBeUndefined();
-    expect(config.directUrl).toBeUndefined();
-    expect(config.dbAdapter).toBeUndefined();
     expect(config.nodeEnv).toBeUndefined();
     expect(config.isProduction).toBe(false);
     expect(config.liveVenue).toBe("backpack");
     expect(config.webUrl).toBe("http://localhost:3000");
-    // Req 16.6: outside production, no DATABASE_URL means an in-memory journal with a warning.
     // Req 16.8: no SESSION_SECRET means a per-process secret with a warning.
-    expect(warnings).toHaveLength(2);
-    expect(warnings[0]).toContain("DATABASE_URL");
-    expect(warnings[1]).toContain("SESSION_SECRET");
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("SESSION_SECRET");
   });
 
   test("empty strings count as unset", () => {
     const blank: Record<string, string> = {};
-    for (const name of ["PORT", "ENGINE_PATH", "DATA_MODE", "DATABASE_URL", "DB_ADAPTER", "NODE_ENV", "KILL_SWITCH"]) {
+    for (const name of ["PORT", "ENGINE_PATH", "DATA_MODE", "NODE_ENV", "KILL_SWITCH"]) {
       blank[name] = "";
     }
     const { config } = ok(blank);
     expect(config.port).toBe(8080);
     expect(config.dataMode).toBe("replay");
-    expect(config.databaseUrl).toBeUndefined();
   });
 
   test("ENGINE_PATH default gets .exe on win32 only", () => {
@@ -111,9 +101,6 @@ describe("loadConfig defaults (Req 16.1)", () => {
       REPLAY_FIXTURE: "btc-2026-11.jsonl",
       ALLOWED_ORIGINS: "http://localhost:3000, https://haunted.example.com/ ,http://localhost:3000",
       KILL_SWITCH: "true",
-      DATABASE_URL,
-      DIRECT_URL,
-      DB_ADAPTER: "pg",
       OPENAI_API_KEY,
       OPENAI_MODEL: "some-model",
       LIVE_VENUE: "coinbase",
@@ -130,9 +117,6 @@ describe("loadConfig defaults (Req 16.1)", () => {
     expect(config.replayFixture).toBe("btc-2026-11.jsonl");
     expect(config.allowedOrigins).toEqual(["http://localhost:3000", "https://haunted.example.com"]);
     expect(config.killSwitch).toBe(true);
-    expect(config.databaseUrl).toBe(DATABASE_URL);
-    expect(config.directUrl).toBe(DIRECT_URL);
-    expect(config.dbAdapter).toBe("pg");
     expect(config.openaiApiKey).toBe(OPENAI_API_KEY);
     expect(config.openaiModel).toBe("some-model");
     expect(config.isProduction).toBe(true);
@@ -152,10 +136,6 @@ describe("invalid values (Req 16.2)", () => {
     ["ALLOWED_ORIGINS", "javascript:alert(1)"],
     ["ALLOWED_ORIGINS", "http://ok.test,https://evil.test/path-zz"],
     ["ALLOWED_ORIGINS", " , "],
-    ["DATABASE_URL", `mysql://app:${DB_PASSWORD}@db.example.com/haunted`],
-    ["DATABASE_URL", `not a url ${DB_PASSWORD}`],
-    ["DIRECT_URL", `https://app:${DIRECT_PASSWORD}@db.example.com/haunted`],
-    ["DB_ADAPTER", "neon-zz"],
     ["KILL_SWITCH", "yes-zz"],
     ["NODE_ENV", "staging-zz"],
     ["LIVE_VENUE", "kraken-zz"],
@@ -174,8 +154,6 @@ describe("invalid values (Req 16.2)", () => {
       expect(error.message).toContain(name);
       const text = errorText(error);
       expect(text).not.toContain(value);
-      expect(text).not.toContain(DB_PASSWORD);
-      expect(text).not.toContain(DIRECT_PASSWORD);
     });
   }
 
@@ -185,50 +163,29 @@ describe("invalid values (Req 16.2)", () => {
   });
 });
 
-describe("production requires both database URLs and SESSION_SECRET (Req 16.5, 16.7)", () => {
-  test("nothing set: all three names reported as missing", () => {
+describe("production requires SESSION_SECRET (Req 16.7)", () => {
+  test("nothing set: SESSION_SECRET reported as missing", () => {
     const error = fail({ NODE_ENV: "production" });
+    expect(error.issues.map((i) => [i.variable, i.problem])).toEqual([["SESSION_SECRET", "missing"]]);
+  });
+
+  test("missing and invalid issues are reported together", () => {
+    const error = fail({ NODE_ENV: "production", PORT: "nope" });
     expect(error.issues.map((i) => [i.variable, i.problem])).toEqual([
-      ["DATABASE_URL", "missing"],
-      ["DIRECT_URL", "missing"],
+      ["PORT", "invalid"],
       ["SESSION_SECRET", "missing"],
     ]);
   });
 
-  test("only DATABASE_URL and SESSION_SECRET set: DIRECT_URL reported", () => {
-    const error = fail({ NODE_ENV: "production", DATABASE_URL, SESSION_SECRET });
-    expect(error.issues.map((i) => i.variable)).toEqual(["DIRECT_URL"]);
-    expect(errorText(error)).not.toContain(DB_PASSWORD);
-    expect(errorText(error)).not.toContain(SESSION_SECRET);
-  });
-
-  test("only DIRECT_URL and SESSION_SECRET set: DATABASE_URL reported", () => {
-    const error = fail({ NODE_ENV: "production", DIRECT_URL, SESSION_SECRET });
-    expect(error.issues.map((i) => i.variable)).toEqual(["DATABASE_URL"]);
-  });
-
-  test("missing and invalid issues are reported together", () => {
-    const error = fail({ NODE_ENV: "production", PORT: "nope", DIRECT_URL: "mysql://x@y/z", SESSION_SECRET });
-    expect(error.issues.map((i) => [i.variable, i.problem])).toEqual([
-      ["PORT", "invalid"],
-      ["DIRECT_URL", "invalid"],
-      ["DATABASE_URL", "missing"],
-    ]);
-  });
-
-  test("all three set: ok, with no warnings", () => {
-    const { config, warnings } = ok({ NODE_ENV: "production", DATABASE_URL, DIRECT_URL, SESSION_SECRET });
+  test("SESSION_SECRET set: ok, with no warnings", () => {
+    const { config, warnings } = ok({ NODE_ENV: "production", SESSION_SECRET });
     expect(config.isProduction).toBe(true);
     expect(warnings).toEqual([]);
-  });
-
-  test("outside production, missing URLs are allowed", () => {
-    expect(ok({ NODE_ENV: "development" }).config.databaseUrl).toBeUndefined();
   });
 });
 
 describe("SESSION_SECRET (Req 16.7, 16.8)", () => {
-  const prod = { NODE_ENV: "production", DATABASE_URL, DIRECT_URL } as const;
+  const prod = { NODE_ENV: "production" } as const;
 
   test("production without SESSION_SECRET: only that name is reported, as missing", () => {
     const error = fail(prod);
@@ -415,8 +372,8 @@ describe("WEB_URL (Req 16.1, 16.9)", () => {
 });
 
 describe("secrets stay out of serialized config (Req 16.4)", () => {
-  const { config } = ok({ DATABASE_URL, DIRECT_URL, OPENAI_API_KEY, SESSION_SECRET });
-  const leaks = [DATABASE_URL, DIRECT_URL, DB_PASSWORD, DIRECT_PASSWORD, OPENAI_API_KEY, SESSION_SECRET];
+  const { config } = ok({ OPENAI_API_KEY, SESSION_SECRET });
+  const leaks = [OPENAI_API_KEY, SESSION_SECRET];
 
   function expectNoLeak(text: string): void {
     for (const secret of leaks) expect(text).not.toContain(secret);
@@ -427,8 +384,6 @@ describe("secrets stay out of serialized config (Req 16.4)", () => {
     expectNoLeak(json);
     const parsed: unknown = JSON.parse(json);
     expect(parsed).toMatchObject({
-      databaseUrl: REDACTED,
-      directUrl: REDACTED,
       openaiApiKey: REDACTED,
       sessionSecret: REDACTED,
       port: 8080,
@@ -437,7 +392,7 @@ describe("secrets stay out of serialized config (Req 16.4)", () => {
 
   test("unset secrets show as null, except the session secret, which always has a value", () => {
     const view = ok({}).config.toJSON();
-    expect(view).toMatchObject({ databaseUrl: null, directUrl: null, openaiApiKey: null });
+    expect(view).toMatchObject({ openaiApiKey: null });
     expect(view).toMatchObject({ sessionSecret: REDACTED });
   });
 
@@ -464,20 +419,18 @@ describe("secrets stay out of serialized config (Req 16.4)", () => {
   test("spread, Object.keys, and Object.entries", () => {
     expectNoLeak(JSON.stringify({ ...config }));
     expectNoLeak(JSON.stringify(Object.entries(config)));
-    expect(Object.keys(config)).not.toContain("databaseUrl");
+    expect(Object.keys(config)).not.toContain("openaiApiKey");
     expect(Object.keys(config)).not.toContain("sessionSecret");
   });
 
   test("the getters still return the real values", () => {
     expect(config.sessionSecret).toBe(SESSION_SECRET);
-    expect(config.databaseUrl).toBe(DATABASE_URL);
-    expect(config.directUrl).toBe(DIRECT_URL);
     expect(config.openaiApiKey).toBe(OPENAI_API_KEY);
   });
 });
 
 describe("redactSecrets (Req 16.4)", () => {
-  const { config } = ok({ DATABASE_URL, DIRECT_URL, OPENAI_API_KEY, SESSION_SECRET });
+  const { config } = ok({ OPENAI_API_KEY, SESSION_SECRET });
 
   test("replaces SESSION_SECRET wherever it appears", () => {
     const out = redactSecrets(`key=${SESSION_SECRET}; again ${SESSION_SECRET}`, config);
@@ -485,41 +438,19 @@ describe("redactSecrets (Req 16.4)", () => {
     expect(out).not.toContain(SESSION_SECRET);
   });
 
-  test("replaces full URLs, passwords, and the API key", () => {
-    const text = [
-      `connect ${DATABASE_URL} failed`,
-      `migrate via ${DIRECT_URL}`,
-      `auth failed for password ${DB_PASSWORD} and ${DIRECT_PASSWORD}`,
-      `Authorization: Bearer ${OPENAI_API_KEY}`,
-    ].join("\n");
-    const out = redactSecrets(text, config);
-    for (const secret of [DATABASE_URL, DIRECT_URL, DB_PASSWORD, DIRECT_PASSWORD, OPENAI_API_KEY]) {
-      expect(out).not.toContain(secret);
-    }
-    expect(out).toBe(
-      [
-        `connect ${REDACTED} failed`,
-        `migrate via ${REDACTED}`,
-        `auth failed for password ${REDACTED} and ${REDACTED}`,
-        `Authorization: Bearer ${REDACTED}`,
-      ].join("\n"),
-    );
+  test("replaces the API key", () => {
+    const out = redactSecrets(`Authorization: Bearer ${OPENAI_API_KEY}`, config);
+    expect(out).not.toContain(OPENAI_API_KEY);
+    expect(out).toBe(`Authorization: Bearer ${REDACTED}`);
   });
 
   test("replaces every occurrence", () => {
     expect(redactSecrets(`${OPENAI_API_KEY}|${OPENAI_API_KEY}`, config)).toBe(`${REDACTED}|${REDACTED}`);
   });
 
-  test("redacts both the percent-encoded and decoded password", () => {
-    const url = "postgresql://app:p%40ss%2Fw0rd@db.example.com/haunted";
-    const source = { openaiApiKey: undefined, databaseUrl: url, directUrl: undefined };
-    const out = redactSecrets(`raw p%40ss%2Fw0rd decoded p@ss/w0rd url ${url}`, source);
-    expect(out).toBe(`raw ${REDACTED} decoded ${REDACTED} url ${REDACTED}`);
-  });
-
   test("leaves text unchanged when there is nothing to redact", () => {
     expect(redactSecrets("engine started", config)).toBe("engine started");
-    expect(redactSecrets(`password ${DB_PASSWORD}`, ok({}).config)).toBe(`password ${DB_PASSWORD}`);
+    expect(redactSecrets(`key ${OPENAI_API_KEY}`, ok({}).config)).toBe(`key ${OPENAI_API_KEY}`);
   });
 });
 
@@ -547,10 +478,9 @@ describe("exitOnInvalidConfig / loadConfigOrExit (Req 16.2, 16.5)", () => {
   test("logs variable names only and exits with code 1", () => {
     const { lines, deps } = capture();
     const badPort = "bad-port-value-zz";
-    const badDirect = `mysql://app:${DIRECT_PASSWORD}@db.example.com/x`;
     let code: number | undefined;
     try {
-      loadConfigOrExit({ NODE_ENV: "production", PORT: badPort, DIRECT_URL: badDirect }, { platform: "linux" }, deps);
+      loadConfigOrExit({ NODE_ENV: "production", PORT: badPort }, { platform: "linux" }, deps);
     } catch (e) {
       if (!(e instanceof Exit)) throw e;
       code = e.code;
@@ -558,11 +488,8 @@ describe("exitOnInvalidConfig / loadConfigOrExit (Req 16.2, 16.5)", () => {
     expect(code).toBe(1);
     const logged = lines.join("\n");
     expect(logged).toContain("PORT");
-    expect(logged).toContain("DIRECT_URL");
-    expect(logged).toContain("DATABASE_URL");
+    expect(logged).toContain("SESSION_SECRET");
     expect(logged).not.toContain(badPort);
-    expect(logged).not.toContain(badDirect);
-    expect(logged).not.toContain(DIRECT_PASSWORD);
   });
 
   test("exitOnInvalidConfig exits with code 1", () => {
@@ -570,13 +497,12 @@ describe("exitOnInvalidConfig / loadConfigOrExit (Req 16.2, 16.5)", () => {
     expect(() => exitOnInvalidConfig(fail({ PORT: "x" }), deps)).toThrow(new Exit(1));
   });
 
-  test("valid config returns and logs the in-memory journal and session secret warnings", () => {
+  test("valid config returns and logs the session secret warning", () => {
     const { lines, deps } = capture();
     const config = loadConfigOrExit({}, { platform: "linux" }, deps);
     expect(config.port).toBe(8080);
-    expect(lines).toHaveLength(2);
-    expect(lines[0]).toStartWith("warn [config] DATABASE_URL");
-    expect(lines[1]).toStartWith("warn [config] SESSION_SECRET");
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toStartWith("warn [config] SESSION_SECRET");
   });
 });
 

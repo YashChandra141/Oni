@@ -59,6 +59,7 @@ function toMessage(step: Step): ServerMessage {
         type: "event",
         event: {
           type: "candle",
+          venue: "replay",
           symbol: SYMBOL,
           timeframe: step.tf,
           snapshot: step.kind === "snapshot",
@@ -70,6 +71,7 @@ function toMessage(step: Step): ServerMessage {
         type: "event",
         event: {
           type: "indicators",
+          venue: "replay",
           symbol: SYMBOL,
           timeframe: step.tf,
           // Mid-bucket timestamp: the store buckets it to the candle open time.

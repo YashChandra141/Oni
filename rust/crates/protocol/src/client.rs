@@ -6,10 +6,13 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::event::Event;
+use crate::event::{Event, WireEvent};
 use crate::instrument::{INSTRUMENTS, Instrument};
-use crate::num::Qty;
-use crate::types::{AccountId, OrderId, OrderKind, Side, TimeMs, Timeframe, Venue};
+use crate::num::{Money, Qty};
+use crate::types::{
+    AccountId, AnalysisBias, CopilotAction, NewsItem, OrderId, OrderKind, ProviderId, Side, TimeMs,
+    Timeframe, TwapStatus, Venue, VenueStatusKind,
+};
 
 /// A message from a client to the server.
 ///
@@ -21,16 +24,49 @@ use crate::types::{AccountId, OrderId, OrderKind, Side, TimeMs, Timeframe, Venue
 pub enum ClientMessage {
     /// Start receiving market data for a symbol and timeframe.
     Subscribe {
+        venue: Venue,
         symbol: String,
         timeframe: Timeframe,
     },
     /// Stop receiving market data for a symbol and timeframe.
     Unsubscribe {
+        venue: Venue,
         symbol: String,
         timeframe: Timeframe,
     },
-    /// Command bar text: `BUY ...` or `? plain English` (Req 31.2).
-    CommandText { request_id: String, text: String },
+    /// Start receiving the 24-hour ticker of a (venue, symbol) pair.
+    SubscribeTicker { symbol: String, venue: Venue },
+    /// Stop receiving the 24-hour ticker of a (venue, symbol) pair.
+    UnsubscribeTicker { symbol: String, venue: Venue },
+    /// Command bar text: `BUY ...` or `? plain English` (Req 31.2). `venue` is the client's
+    /// Active_Venue; the server validates it against the `hello` venue list, and `null` or an
+    /// absent field means the server's default venue.
+    CommandText {
+        request_id: String,
+        text: String,
+        #[serde(default)]
+        venue: Option<Venue>,
+    },
+    /// Cancel the remaining child orders of a TWAP plan (Req 17.7).
+    CancelTwap { request_id: String, twap_id: String },
+    /// Select the LLM provider for this connection (Req 4.2).
+    SetProvider { provider: ProviderId },
+    /// A Copilot request. "Place trade" is not an action here: the client sends `command_text`
+    /// with a `?` prefix (Req 7.4). The message carries no account id.
+    AiRequest {
+        request_id: String,
+        action: CopilotAction,
+        text: String,
+        symbol: String,
+        timeframe: Timeframe,
+        venue: Venue,
+    },
+    /// Cancel a pending AI request (Req 7.8).
+    AiCancel { request_id: String },
+    /// Start receiving news (Req 19.10).
+    SubscribeNews,
+    /// Stop receiving news.
+    UnsubscribeNews,
     /// Confirm a preview the server sent earlier (Req 22.2).
     Confirm {
         request_id: String,
@@ -64,17 +100,73 @@ pub enum ClientMessage {
 #[serde(tag = "type", rename_all = "snake_case")]
 #[ts(export, export_to = crate::TS_EXPORT_DIR)]
 pub enum ServerMessage {
-    /// First message on every connection. `venue` names the Live_Venue in live mode and is
-    /// `null` in replay mode (Req 1.11).
+    /// First message on every connection. `live_venues` lists the venues the market feed
+    /// connects to (empty in replay mode), `venue_status` their current status, and
+    /// `default_venue` the venue a client uses until the user picks another.
     Hello {
         protocol_version: u32,
         data_mode: DataMode,
-        venue: Option<Venue>,
+        live_venues: Vec<Venue>,
+        venue_status: Vec<VenueStatusEntry>,
+        default_venue: Venue,
+        starting_balance: Money,
         engine_running: bool,
         instruments: Vec<InstrumentInfo>,
+        /// Summary of the LLM providers, without any key, base URL, or credential (Req 4.1).
+        providers: Vec<ProviderInfo>,
+        news_enabled: bool,
     },
     /// An engine event forwarded to this client (Req 17.6, 17.7).
     Event { event: Event },
+    /// Several engine events for this client, in the order the engine emitted them (Req 34.1).
+    EventBatch { events: Vec<WireEvent> },
+    /// The LLM providers that can be selected, the server default, and this connection's
+    /// selection. No key, base URL, or credential appears here (Req 4.1).
+    Providers {
+        available: Vec<ProviderInfo>,
+        default: Option<ProviderId>,
+        selected: Option<ProviderId>,
+    },
+    /// A validated AI analysis, with the preview built from its suggested order (Req 5.9).
+    Analysis {
+        request_id: String,
+        provider: ProviderId,
+        model: String,
+        analysis: AnalysisResult,
+        preview: Option<OrderPreview>,
+        preview_error: Option<PreviewError>,
+    },
+    /// Scan results, ranked by confidence descending (Req 7.5).
+    ScanResult {
+        request_id: String,
+        items: Vec<ScanItem>,
+    },
+    /// A strategy description. The text starts with "draft, not executed" (Req 7.6).
+    StrategyDraft { request_id: String, text: String },
+    /// An AI request failed or was canceled.
+    AiError {
+        request_id: String,
+        reason: AiErrorReason,
+        message: String,
+    },
+    /// The news list. `available` is false while no provider answers (Req 19.10, 19.13).
+    News {
+        available: bool,
+        items: Vec<NewsItem>,
+        #[ts(type = "number | null")]
+        updated_at: Option<TimeMs>,
+    },
+    /// Progress of a TWAP plan, sent on each change (Req 17.9).
+    Twap {
+        twap_id: String,
+        symbol: String,
+        side: Side,
+        venue: Venue,
+        slices: u32,
+        sent: u32,
+        status: TwapStatus,
+        reason: Option<String>,
+    },
     /// A preview of a typed or plain-English order, waiting for confirmation (Req 22.1).
     Preview {
         request_id: String,
@@ -122,12 +214,132 @@ pub struct OrderPreview {
 pub enum PreviewAction {
     Place {
         symbol: String,
+        venue: Venue,
         side: Side,
         qty: Qty,
         kind: OrderKind,
     },
+    /// A TWAP plan: `slices` market orders, `interval_s` seconds apart (Req 17). Confirming the
+    /// preview authorizes exactly these child orders.
+    Twap {
+        symbol: String,
+        side: Side,
+        venue: Venue,
+        total_qty: Qty,
+        slices: u32,
+        interval_s: u32,
+    },
     CancelAll,
     FlattenAll,
+}
+
+/// A parse failure of the order text built from an AI suggestion (design: `preview_error`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = crate::TS_EXPORT_DIR)]
+pub struct PreviewError {
+    pub message: String,
+    pub position: usize,
+}
+
+/// Status of one venue, as sent in `hello`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = crate::TS_EXPORT_DIR)]
+pub struct VenueStatusEntry {
+    pub venue: Venue,
+    pub status: VenueStatusKind,
+}
+
+/// One selectable LLM provider. It holds no key, base URL, or credential (Req 4.1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = crate::TS_EXPORT_DIR)]
+pub struct ProviderInfo {
+    pub id: ProviderId,
+    pub model: String,
+    /// Why the provider cannot be used, or `null` when it can.
+    pub reason: Option<String>,
+}
+
+/// A suggested order inside an [`AnalysisResult`]. It has no account, venue, or wallet field:
+/// the server sets those (trading-safety rule 10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = crate::TS_EXPORT_DIR)]
+pub struct TradeIdea {
+    pub side: Side,
+    pub qty: Qty,
+    pub kind: OrderKind,
+}
+
+/// The validated result of an AI analysis. `confidence_bps` is 0 to 10,000 (0 to 1), kept an
+/// integer because floats are for indicator values only.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = crate::TS_EXPORT_DIR)]
+pub struct AnalysisResult {
+    pub symbol: String,
+    pub summary: String,
+    pub bias: AnalysisBias,
+    pub confidence_bps: u16,
+    pub rationale: Vec<String>,
+    pub suggested_order: Option<TradeIdea>,
+}
+
+/// One ranked result of a scan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = crate::TS_EXPORT_DIR)]
+pub struct ScanItem {
+    pub symbol: String,
+    pub bias: AnalysisBias,
+    pub confidence_bps: u16,
+    pub summary: String,
+}
+
+/// Why an AI request failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+#[ts(export, export_to = crate::TS_EXPORT_DIR)]
+pub enum AiErrorReason {
+    AiDisabled,
+    AiRateLimit,
+    AiDailyCap,
+    ProviderError,
+    ValidationError,
+    Timeout,
+    Canceled,
+}
+
+/// p50 and p95 of one latency measurement, in microseconds. `null` while there are no samples.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = crate::TS_EXPORT_DIR)]
+pub struct LatencySummary {
+    #[ts(type = "number")]
+    pub count: u64,
+    #[ts(type = "number | null")]
+    pub p50_us: Option<u64>,
+    #[ts(type = "number | null")]
+    pub p95_us: Option<u64>,
+}
+
+/// The latency measurements of Req 33.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = crate::TS_EXPORT_DIR)]
+pub struct HealthLatency {
+    /// Engine emit time to the server writing the event to a connection (Req 33.1).
+    pub emit_to_write: LatencySummary,
+    /// `command_text` to preview or parse error (Req 33.3).
+    pub command_to_preview: LatencySummary,
+    /// `confirm` to the order ack (Req 33.4).
+    pub confirm_to_ack: LatencySummary,
+    /// The server's receipt of an engine line to a client write (Req 33.5).
+    pub receipt_to_client: LatencySummary,
+}
+
+/// The JSON body of `GET /health`. It has no `db` field (Req 1.9).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = crate::TS_EXPORT_DIR)]
+pub struct HealthBody {
+    pub engine_running: bool,
+    /// The status of each live venue.
+    pub venue_status: Vec<VenueStatusEntry>,
+    pub latency: HealthLatency,
 }
 
 /// Category of a [`ServerMessage::Notice`].
@@ -141,8 +353,12 @@ pub enum NoticeKind {
     EngineDown,
     /// The engine is running again.
     EngineUp,
-    /// Plain-English orders are off because no LLM key is configured (Req 23.7).
-    LlmDisabled,
+    /// AI features are off because no provider is available (Req 23.7). Replaces `llm_disabled`.
+    AiDisabled,
+    /// The client's outgoing queue overflowed and events were dropped (Req 34).
+    SlowClient,
+    /// The connection's LLM provider selection changed (Req 4.2).
+    ProviderChanged,
     /// An `authenticate` token was invalid, expired, or signed out; the connection is a guest.
     AuthFailed,
     /// The connection's Session_Token expired; the connection is a guest again.
@@ -175,6 +391,10 @@ pub struct InstrumentInfo {
     pub price_decimals: u32,
     /// Lot size is 10^-qty_decimals units of the base asset.
     pub qty_decimals: u32,
+    /// A typical price as a decimal string.
+    pub reference_price: String,
+    /// The live venues that list the symbol.
+    pub venues: Vec<Venue>,
 }
 
 impl InstrumentInfo {
@@ -191,6 +411,8 @@ impl From<&Instrument> for InstrumentInfo {
             short: instrument.short.to_owned(),
             price_decimals: instrument.price_decimals,
             qty_decimals: instrument.qty_decimals,
+            reference_price: instrument.reference_price.to_owned(),
+            venues: instrument.venues.to_vec(),
         }
     }
 }
@@ -220,8 +442,51 @@ mod tests {
                 ClientMessage::CommandText {
                     request_id: "r1".into(),
                     text: "BUY BTC 0.1".into(),
+                    venue: Some(Venue::Backpack),
                 },
-                r#"{"type":"command_text","request_id":"r1","text":"BUY BTC 0.1"}"#,
+                r#"{"type":"command_text","request_id":"r1","text":"BUY BTC 0.1","venue":"backpack"}"#,
+            ),
+            (
+                ClientMessage::SubscribeTicker {
+                    symbol: "SOL-USD".into(),
+                    venue: Venue::Jupiter,
+                },
+                r#"{"type":"subscribe_ticker","symbol":"SOL-USD","venue":"jupiter"}"#,
+            ),
+            (
+                ClientMessage::CancelTwap {
+                    request_id: "r4".into(),
+                    twap_id: "7".into(),
+                },
+                r#"{"type":"cancel_twap","request_id":"r4","twap_id":"7"}"#,
+            ),
+            (
+                ClientMessage::SetProvider {
+                    provider: ProviderId::Ollama,
+                },
+                r#"{"type":"set_provider","provider":"ollama"}"#,
+            ),
+            (
+                ClientMessage::AiRequest {
+                    request_id: "r5".into(),
+                    action: CopilotAction::Scan,
+                    text: String::new(),
+                    symbol: "BTC-USD".into(),
+                    timeframe: Timeframe::H1,
+                    venue: Venue::Coinbase,
+                },
+                r#"{"type":"ai_request","request_id":"r5","action":"scan","text":"","symbol":"BTC-USD","timeframe":"1h","venue":"coinbase"}"#,
+            ),
+            (
+                ClientMessage::AiCancel {
+                    request_id: "r5".into(),
+                },
+                r#"{"type":"ai_cancel","request_id":"r5"}"#,
+            ),
+            (ClientMessage::SubscribeNews, r#"{"type":"subscribe_news"}"#),
+            (
+                ClientMessage::UnsubscribeNews,
+                r#"{"type":"unsubscribe_news"}"#,
             ),
             (
                 ClientMessage::Confirm {
@@ -238,10 +503,11 @@ mod tests {
             ),
             (
                 ClientMessage::Subscribe {
+                    venue: Venue::Replay,
                     symbol: "ETH-USD".into(),
                     timeframe: Timeframe::D1,
                 },
-                r#"{"type":"subscribe","symbol":"ETH-USD","timeframe":"1d"}"#,
+                r#"{"type":"subscribe","venue":"replay","symbol":"ETH-USD","timeframe":"1d"}"#,
             ),
             (
                 ClientMessage::Authenticate {
@@ -257,36 +523,221 @@ mod tests {
         }
         let unknown = r#"{"type":"place_order","request_id":"r"}"#;
         assert!(serde_json::from_str::<ClientMessage>(unknown).is_err());
+        // The venue of a subscription is required; an unknown venue or provider is rejected.
+        let no_venue = r#"{"type":"subscribe","symbol":"BTC-USD","timeframe":"1m"}"#;
+        assert!(serde_json::from_str::<ClientMessage>(no_venue).is_err());
+        let bad_provider = r#"{"type":"set_provider","provider":"gemini"}"#;
+        assert!(serde_json::from_str::<ClientMessage>(bad_provider).is_err());
+        // `venue` of command_text is optional.
+        let bare = r#"{"type":"command_text","request_id":"r","text":"FLAT"}"#;
+        assert!(matches!(
+            serde_json::from_str::<ClientMessage>(bare),
+            Ok(ClientMessage::CommandText { venue: None, .. })
+        ));
+    }
+
+    fn hello(
+        mode: DataMode,
+        venues: Vec<Venue>,
+        instruments: Vec<InstrumentInfo>,
+    ) -> ServerMessage {
+        ServerMessage::Hello {
+            protocol_version: crate::PROTOCOL_VERSION,
+            data_mode: mode,
+            live_venues: venues,
+            venue_status: Vec::new(),
+            default_venue: Venue::Replay,
+            starting_balance: Money(1_000_000_000_000_000),
+            engine_running: true,
+            instruments,
+            providers: Vec::new(),
+            news_enabled: false,
+        }
+    }
+
+    #[test]
+    fn hello_golden_line_and_new_server_messages() {
+        let mut message = hello(DataMode::Live, vec![Venue::Backpack], Vec::new());
+        if let ServerMessage::Hello {
+            venue_status,
+            providers,
+            news_enabled,
+            ..
+        } = &mut message
+        {
+            venue_status.push(VenueStatusEntry {
+                venue: Venue::Backpack,
+                status: VenueStatusKind::Connected,
+            });
+            providers.push(ProviderInfo {
+                id: ProviderId::Openai,
+                model: "gpt".into(),
+                reason: None,
+            });
+            *news_enabled = true;
+        }
+        let expected = concat!(
+            r#"{"type":"hello","protocol_version":3,"data_mode":"live","live_venues":["backpack"],"#,
+            r#""venue_status":[{"venue":"backpack","status":"connected"}],"default_venue":"replay","#,
+            r#""starting_balance":"1000000000000000","engine_running":true,"instruments":[],"#,
+            r#""providers":[{"id":"openai","model":"gpt","reason":null}],"news_enabled":true}"#
+        );
+        assert_eq!(json(&message), expected);
+        assert_round_trip(&message);
+
+        let batch = ServerMessage::EventBatch {
+            events: vec![WireEvent {
+                event: Event::Pong { id: 1 },
+                emit_us: Some(5),
+            }],
+        };
+        let expected = r#"{"type":"event_batch","events":[{"type":"pong","id":1,"emit_us":5}]}"#;
+        assert_eq!(json(&batch), expected);
+        assert_round_trip(&batch);
+
+        let providers = ServerMessage::Providers {
+            available: vec![ProviderInfo {
+                id: ProviderId::Nvidia,
+                model: "m".into(),
+                reason: Some("no key".into()),
+            }],
+            default: Some(ProviderId::Nvidia),
+            selected: None,
+        };
+        let expected = r#"{"type":"providers","available":[{"id":"nvidia","model":"m","reason":"no key"}],"default":"nvidia","selected":null}"#;
+        assert_eq!(json(&providers), expected);
+        assert_round_trip(&providers);
+
+        let error = ServerMessage::AiError {
+            request_id: "r".into(),
+            reason: AiErrorReason::AiDailyCap,
+            message: "cap".into(),
+        };
+        assert_eq!(
+            json(&error),
+            r#"{"type":"ai_error","request_id":"r","reason":"ai_daily_cap","message":"cap"}"#
+        );
+        assert_round_trip(&error);
+
+        let twap = ServerMessage::Twap {
+            twap_id: "1".into(),
+            symbol: "SOL-USD".into(),
+            side: Side::Sell,
+            venue: Venue::Coinbase,
+            slices: 4,
+            sent: 1,
+            status: TwapStatus::Active,
+            reason: None,
+        };
+        let expected = r#"{"type":"twap","twap_id":"1","symbol":"SOL-USD","side":"sell","venue":"coinbase","slices":4,"sent":1,"status":"active","reason":null}"#;
+        assert_eq!(json(&twap), expected);
+        assert_round_trip(&twap);
+
+        let analysis = ServerMessage::Analysis {
+            request_id: "r".into(),
+            provider: ProviderId::Anthropic,
+            model: "m".into(),
+            analysis: AnalysisResult {
+                symbol: "BTC-USD".into(),
+                summary: "s".into(),
+                bias: AnalysisBias::Long,
+                confidence_bps: 7500,
+                rationale: vec!["a".into()],
+                suggested_order: Some(TradeIdea {
+                    side: Side::Buy,
+                    qty: Qty(1),
+                    kind: OrderKind::Market,
+                }),
+            },
+            preview: None,
+            preview_error: Some(PreviewError {
+                message: "bad".into(),
+                position: 2,
+            }),
+        };
+        assert_round_trip(&analysis);
+        let text = json(&analysis);
+        assert!(text.contains(r#""confidence_bps":7500"#), "{text}");
+        assert!(!text.contains("account"), "{text}");
+
+        let news = ServerMessage::News {
+            available: true,
+            items: Vec::new(),
+            updated_at: None,
+        };
+        assert_eq!(
+            json(&news),
+            r#"{"type":"news","available":true,"items":[],"updated_at":null}"#
+        );
+        assert_round_trip(&news);
+        for message in [
+            ServerMessage::ScanResult {
+                request_id: "r".into(),
+                items: vec![ScanItem {
+                    symbol: "ETH-USD".into(),
+                    bias: AnalysisBias::Neutral,
+                    confidence_bps: 1,
+                    summary: "x".into(),
+                }],
+            },
+            ServerMessage::StrategyDraft {
+                request_id: "r".into(),
+                text: "draft, not executed".into(),
+            },
+        ] {
+            assert_round_trip(&message);
+        }
+    }
+
+    #[test]
+    fn twap_preview_and_new_notice_kinds() {
+        let action = PreviewAction::Twap {
+            symbol: "BTC-USD".into(),
+            side: Side::Buy,
+            venue: Venue::Backpack,
+            total_qty: Qty(10),
+            slices: 5,
+            interval_s: 60,
+        };
+        let expected = r#"{"type":"twap","symbol":"BTC-USD","side":"buy","venue":"backpack","total_qty":"10","slices":5,"interval_s":60}"#;
+        assert_eq!(json(&action), expected);
+        assert_round_trip(&action);
+        for (kind, expected) in [
+            (NoticeKind::SlowClient, r#""slow_client""#),
+            (NoticeKind::AiDisabled, r#""ai_disabled""#),
+            (NoticeKind::ProviderChanged, r#""provider_changed""#),
+        ] {
+            assert_eq!(json(&kind), expected);
+        }
+    }
+
+    /// Writes `shared/protocol/instruments.json` from the instrument table (Req 8.1, 15.1).
+    /// The name starts with `export_bindings` so `bun run gen:protocol` runs it with the
+    /// ts-rs export tests. The output directory is resolved like ts-rs does: the manifest
+    /// directory joined with `TS_EXPORT_DIR`.
+    #[test]
+    fn export_bindings_instruments_json() {
+        let mut text = serde_json::to_string_pretty(&InstrumentInfo::all()).unwrap();
+        text.push('\n');
+        let dir = std::path::Path::new(crate::TS_EXPORT_DIR);
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join("instruments.json"), text).unwrap();
     }
 
     #[test]
     fn hello_lists_the_instrument_table() {
-        let message = ServerMessage::Hello {
-            protocol_version: crate::PROTOCOL_VERSION,
-            data_mode: DataMode::Replay,
-            venue: None,
-            engine_running: true,
-            instruments: InstrumentInfo::all(),
-        };
+        let message = hello(DataMode::Replay, Vec::new(), InstrumentInfo::all());
         let text = json(&message);
-        let prefix = r#"{"type":"hello","protocol_version":2,"data_mode":"replay","venue":null,"engine_running":true,"instruments":[{"symbol":"BTC-USD","short":"BTC","price_decimals":2,"qty_decimals":8},"#;
+        let prefix = concat!(
+            r#"{"type":"hello","protocol_version":3,"data_mode":"replay","live_venues":[],"#,
+            r#""venue_status":[],"default_venue":"replay","#,
+            r#""starting_balance":"1000000000000000","engine_running":true,"#,
+            r#""instruments":[{"symbol":"BTC-USD","short":"BTC","#,
+            r#""price_decimals":2,"qty_decimals":8,"reference_price":"59400","#,
+            r#""venues":["coinbase","backpack","jupiter","raydium"]},"#
+        );
         assert!(text.starts_with(prefix), "{text}");
         assert_round_trip(&message);
-
-        // Req 1.11: in live mode, hello names the venue.
-        let live = ServerMessage::Hello {
-            protocol_version: crate::PROTOCOL_VERSION,
-            data_mode: DataMode::Live,
-            venue: Some(Venue::Backpack),
-            engine_running: false,
-            instruments: Vec::new(),
-        };
-        let expected = concat!(
-            r#"{"type":"hello","protocol_version":2,"data_mode":"live","venue":"backpack","#,
-            r#""engine_running":false,"instruments":[]}"#
-        );
-        assert_eq!(json(&live), expected);
-        assert_round_trip(&live);
 
         let symbols: Vec<String> = InstrumentInfo::all()
             .into_iter()
@@ -300,13 +751,14 @@ mod tests {
         let event = ServerMessage::Event {
             event: Event::OrderAck {
                 account_id: AccountId::new("guest").unwrap(),
+                venue: crate::Venue::Replay,
                 order_id: OrderId::new("o-9").unwrap(),
                 status: OrderStatus::Filled,
             },
         };
         let expected = concat!(
             r#"{"type":"event","event":{"type":"order_ack","account_id":"guest","#,
-            r#""order_id":"o-9","status":"filled"}}"#
+            r#""venue":"replay","order_id":"o-9","status":"filled"}}"#
         );
         assert_eq!(json(&event), expected);
         assert_round_trip(&event);
@@ -318,6 +770,7 @@ mod tests {
                 text: "BUY BTC-USD 0.1 LMT 64000.00".into(),
                 action: PreviewAction::Place {
                     symbol: "BTC-USD".into(),
+                    venue: Venue::Replay,
                     side: Side::Buy,
                     qty: Qty(10_000_000),
                     kind: OrderKind::Limit {
@@ -330,7 +783,7 @@ mod tests {
         let expected = concat!(
             r#"{"type":"preview","request_id":"r1","preview":{"preview_id":"p1","#,
             r#""text":"BUY BTC-USD 0.1 LMT 64000.00","action":{"type":"place","#,
-            r#""symbol":"BTC-USD","side":"buy","qty":"10000000","#,
+            r#""symbol":"BTC-USD","venue":"replay","side":"buy","qty":"10000000","#,
             r#""kind":{"type":"limit","price":"6400000"}},"expires_at":1733200030000}}"#
         );
         assert_eq!(json(&preview), expected);
@@ -340,10 +793,10 @@ mod tests {
     #[test]
     fn notices_parse_errors_and_unit_actions() {
         let notice = ServerMessage::Notice {
-            kind: NoticeKind::LlmDisabled,
+            kind: NoticeKind::AiDisabled,
             message: "plain-English orders are disabled".into(),
         };
-        let expected = r#"{"type":"notice","kind":"llm_disabled","message":"plain-English orders are disabled"}"#;
+        let expected = r#"{"type":"notice","kind":"ai_disabled","message":"plain-English orders are disabled"}"#;
         assert_eq!(json(&notice), expected);
         assert_round_trip(&notice);
 

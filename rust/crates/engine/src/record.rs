@@ -525,6 +525,10 @@ async fn run_adapter(
     match venue {
         Venue::Coinbase => run_coinbase(tx, errors, symbols).await,
         Venue::Backpack => run_backpack(tx, errors, symbols).await,
+        // No recorder for the DEX price feeds or for replay yet; the CLI only offers CEX venues.
+        Venue::Jupiter | Venue::Raydium | Venue::Replay => {
+            warn!(venue = venue_name(venue), "no recorder adapter for this venue");
+        }
     }
 }
 

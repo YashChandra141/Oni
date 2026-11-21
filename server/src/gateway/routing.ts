@@ -1,16 +1,17 @@
 // Pure routing of engine events to Bun topics or a single connection (design Decision A10;
 // Req 17.7, 17.9, 17.10, 17.11).
 //
-//   OrderAck, Fill, Position  → topic `account:<account_id>`
+//   OrderAck, Fill, Position, Balance → topic `account:<account_id>`
 //   OrderRejected             → the requesting connection when known, else `account:<account_id>`
-//   Candle, Indicators        → topic `candles:<symbol>:<tf>`
-//   Trade, Book               → topic `market:<symbol>`
+//   Candle, Indicators        → topic `candles:<venue>:<symbol>:<tf>`
+//   Trade, Book, Ticker24h    → topic `market:<venue>:<symbol>`
+//   VenueStatus, PairStatus, ReferenceVenue → `notices`
 //   Heartbeat, Pong, Error    → dropped (stay inside the server)
 // Notices are published on NOTICES_TOPIC by the gateway; every connection is subscribed to it.
 //
 // No I/O, no timers: the clock is injected.
 
-import type { AccountId, Event, Timeframe } from "../protocol.ts";
+import type { AccountId, Event, Timeframe, Venue } from "../protocol.ts";
 
 /** Every connection, guest or wallet, is subscribed to this topic (Req 17.9). */
 export const NOTICES_TOPIC = "notices";
@@ -19,12 +20,13 @@ export function accountTopic(accountId: string): string {
   return `account:${accountId}`;
 }
 
-export function candlesTopic(symbol: string, timeframe: Timeframe): string {
-  return `candles:${symbol}:${timeframe}`;
+export function candlesTopic(venue: Venue, symbol: string, timeframe: Timeframe): string {
+  return `candles:${venue}:${symbol}:${timeframe}`;
 }
 
-export function marketTopic(symbol: string): string {
-  return `market:${symbol}`;
+/** Venue-keyed market topic (design "Topics": `market:<venue>:<symbol>`). */
+export function marketTopic(venue: Venue, symbol: string): string {
+  return `market:${venue}:${symbol}`;
 }
 
 export type RouteResult =
@@ -45,14 +47,22 @@ export function routeAccountEvent(event: Event, ctx: RouteContext = {}): RouteRe
   switch (event.type) {
     case "candle":
     case "indicators":
-      return { topic: candlesTopic(event.symbol, event.timeframe) };
+      return { topic: candlesTopic(event.venue, event.symbol, event.timeframe) };
     case "trade":
     case "book":
-      return { topic: marketTopic(event.symbol) };
+    // Ticker subscriptions land in Task 3.5; until then a Ticker24h goes to the pair's market topic.
+    case "ticker24h":
+      return { topic: marketTopic(event.venue, event.symbol) };
     case "order_ack":
     case "fill":
     case "position":
+    case "balance":
       return { topic: accountTopic(event.account_id) };
+    // Venue and pair health concern every connection (Req 9.9, 18.1).
+    case "venue_status":
+    case "pair_status":
+    case "reference_venue":
+      return { topic: NOTICES_TOPIC };
     case "order_rejected":
       if (ctx.requester !== undefined && ctx.requester !== null) return { toConnection: ctx.requester };
       return { topic: accountTopic(event.account_id) };

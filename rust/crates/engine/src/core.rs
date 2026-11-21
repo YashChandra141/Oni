@@ -52,17 +52,19 @@ use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 use protocol::{
-    AccountId, Bar, Command, DecodeError, ErrorCode, Event, INSTRUMENTS, Price, TimeMs, Timeframe,
-    instrument,
+    AccountId, Bar, Command, DecodeError, ErrorCode, Event, INSTRUMENTS, Money,
+    OrderKind, OrderStatus, Price, Qty, Side, TimeMs, Timeframe, Venue, instrument,
 };
 use tracing::debug;
 
-use crate::account::{AccountError, Accounts, PaperAccount};
+use crate::account::{AccountError, Accounts, DEFAULT_ACCOUNT_CAP, PaperAccount};
+use crate::balance::BalanceConfig;
 use crate::book::OrderBook;
 use crate::candles::CandleBuilder;
 use crate::feed::MarketMsg;
 use crate::indicators::SymbolIndicators;
 use crate::matcher::{MatchOutput, Matcher, PlaceRequest};
+use crate::ticker::{self, TickerThrottle};
 
 /// Characters of an unknown symbol echoed in an error.
 const MAX_SYMBOL_ECHO: usize = 64;
@@ -124,11 +126,36 @@ pub struct Engine {
     last_price: BTreeMap<String, Price>,
     /// Market time of the latest market message; the time stamp of fills of a new order.
     now: TimeMs,
+    /// Equity in the last `Balance` event of each account, to throttle equity-only updates.
+    last_equity: BTreeMap<AccountId, i64>,
+    /// Symbols with an active ticker subscription (Req 18.3).
+    ticker_subs: BTreeSet<String>,
+    /// One Ticker24h per symbol per second of market time (Req 18.4).
+    ticker_throttle: TickerThrottle,
+    /// The venue of the market data this engine runs on, stamped on every event: `Replay` in
+    /// replay mode, the configured live venue in live mode. The per-venue pairs of task 5
+    /// replace it.
+    venue: Venue,
 }
 
 impl Engine {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The same engine with `venue` as its market venue (stamped on every event).
+    pub fn with_venue(mut self, venue: Venue) -> Self {
+        self.venue = venue;
+        self.matcher = std::mem::take(&mut self.matcher).with_venue(venue);
+        self
+    }
+
+    /// The same engine with the paper balance settings `config`: new accounts start with its
+    /// Starting_Balance and the matcher charges its fee rate (Req 16.1, 16.2).
+    pub fn with_balance(mut self, config: BalanceConfig) -> Self {
+        self.accounts = Accounts::with_config(DEFAULT_ACCOUNT_CAP, config);
+        self.matcher = Matcher::new(config.fee_bps).with_venue(self.venue);
+        self
     }
 
     /// An engine for live mode: the first `subscribe` of each key queues a history request.
@@ -228,8 +255,16 @@ impl Engine {
         match cmd {
             // Req 1.6: answer a ping with a pong that carries the same id.
             Command::Ping { id } => vec![Event::Pong { id }],
-            Command::Subscribe { symbol, timeframe } => self.subscribe(symbol, timeframe),
-            Command::Unsubscribe { symbol, timeframe } => self.unsubscribe(&symbol, timeframe),
+            // The command's `venue` is ignored until the per-venue pairs of task 5: the engine
+            // has one market venue.
+            Command::SubscribeTicker { symbol, .. } => self.subscribe_ticker(symbol),
+            Command::UnsubscribeTicker { symbol, .. } => self.unsubscribe_ticker(&symbol),
+            Command::Subscribe {
+                symbol, timeframe, ..
+            } => self.subscribe(symbol, timeframe),
+            Command::Unsubscribe {
+                symbol, timeframe, ..
+            } => self.unsubscribe(&symbol, timeframe),
             Command::PlaceOrder {
                 account_id,
                 order_id,
@@ -237,12 +272,14 @@ impl Engine {
                 side,
                 qty,
                 kind,
+                ..
             } => {
                 // Req 14.4, 14.5: the account is created flat on its first order; a new account
                 // over the cap gets `account_limit` and no order is placed.
                 if self.accounts.get_or_create(&account_id).is_err() {
                     return vec![Event::OrderRejected {
                         account_id,
+                        venue: self.venue,
                         order_id,
                         reason: "account_limit".to_owned(),
                     }];
@@ -250,22 +287,60 @@ impl Engine {
                 let empty = OrderBook::new();
                 let book = self.books.get(&symbol).map_or(&empty, |s| &s.book);
                 let last = self.last_price.get(&symbol).copied();
+                // Req 16.4: refuse an order the account cannot pay for, before any state change.
+                let reference = reference_price(book, side, &kind, last);
+                if let (Some(reference), Some(account)) =
+                    (reference, self.accounts.get(&account_id))
+                    && !affordable(account, &symbol, side, qty, reference)
+                {
+                    return vec![Event::OrderRejected {
+                        account_id,
+                        venue: self.venue,
+                        order_id,
+                        reason: "insufficient_balance".to_owned(),
+                    }];
+                }
                 let req = PlaceRequest {
-                    account_id,
-                    order_id,
-                    symbol,
+                    account_id: account_id.clone(),
+                    order_id: order_id.clone(),
+                    symbol: symbol.clone(),
                     side,
                     qty,
                     kind,
                 };
                 let out = self.matcher.place(req, book, last, self.now);
-                self.take_output(out).0
+                let rejected = out
+                    .events
+                    .iter()
+                    .any(|e| matches!(e, Event::OrderRejected { .. }));
+                let mut reserved = false;
+                if !rejected
+                    && let (Some(reference), Some(account)) =
+                        (reference, self.accounts.get_mut(&account_id))
+                {
+                    reserved = account
+                        .reserve_order(&order_id, &symbol, side, qty, reference)
+                        .is_ok();
+                }
+                let (mut events, touched) = self.take_output(out);
+                if reserved && !touched.contains(&account_id) {
+                    self.push_balance(&account_id, &mut events);
+                }
+                events
             }
             Command::Cancel {
                 account_id,
                 order_id,
-            } => self.matcher.cancel(&account_id, &order_id),
-            Command::CancelAll { account_id } => self.matcher.cancel_all(&account_id),
+            } => {
+                let mut events = self.matcher.cancel(&account_id, &order_id);
+                self.release_canceled(&account_id, &mut events);
+                events
+            }
+            Command::CancelAll { account_id } => {
+                let mut events = self.matcher.cancel_all(&account_id);
+                self.release_canceled(&account_id, &mut events);
+                events
+            }
             Command::ResetAccount { account_id } => self.reset_account(&account_id),
             other => {
                 debug!(command = ?other, "command not handled yet");
@@ -288,7 +363,47 @@ impl Engine {
             let last = self.last_price.get(inst.symbol).copied();
             events.push(position_or_error(account, account_id, inst.symbol, last));
         }
+        // Req 16.1: the balance is back at the Starting_Balance.
+        self.push_balance(account_id, &mut events);
         events
+    }
+
+    /// Releases the reservations of the orders that `events` report as canceled and, if any
+    /// was held, appends the account's new `Balance` (free balance changed).
+    fn release_canceled(&mut self, account_id: &AccountId, events: &mut Vec<Event>) {
+        let Some(account) = self.accounts.get_mut(account_id) else {
+            return;
+        };
+        let mut released = false;
+        for event in events.iter() {
+            if let Event::OrderAck {
+                order_id,
+                status: OrderStatus::Canceled,
+                ..
+            } = event
+            {
+                released |= account.release_order(order_id);
+            }
+        }
+        if released {
+            self.push_balance(account_id, events);
+        }
+    }
+
+    /// Appends the account's `Balance` event and remembers its equity (Req 16.9).
+    fn push_balance(&mut self, account_id: &AccountId, events: &mut Vec<Event>) {
+        let Some(account) = self.accounts.get(account_id) else {
+            return;
+        };
+        match balance_event(account, account_id, &self.last_price, self.now) {
+            Ok(event) => {
+                if let Event::Balance { equity, .. } = &event {
+                    self.last_equity.insert(account_id.clone(), equity.0);
+                }
+                events.push(event);
+            }
+            Err(err) => events.push(internal_error(err)),
+        }
     }
 
     /// Applies the fills of one matcher call to their accounts and returns the call's events
@@ -322,6 +437,10 @@ impl Engine {
             }
             touched.insert(account_id);
         }
+        // Req 16.9: a fill moves the balance; one `Balance` per account after its positions.
+        for account_id in &touched {
+            self.push_balance(account_id, &mut events);
+        }
         (events, touched)
     }
 
@@ -346,17 +465,34 @@ impl Engine {
     /// every account with an open position in `symbol`, in `AccountId` order (Req 13.3, 13.4).
     /// Accounts in `skip` already got a `Position` from this call's matching pass.
     fn refresh_unrealized(
-        &self,
+        &mut self,
         symbol: &str,
         skip: &BTreeSet<AccountId>,
         events: &mut Vec<Event>,
     ) {
         let last = self.last_price.get(symbol).copied();
+        let mut moved: Vec<AccountId> = Vec::new();
         for (id, account) in self.accounts.iter() {
             if skip.contains(id) || !account.is_open(symbol) {
                 continue;
             }
             events.push(position_or_error(account, id, symbol, last));
+            // Req 16.9: Equity moved by at least 0.01 USD since the last `Balance`.
+            let equity = account
+                .equity(|s| self.last_price.get(s).copied())
+                .ok()
+                .and_then(|e| i64::try_from(e).ok());
+            let due = match (equity, self.last_equity.get(id)) {
+                (Some(now), Some(prev)) => now.abs_diff(*prev) >= EQUITY_STEP,
+                (Some(_), None) => true,
+                (None, _) => false,
+            };
+            if due {
+                moved.push(id.clone());
+            }
+        }
+        for id in &moved {
+            self.push_balance(id, events);
         }
     }
 
@@ -403,6 +539,7 @@ impl Engine {
                         continue;
                     }
                     updates.push(Event::Candle {
+                        venue: self.venue,
                         symbol: symbol.clone(),
                         timeframe,
                         snapshot: false,
@@ -411,6 +548,7 @@ impl Engine {
                     });
                     if let Some(values) = values {
                         updates.push(Event::Indicators {
+                            venue: self.venue,
                             symbol: symbol.clone(),
                             timeframe,
                             ts: bar.t,
@@ -422,13 +560,22 @@ impl Engine {
                 // Req 9.8: every trade is forwarded with symbol, price, qty, aggressor side,
                 // time, before the candle updates it caused.
                 events.push(Event::Trade {
+                    venue: self.venue,
                     symbol,
                     price,
                     qty,
                     side,
+                    synthetic: false,
                     ts,
                 });
                 events.extend(updates);
+                // Req 18.4: a subscribed symbol's ticker follows its trade, at most 1 per second.
+                if self.ticker_subs.contains(&book_symbol)
+                    && let Some(event) = self.ticker_event(&book_symbol)
+                    && self.ticker_throttle.take(&book_symbol, ts)
+                {
+                    events.push(event);
+                }
                 self.book_if_due(&book_symbol, ts, &mut events);
                 // Req 11.5: a trade may trigger stops; matching events come last.
                 let touched = self.run_matcher(&book_symbol, ts, &mut events);
@@ -506,11 +653,13 @@ impl Engine {
         }
         let (bids, asks) = state.book.top(BOOK_LEVELS);
         events.push(Event::Book {
+            venue: self.venue,
             symbol: symbol.to_owned(),
             bids,
             asks,
             spread: state.book.spread(),
             imbalance_bps: state.book.imbalance_bps(BOOK_LEVELS),
+            synthetic: false,
             ts,
         });
         state.last_emit_ts = Some(ts);
@@ -567,6 +716,7 @@ impl Engine {
             })
             .unwrap_or_default();
         let mut events = vec![Event::Candle {
+            venue: self.venue,
             symbol: symbol.to_owned(),
             timeframe,
             snapshot: true,
@@ -575,6 +725,7 @@ impl Engine {
         }];
         if let Some((ts, values)) = current {
             events.push(Event::Indicators {
+                venue: self.venue,
                 symbol: symbol.to_owned(),
                 timeframe,
                 ts,
@@ -669,6 +820,44 @@ impl Engine {
         events
     }
 
+    /// The symbol's Ticker24h from its 1h series, stamped with the latest market time.
+    fn ticker_event(&self, symbol: &str) -> Option<Event> {
+        let bars = self.candles.bars(symbol, Timeframe::H1);
+        let stats = ticker::compute(&bars)?;
+        Some(Event::Ticker24h {
+            symbol: symbol.to_owned(),
+            venue: self.venue,
+            ticker: stats.ticker,
+            synthetic: false,
+            ts: self.now,
+        })
+    }
+
+    /// Adds the ticker subscription and answers at once if the symbol has hourly bars
+    /// (Req 18.3). A repeat subscribe answers again.
+    fn subscribe_ticker(&mut self, symbol: String) -> Vec<Event> {
+        if instrument(&symbol).is_none() {
+            return vec![unknown_symbol(&symbol)];
+        }
+        let event = self.ticker_event(&symbol);
+        self.ticker_throttle.reset(&symbol);
+        if event.is_some() {
+            self.ticker_throttle.take(&symbol, self.now);
+        }
+        self.ticker_subs.insert(symbol);
+        event.into_iter().collect()
+    }
+
+    /// Stops the ticker stream and resets its throttle. Emits nothing.
+    fn unsubscribe_ticker(&mut self, symbol: &str) -> Vec<Event> {
+        if instrument(symbol).is_none() {
+            return vec![unknown_symbol(symbol)];
+        }
+        self.ticker_subs.remove(symbol);
+        self.ticker_throttle.reset(symbol);
+        Vec::new()
+    }
+
     /// Removes the key. Emits nothing, also for a key that was not subscribed.
     fn unsubscribe(&mut self, symbol: &str, timeframe: Timeframe) -> Vec<Event> {
         if instrument(symbol).is_none() {
@@ -682,6 +871,72 @@ impl Engine {
         }
         Vec::new()
     }
+}
+
+/// Equity move that triggers a `Balance` event: 0.01 USD in Money units (Req 16.9).
+const EQUITY_STEP: u64 = 100_000_000;
+
+/// The price an order is expected to fill near, for Required_Funds: the limit price, the stop
+/// price, or for a market order the best opposite level (else the last trade). `None` when
+/// nothing is known, in which case the order cannot fill yet.
+fn reference_price(
+    book: &OrderBook,
+    side: Side,
+    kind: &OrderKind,
+    last: Option<Price>,
+) -> Option<Price> {
+    match kind {
+        OrderKind::Limit { price } => Some(*price),
+        OrderKind::Stop { stop_price } => Some(*stop_price),
+        OrderKind::Market => {
+            let best = match side {
+                Side::Buy => book.best_ask(),
+                Side::Sell => book.best_bid(),
+            };
+            best.or(last)
+        }
+    }
+}
+
+/// True when the account's Free_Balance covers the order's Required_Funds (Req 16.4). Input the
+/// matcher rejects on its own (bad quantity, price, or symbol) passes here; any overflow fails.
+fn affordable(
+    account: &PaperAccount,
+    symbol: &str,
+    side: Side,
+    qty: Qty,
+    reference: Price,
+) -> bool {
+    match account.required_funds(symbol, side, qty, reference) {
+        Ok(required) => account
+            .free_balance()
+            .ok()
+            .and_then(|free| free.checked_sub(required))
+            .is_some_and(|left| left >= 0),
+        Err(AccountError::InvalidFill | AccountError::UnknownSymbol) => true,
+        Err(AccountError::Overflow) => false,
+    }
+}
+
+/// The account's `Balance` event at market time `ts`.
+fn balance_event(
+    account: &PaperAccount,
+    account_id: &AccountId,
+    last_price: &BTreeMap<String, Price>,
+    ts: TimeMs,
+) -> Result<Event, AccountError> {
+    let money = |v: i128| {
+        i64::try_from(v)
+            .map(Money)
+            .map_err(|_| AccountError::Overflow)
+    };
+    Ok(Event::Balance {
+        account_id: account_id.clone(),
+        paper_balance: money(account.paper_balance())?,
+        free_balance: money(account.free_balance()?)?,
+        equity: money(account.equity(|s| last_price.get(s).copied())?)?,
+        ts,
+    })
 }
 
 /// An `Error` event for a Paper_Account failure (overflow).
@@ -740,6 +995,7 @@ mod tests {
 
     fn subscribe(symbol: &str, timeframe: Timeframe) -> Command {
         Command::Subscribe {
+            venue: Venue::Replay,
             symbol: symbol.into(),
             timeframe,
         }
@@ -747,6 +1003,7 @@ mod tests {
 
     fn unsubscribe(symbol: &str, timeframe: Timeframe) -> Command {
         Command::Unsubscribe {
+            venue: Venue::Replay,
             symbol: symbol.into(),
             timeframe,
         }
@@ -764,10 +1021,12 @@ mod tests {
 
     fn trade_event(symbol: &str, price: i64, qty: i64, ts: TimeMs) -> Event {
         Event::Trade {
+            venue: Venue::Replay,
             symbol: symbol.into(),
             price: Price(price),
             qty: Qty(qty),
             side: Side::Buy,
+            synthetic: false,
             ts,
         }
     }
@@ -785,6 +1044,7 @@ mod tests {
 
     fn candle(symbol: &str, timeframe: Timeframe, snapshot: bool, bars: Vec<Bar>) -> Event {
         Event::Candle {
+            venue: Venue::Replay,
             symbol: symbol.into(),
             timeframe,
             snapshot,
@@ -796,12 +1056,14 @@ mod tests {
     fn with_indicators(event: Event, indicators: Option<Vec<protocol::IndicatorPoint>>) -> Event {
         match event {
             Event::Candle {
+                venue,
                 symbol,
                 timeframe,
                 snapshot,
                 bars,
                 ..
             } => Event::Candle {
+                venue,
                 symbol,
                 timeframe,
                 snapshot,
@@ -845,6 +1107,7 @@ mod tests {
         let o1 = OrderId::new("o-1").unwrap();
         let place = |kind: OrderKind| Command::PlaceOrder {
             account_id: guest.clone(),
+            venue: Venue::Replay,
             order_id: o1.clone(),
             symbol: "ETH-USD".into(),
             side: Side::Buy,
@@ -853,6 +1116,7 @@ mod tests {
         };
         let ack = |account: &AccountId, status| Event::OrderAck {
             account_id: account.clone(),
+            venue: Venue::Replay,
             order_id: o1.clone(),
             status,
         };
@@ -870,6 +1134,7 @@ mod tests {
             }),
             [Event::OrderRejected {
                 account_id: other.clone(),
+                venue: Venue::Replay,
                 order_id: o1.clone(),
                 reason: "unknown_order".into(),
             }]
@@ -926,6 +1191,7 @@ mod tests {
         engine.on_market(snap(BTC, &[(99, 1)], &[(110, 9)], 0));
         let events = engine.on_command(Command::PlaceOrder {
             account_id: guest.clone(),
+            venue: Venue::Replay,
             order_id: OrderId::new("s-1").unwrap(),
             symbol: BTC.into(),
             side: Side::Buy,
@@ -968,10 +1234,12 @@ mod tests {
             ts: 1_798_761_600_123,
         };
         let expected = Event::Trade {
+            venue: Venue::Replay,
             symbol: "SOL-USD".into(),
             price: Price(15_000),
             qty: Qty(7),
             side: Side::Sell,
+            synthetic: false,
             ts: 1_798_761_600_123,
         };
         assert_eq!(engine.on_market(msg), vec![expected]);
@@ -1014,11 +1282,13 @@ mod tests {
         assert_eq!(
             events,
             [Event::Book {
+                venue: Venue::Replay,
                 symbol: BTC.into(),
                 bids: vec![lv(99, 3), lv(98, 1)],
                 asks: vec![lv(101, 1), lv(102, 2)],
                 spread: Some(Price(2)),
                 imbalance_bps: 1_428,
+                synthetic: false,
                 ts: 5,
             }]
         );
@@ -1710,6 +1980,7 @@ mod paper_tests {
     fn place(account: &str, id: &str, side: Side, qty: i64, kind: OrderKind) -> Command {
         Command::PlaceOrder {
             account_id: acct(account),
+            venue: Venue::Replay,
             order_id: OrderId::new(id).unwrap(),
             symbol: BTC.into(),
             side,
@@ -1896,6 +2167,7 @@ mod paper_tests {
             engine.on_command(rest("c", "o-3")),
             [Event::OrderRejected {
                 account_id: acct("c"),
+                venue: Venue::Replay,
                 order_id: OrderId::new("o-3").unwrap(),
                 reason: "account_limit".into(),
             }]
@@ -1965,6 +2237,7 @@ mod paper_tests {
             events[0],
             Event::OrderAck {
                 account_id: acct("guest"),
+                venue: Venue::Replay,
                 order_id: OrderId::new("o-3").unwrap(),
                 status: OrderStatus::Canceled,
             }
@@ -2007,5 +2280,86 @@ mod paper_tests {
             out
         };
         assert_eq!(run(), run());
+    }
+}
+
+#[cfg(test)]
+mod ticker_tests {
+    use super::*;
+    use protocol::{Qty, Side};
+
+    const HOUR: TimeMs = 3_600_000;
+
+    fn trade(price: i64, ts: TimeMs) -> MarketMsg {
+        MarketMsg::Trade {
+            symbol: "BTC-USD".into(),
+            price: Price(price),
+            qty: Qty(1),
+            side: Side::Buy,
+            ts,
+        }
+    }
+
+    fn sub() -> Command {
+        Command::SubscribeTicker {
+            symbol: "BTC-USD".into(),
+            venue: Venue::Replay,
+        }
+    }
+
+    fn unsub() -> Command {
+        Command::UnsubscribeTicker {
+            symbol: "BTC-USD".into(),
+            venue: Venue::Replay,
+        }
+    }
+
+    fn tickers(events: &[Event]) -> Vec<&Event> {
+        events
+            .iter()
+            .filter(|e| matches!(e, Event::Ticker24h { .. }))
+            .collect()
+    }
+
+    #[test]
+    fn subscribe_without_data_answers_nothing() {
+        let mut engine = Engine::new();
+        assert!(engine.on_command(sub()).is_empty());
+    }
+
+    #[test]
+    fn subscribe_with_data_answers_at_once_and_marks_partial() {
+        let mut engine = Engine::new().with_venue(Venue::Coinbase);
+        engine.on_market(trade(100, HOUR));
+        engine.on_market(trade(110, 2 * HOUR));
+        let events = engine.on_command(sub());
+        let [Event::Ticker24h { venue, ticker, ts, .. }] = events.as_slice() else {
+            panic!("expected one ticker, got {events:?}");
+        };
+        assert_eq!(*venue, Venue::Coinbase);
+        assert_eq!(*ts, 2 * HOUR);
+        assert!(ticker.partial);
+        assert_eq!(ticker.change_bps, 1_000);
+    }
+
+    #[test]
+    fn trades_emit_at_most_one_ticker_per_second_of_market_time() {
+        let mut engine = Engine::new();
+        engine.on_market(trade(100, HOUR));
+        engine.on_command(sub());
+        assert!(tickers(&engine.on_market(trade(101, HOUR + 500))).is_empty());
+        assert_eq!(tickers(&engine.on_market(trade(102, HOUR + 1_000))).len(), 1);
+        assert!(tickers(&engine.on_market(trade(103, HOUR + 1_500))).is_empty());
+    }
+
+    #[test]
+    fn unsubscribe_stops_the_stream() {
+        let mut engine = Engine::new();
+        engine.on_market(trade(100, HOUR));
+        engine.on_command(sub());
+        assert!(engine.on_command(unsub()).is_empty());
+        assert!(tickers(&engine.on_market(trade(101, HOUR + 5_000))).is_empty());
+        // Resubscribing answers at once again.
+        assert_eq!(engine.on_command(sub()).len(), 1);
     }
 }

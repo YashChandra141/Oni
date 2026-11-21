@@ -329,6 +329,7 @@ pub fn interval_name(timeframe: Timeframe) -> &'static str {
         Timeframe::M5 => "5m",
         Timeframe::M15 => "15m",
         Timeframe::H1 => "1h",
+        Timeframe::H4 => "4h",
         Timeframe::D1 => "1d",
     }
 }
@@ -899,7 +900,7 @@ mod tests {
     #[test]
     fn interval_names() {
         let names: Vec<&str> = Timeframe::ALL.iter().map(|t| interval_name(*t)).collect();
-        assert_eq!(names, ["1m", "5m", "15m", "1h", "1d"]);
+        assert_eq!(names, ["1m", "5m", "15m", "1h", "4h", "1d"]);
     }
 
     // ----- DepthSync -----

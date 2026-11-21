@@ -33,13 +33,13 @@ function candleMessage(
   bars: Bar[],
   indicators?: readonly RawPoint[],
 ): ServerMessage {
-  const base: CandleEvent = { type: "candle", symbol, timeframe, snapshot, bars };
+  const base: CandleEvent = { type: "candle", venue: "replay", symbol, timeframe, snapshot, bars };
   const event: CandleEvent = indicators === undefined ? base : { ...base, indicators: [...indicators] };
   return { type: "event", event };
 }
 
 function indicatorsMessage(symbol: string, timeframe: Timeframe, ts: number, ema: number): ServerMessage {
-  return { type: "event", event: { type: "indicators", symbol, timeframe, ts, values: values(ema) } };
+  return { type: "event", event: { type: "indicators", venue: "replay", symbol, timeframe, ts, values: values(ema) } };
 }
 
 /** Model: floor each t to its bucket, last wins, ascending, newest MAX_INDICATOR_POINTS. */

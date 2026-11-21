@@ -182,7 +182,7 @@ if (!HAVE_ENGINE) {
 
         const subscribedAt = inbox.items.length;
         const tSubscribe = performance.now();
-        ws.send(JSON.stringify({ type: "subscribe", symbol: "BTC-USD", timeframe: "1m" }));
+        ws.send(JSON.stringify({ type: "subscribe", venue: "replay", symbol: "BTC-USD", timeframe: "1m" }));
 
         const afterSubscribe = () => inbox.items.slice(subscribedAt);
         const candles = () =>
@@ -359,7 +359,7 @@ if (!HAVE_ENGINE) {
         // First client: subscribe at once. The warm-up snapshot arrives when the fixture is loaded.
         const first = await connect(base);
         const tSubscribe = performance.now();
-        first.ws.send(JSON.stringify({ type: "subscribe", symbol: "BTC-USD", timeframe: "1m" }));
+        first.ws.send(JSON.stringify({ type: "subscribe", venue: "replay", symbol: "BTC-USD", timeframe: "1m" }));
 
         const bigSnapshot = () =>
           first.inbox.items.find(({ value }) => (isBtcSnapshot(value)?.bars.length ?? 0) >= 85);
@@ -414,7 +414,7 @@ if (!HAVE_ENGINE) {
 
         // Req 2.7: a second connection, after the first one's snapshot, gets a cached snapshot.
         const second = await connect(base);
-        second.ws.send(JSON.stringify({ type: "subscribe", symbol: "BTC-USD", timeframe: "1m" }));
+        second.ws.send(JSON.stringify({ type: "subscribe", venue: "replay", symbol: "BTC-USD", timeframe: "1m" }));
         await second.inbox.until(
           () => second.inbox.items.some(({ value }) => isBtcSnapshot(value) !== null),
           "the cached BTC-USD 1m snapshot for the second subscriber",

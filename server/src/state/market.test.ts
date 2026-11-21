@@ -10,13 +10,24 @@ function bar(t: number, close = "100"): Bar {
 }
 
 function candle(snapshot: boolean, bars: Bar[], symbol = "BTC-USD"): CandleEvent {
-  return { type: "candle", symbol, timeframe: "1m", snapshot, bars };
+  return { type: "candle", venue: "replay", symbol, timeframe: "1m", snapshot, bars };
 }
 
-const TRADE: Event = { type: "trade", symbol: "BTC-USD", price: "6400000", qty: "289871", side: "sell", ts: 10 };
+const TRADE: Event = {
+  type: "trade",
+  venue: "replay",
+  symbol: "BTC-USD",
+  price: "6400000",
+  qty: "289871",
+  side: "sell",
+  synthetic: false,
+  ts: 10,
+};
 
 const BOOK: Event = {
   type: "book",
+  venue: "replay",
+  synthetic: false,
   symbol: "BTC-USD",
   // Deliberately not best first: the best level is found by price, not position.
   bids: [
@@ -97,7 +108,7 @@ describe("last trade and top of book", () => {
   test("other events are ignored", () => {
     const m = new MarketState();
     m.apply({ type: "heartbeat", ts: 1 });
-    m.apply({ type: "order_ack", account_id: "guest", order_id: "o1", status: "accepted" });
+    m.apply({ type: "order_ack", account_id: "guest", venue: "replay", order_id: "o1", status: "accepted" });
     expect(m.quote("BTC-USD")).toBeNull();
   });
 });
@@ -177,6 +188,7 @@ describe("candle cache", () => {
     });
     const live = (ts: number, n: number): Event => ({
       type: "indicators",
+      venue: "replay",
       symbol: "BTC-USD",
       timeframe: "1m",
       ts,
@@ -336,7 +348,7 @@ describe("server cache agrees with the web store model (Property 4)", () => {
             }
           } else if (op.k === "ind") {
             const ts = op.bucket * MIN + op.offset;
-            m.apply({ type: "indicators", symbol: "BTC-USD", timeframe: "1m", ts, values: vals(n) });
+            m.apply({ type: "indicators", venue: "replay", symbol: "BTC-USD", timeframe: "1m", ts, values: vals(n) });
             if (bars !== null) pts = normalize([...pts, { t: op.bucket * MIN, values: vals(n) }]);
           } else {
             m.clear();
@@ -365,7 +377,14 @@ describe("server cache agrees with the web store model (Property 4)", () => {
           const m = new MarketState();
           const pts = (idx: number[], n: number): Pt[] => idx.map((i) => ({ t: i * MIN, values: vals(n) }));
           m.apply({ ...candle(true, [bar(0)]), indicators: pts(first, 1) });
-          m.apply({ type: "indicators", symbol: "BTC-USD", timeframe: "1m", ts: 5 * MIN, values: vals(2) });
+          m.apply({
+            type: "indicators",
+            venue: "replay",
+            symbol: "BTC-USD",
+            timeframe: "1m",
+            ts: 5 * MIN,
+            values: vals(2),
+          });
           m.apply({ ...candle(true, [bar(0)]), indicators: pts(second, 3) });
           expect(m.snapshot("BTC-USD", "1m")?.indicators ?? []).toEqual(normalize(pts(second, 3)));
           m.clear();

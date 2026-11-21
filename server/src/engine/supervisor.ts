@@ -29,7 +29,7 @@
 // - `stop()` cancels a pending restart, kills the process, and resolves after it has exited.
 
 import { redactSecrets, type Config, type SecretSource } from "../config.ts";
-import { CommandSchema, parseEventLine, type Command, type Event, type Timeframe } from "../protocol.ts";
+import { CommandSchema, parseEventLine, type Command, type Event, type Timeframe, type Venue } from "../protocol.ts";
 import { Backoff } from "./backoff.ts";
 import { createEngineStdoutSplitter, LineSplitter, MAX_EVENT_LINE_BYTES } from "./lines.ts";
 
@@ -44,6 +44,8 @@ import { createEngineStdoutSplitter, LineSplitter, MAX_EVENT_LINE_BYTES } from "
 const COMMAND_CLASS = {
   subscribe: "control",
   unsubscribe: "control",
+  subscribe_ticker: "control",
+  unsubscribe_ticker: "control",
   start_replay: "control",
   ping: "control",
   place_order: "order",
@@ -127,6 +129,7 @@ export interface Logger {
 }
 
 export interface EngineSubscription {
+  readonly venue: Venue;
   readonly symbol: string;
   readonly timeframe: Timeframe;
 }
@@ -177,7 +180,7 @@ export function engineArgv(request: EngineSpawnRequest): string[] {
 }
 
 /** Variables the engine never needs. They are removed from its environment (least privilege). */
-export const ENGINE_ENV_DENYLIST = ["OPENAI_API_KEY", "DATABASE_URL", "DIRECT_URL", "TEST_DATABASE_URL"] as const;
+export const ENGINE_ENV_DENYLIST = ["OPENAI_API_KEY"] as const;
 
 /** The server environment without secrets, for the engine child process (trading-safety rule 6). */
 export function engineEnv(source: Readonly<Record<string, string | undefined>> = process.env): Record<string, string> {
@@ -441,7 +444,7 @@ export class EngineSupervisor {
       this.#write({ type: "start_replay", fixture: this.#config.replayFixture, speed: this.#config.replaySpeed });
     }
     for (const sub of this.#activeSubscriptions()) {
-      this.#write({ type: "subscribe", symbol: sub.symbol, timeframe: sub.timeframe });
+      this.#write({ type: "subscribe", venue: sub.venue, symbol: sub.symbol, timeframe: sub.timeframe });
     }
 
     // Req 15.7: a new engine process means a fresh paper account. Clients are told only after

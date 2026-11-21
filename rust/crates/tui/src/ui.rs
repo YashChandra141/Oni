@@ -512,9 +512,14 @@ mod tests {
         NetEvent::Message(ServerMessage::Hello {
             protocol_version: 2,
             data_mode,
-            venue,
+            live_venues: venue.into_iter().collect(),
+            venue_status: Vec::new(),
+            default_venue: Venue::Replay,
+            starting_balance: protocol::Money(0),
             engine_running: true,
             instruments: InstrumentInfo::all(),
+            providers: Vec::new(),
+            news_enabled: false,
         })
     }
 
@@ -895,10 +900,12 @@ mod tests {
             &mut app,
             NetEvent::Message(ServerMessage::Event {
                 event: Event::Trade {
+                    venue: protocol::Venue::Replay,
                     symbol: "ETH-USD".into(),
                     price: protocol::Price(320_000),
                     qty: protocol::Qty(1),
                     side: protocol::Side::Sell,
+                    synthetic: false,
                     ts: 1,
                 },
             }),
@@ -1157,6 +1164,7 @@ mod order_layout_tests {
             text: "BUY BTC-USD 0.1 LMT 64000.00".into(),
             action: PreviewAction::Place {
                 symbol: "BTC-USD".into(),
+                venue: protocol::Venue::Replay,
                 side: Side::Buy,
                 qty: Qty(10_000_000),
                 kind: OrderKind::Limit {

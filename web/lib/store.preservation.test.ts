@@ -280,7 +280,16 @@ describe("store preservation (Property 11)", () => {
     for (let i = 0; i < MAX_TAPE + 25; i += 1) {
       state = applyServerMessage(
         state,
-        wrap({ type: "trade", symbol: "BTC-USD", price: String(i + 1), qty: "1", side: "buy", ts: i }),
+        wrap({
+          type: "trade",
+          venue: "replay",
+          symbol: "BTC-USD",
+          price: String(i + 1),
+          qty: "1",
+          side: "buy",
+          synthetic: false,
+          ts: i,
+        }),
       );
     }
     expect(state.tape.length).toBe(MAX_TAPE);
@@ -294,7 +303,7 @@ describe("store preservation (Property 11)", () => {
       const bar: Bar = { t: i * 60_000, open: "1", high: "2", low: "1", close: "2", volume: "1" };
       state = applyServerMessage(
         state,
-        wrap({ type: "candle", symbol: "BTC-USD", timeframe: "1m", snapshot: false, bars: [bar] }),
+        wrap({ type: "candle", venue: "replay", symbol: "BTC-USD", timeframe: "1m", snapshot: false, bars: [bar] }),
       );
     }
     const bars = state.candles[candleKey("BTC-USD", "1m")] ?? [];

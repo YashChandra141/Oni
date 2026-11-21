@@ -2,6 +2,7 @@
 //! writes Events as JSON lines on stdout (Req 3.1, 3.2). Logs go to stderr only (Req 3.3).
 
 mod account;
+mod balance;
 mod book;
 mod candles;
 mod core;
@@ -11,6 +12,7 @@ mod lines;
 mod matcher;
 mod record;
 mod runtime;
+mod ticker;
 
 use std::fs;
 use std::io::IsTerminal;
@@ -117,6 +119,20 @@ struct RunArgs {
     /// Live market data venue. Only used with `--mode live`.
     #[arg(long, value_enum, default_value_t = VenueArg::Backpack)]
     venue: VenueArg,
+    /// Starting_Balance of every Paper_Account in whole USD (1,000 to 100,000,000).
+    #[arg(
+        long,
+        default_value_t = balance::DEFAULT_STARTING_BALANCE_USD,
+        value_parser = clap::value_parser!(u32).range(1_000..=100_000_000)
+    )]
+    starting_balance: u32,
+    /// Slippage allowance in basis points that Required_Funds adds to an order's reference price.
+    #[arg(
+        long,
+        default_value_t = balance::DEFAULT_SLIPPAGE_BPS,
+        value_parser = clap::value_parser!(u32).range(0..=10_000)
+    )]
+    balance_slippage_bps: u32,
 }
 
 /// Command line spelling of `protocol::Venue` (the protocol crate has no clap dependency).
@@ -192,8 +208,21 @@ fn run(args: &RunArgs) -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
+    let balance = match (balance::BalanceConfig {
+        slippage_bps: args.balance_slippage_bps,
+        ..balance::BalanceConfig::default()
+    })
+    .with_starting_usd(args.starting_balance)
+    {
+        Ok(balance) => balance,
+        Err(err) => {
+            error!(%err, "invalid balance settings");
+            return ExitCode::FAILURE;
+        }
+    };
     let input = BufReader::new(tokio::io::stdin());
     let config = runtime::RunConfig {
+        balance,
         heartbeat: runtime::HEARTBEAT_PERIOD,
         fixtures_dir: args.fixtures.clone(),
         live: (args.mode == DataMode::Live).then(|| runtime::LiveFeedConfig {
@@ -326,6 +355,29 @@ mod tests {
         let args = run_args(&["engine", "run", "--venue", "backpack"]);
         assert_eq!(protocol::Venue::from(args.venue), protocol::Venue::Backpack);
         assert!(Cli::try_parse_from(["engine", "run", "--venue", "kraken"]).is_err());
+    }
+
+    #[test]
+    fn run_balance_flags_default_and_validate() {
+        let args = run_args(&["engine", "run"]);
+        assert_eq!(args.starting_balance, 100_000);
+        assert_eq!(args.balance_slippage_bps, 100);
+        let args = run_args(&[
+            "engine",
+            "run",
+            "--starting-balance",
+            "2500",
+            "--balance-slippage-bps",
+            "0",
+        ]);
+        assert_eq!((args.starting_balance, args.balance_slippage_bps), (2_500, 0));
+        for argv in [
+            ["engine", "run", "--starting-balance", "999"],
+            ["engine", "run", "--starting-balance", "100000001"],
+            ["engine", "run", "--balance-slippage-bps", "10001"],
+        ] {
+            assert!(Cli::try_parse_from(argv).is_err(), "{argv:?}");
+        }
     }
 
     #[test]

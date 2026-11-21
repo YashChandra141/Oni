@@ -36,7 +36,7 @@ use proptest::collection::vec;
 use proptest::prelude::*;
 use protocol::{
     AccountId, Command, Event, INSTRUMENTS, Level, OrderId, OrderKind, OrderStatus, Price, Qty,
-    Side, TimeMs,
+    Side, TimeMs, Venue,
 };
 
 use super::Engine;
@@ -274,6 +274,7 @@ fn resolve(steps: &[Step], n: usize) -> Vec<Input> {
                 };
                 inputs.push(Input::Command(Command::PlaceOrder {
                     account_id: acct(NAMES[a]),
+                    venue: Venue::Replay,
                     order_id: id,
                     symbol: SYMBOLS[symbol % 2].into(),
                     side: *side,
@@ -480,6 +481,7 @@ fn place(
 ) -> Vec<Event> {
     engine.on_command(Command::PlaceOrder {
         account_id: acct(account),
+        venue: Venue::Replay,
         order_id: oid(id),
         symbol: BTC.into(),
         side,
@@ -516,6 +518,7 @@ fn cancel(account: &str, id: &str) -> Command {
 fn ack(account: &str, id: &str, status: OrderStatus) -> Event {
     Event::OrderAck {
         account_id: acct(account),
+        venue: Venue::Replay,
         order_id: oid(id),
         status,
     }
@@ -524,6 +527,7 @@ fn ack(account: &str, id: &str, status: OrderStatus) -> Event {
 fn rejected(account: &str, id: &str, reason: &str) -> Event {
     Event::OrderRejected {
         account_id: acct(account),
+        venue: Venue::Replay,
         order_id: oid(id),
         reason: reason.into(),
     }
@@ -652,6 +656,7 @@ fn cancel_from_an_unknown_account_is_rejected() {
         e.on_command(cancel("w_ghost", "nope-1")),
         [Event::OrderRejected {
             account_id: acct("w_ghost"),
+            venue: Venue::Replay,
             order_id: oid("nope-1"),
             reason: "unknown_order".into(),
         }]
@@ -840,6 +845,7 @@ mod warmup_isolation {
             Item::Base(Input::Command(cmd)) => engine.on_command(cmd.clone()),
             Item::Extra(Extra::Subscribe(s)) => {
                 let events = engine.on_command(Command::Subscribe {
+                    venue: Venue::Replay,
                     symbol: SYMBOLS[s % 2].into(),
                     timeframe: Timeframe::M1,
                 });
@@ -964,6 +970,7 @@ mod warmup_isolation {
         let mut e = Engine::with_backfill();
         e.on_market(deep_snapshot(BTC, 1_000));
         let _ = e.on_command(Command::Subscribe {
+            venue: Venue::Replay,
             symbol: BTC.into(),
             timeframe: Timeframe::M1,
         });

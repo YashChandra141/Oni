@@ -22,11 +22,12 @@ const accountIdArb: fc.Arbitrary<string> = fc.oneof(
 function buildEvent(kind: 0 | 1 | 2 | 3, accountId: string, tag: string): Event {
   switch (kind) {
     case 0:
-      return { type: "order_ack", account_id: accountId, order_id: tag, status: "accepted" };
+      return { type: "order_ack", account_id: accountId, venue: "replay", order_id: tag, status: "accepted" };
     case 1:
       return {
         type: "fill",
         account_id: accountId,
+        venue: "replay",
         order_id: tag,
         symbol: "BTC-USD",
         side: "buy",
@@ -39,7 +40,7 @@ function buildEvent(kind: 0 | 1 | 2 | 3, accountId: string, tag: string): Event 
     case 2:
       return { type: "position", account_id: accountId, symbol: tag, qty: "1", avg_entry: "1", realized: "0", unrealized: "0" };
     case 3:
-      return { type: "order_rejected", account_id: accountId, order_id: tag, reason: "risk" };
+      return { type: "order_rejected", account_id: accountId, venue: "replay", order_id: tag, reason: "risk" };
   }
 }
 

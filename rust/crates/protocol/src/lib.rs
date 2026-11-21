@@ -26,10 +26,15 @@ pub use codec::{
 };
 pub use command::Command;
 pub use error::ProtocolError;
-pub use event::{Bar, ErrorCode, Event, IndicatorPoint, IndicatorValues, Level, OrderStatus};
+pub use event::{
+    Bar, ErrorCode, Event, IndicatorPoint, IndicatorValues, Level, OrderStatus, WireEvent,
+};
 pub use instrument::{INSTRUMENTS, Instrument, instrument, notional};
 pub use num::{MONEY_DECIMALS, Money, Price, Qty};
-pub use types::{AccountId, OrderId, OrderKind, Side, TimeMs, Timeframe, Venue};
+pub use types::{
+    AccountId, AnalysisBias, CopilotAction, NewsItem, OrderId, OrderKind, PairHealth, ProviderId,
+    Side, Ticker, TimeMs, Timeframe, TwapStatus, Venue, VenueKind, VenueStatusKind,
+};
 
 /// Directory that ts-rs writes TypeScript bindings into: `shared/protocol/` at the repository
 /// root. Every exported type passes it as `#[ts(export_to = ...)]`.
@@ -44,8 +49,10 @@ pub(crate) const TS_EXPORT_DIR: &str =
 /// Version of the wire protocol spoken between the engine, the server, and the clients.
 ///
 /// Version 2 added `account_id` to the order Commands and account Events, `Authenticate`,
-/// `Session`, and `Hello.venue` (design Decision A7, Req 1.7–1.11).
-pub const PROTOCOL_VERSION: u32 = 2;
+/// `Session`, and `Hello.venue` (design Decision A7, Req 1.7–1.11). Version 3 adds `venue` to
+/// the market data and order messages, `synthetic` to `Book` and `Trade`, the ticker, venue
+/// status, pair status, reference venue, and balance messages, and the 4h timeframe.
+pub const PROTOCOL_VERSION: u32 = 3;
 
 /// Returns the wire protocol version.
 pub fn protocol_version() -> u32 {
@@ -57,7 +64,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn protocol_version_is_two() {
-        assert_eq!(protocol_version(), 2);
+    fn protocol_version_is_three() {
+        assert_eq!(protocol_version(), 3);
     }
 }

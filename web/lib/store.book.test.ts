@@ -12,11 +12,13 @@ import {
 function bookEvent(symbol: string, asks: string[], bids: string[], ts = 1): Event {
   return {
     type: "book",
+    venue: "replay",
     symbol,
     asks: asks.map((price) => ({ price, qty: "10" })),
     bids: bids.map((price) => ({ price, qty: "20" })),
     spread: "100",
     imbalance_bps: 250,
+    synthetic: false,
     ts,
   };
 }

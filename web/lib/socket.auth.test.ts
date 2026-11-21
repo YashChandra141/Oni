@@ -12,11 +12,16 @@ const URL = "ws://localhost:8080/ws";
 
 const HELLO = JSON.stringify({
   type: "hello",
-  protocol_version: 2,
+  protocol_version: 3,
   data_mode: "replay",
-  venue: null,
+  live_venues: [],
+  venue_status: [],
+  default_venue: "replay",
+  starting_balance: "1000000000000000",
   engine_running: true,
   instruments: [],
+  providers: [],
+  news_enabled: false,
 });
 
 function setup(exp: number | null) {

@@ -130,6 +130,7 @@ impl AccountState {
                 account_id,
                 order_id,
                 status,
+                ..
             } if self.is_own(account_id) => self.apply_ack(order_id.as_str(), *status),
             Event::Fill {
                 account_id,
@@ -160,6 +161,7 @@ impl AccountState {
                 account_id,
                 order_id,
                 reason,
+                ..
             } if self.is_own(account_id) => {
                 self.push_rejection(Some(order_id.as_str().to_owned()), reason, now_ms);
                 // A rejection of an order that is not open is a rejected new order, so it also
@@ -440,6 +442,7 @@ mod tests {
 
     fn ack(account: AccountId, id: &str, status: OrderStatus) -> Event {
         Event::OrderAck {
+            venue: protocol::Venue::Replay,
             account_id: account,
             order_id: oid(id),
             status,
@@ -448,6 +451,7 @@ mod tests {
 
     fn fill(id: &str, qty: i64, remaining: i64) -> Event {
         Event::Fill {
+            venue: protocol::Venue::Replay,
             account_id: guest(),
             order_id: oid(id),
             symbol: "BTC-USD".into(),
@@ -462,6 +466,7 @@ mod tests {
 
     fn rejected(account: AccountId, id: &str, reason: &str) -> Event {
         Event::OrderRejected {
+            venue: protocol::Venue::Replay,
             account_id: account,
             order_id: oid(id),
             reason: reason.into(),
@@ -474,6 +479,7 @@ mod tests {
             text: "BUY BTC-USD 0.1 LMT 64000.00".into(),
             action: PreviewAction::Place {
                 symbol: "BTC-USD".into(),
+                venue: protocol::Venue::Replay,
                 side: Side::Buy,
                 qty: Qty(10_000_000),
                 kind: OrderKind::Limit {

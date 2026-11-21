@@ -90,6 +90,11 @@
         "executionId": "2a9a7ff7-0e32-48ae-ad85-961634801ba6",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795236970967
+      },
+      {
+        "executionId": "2a9a7ff7-0e32-48ae-ad85-961634801ba6",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795237375432
       }
     ],
     "1.4 Remove database parts from CI, deploy, and docs": [
@@ -117,6 +122,11 @@
         "executionId": "2a9a7ff7-0e32-48ae-ad85-961634801ba6",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795236971457
+      },
+      {
+        "executionId": "2a9a7ff7-0e32-48ae-ad85-961634801ba6",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795237371582
       }
     ],
     "2.1 Add core types, commands, and events to the protocol crate": [
@@ -139,6 +149,26 @@
         "executionId": "2a9a7ff7-0e32-48ae-ad85-961634801ba6",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795235413897
+      },
+      {
+        "executionId": "3bbfed0f-db8a-4a4c-80d8-91b44a40b733",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795237701150
+      },
+      {
+        "executionId": "2478ed8e-8974-4800-af58-f20e8ad8bd62",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795254133784
+      },
+      {
+        "executionId": "2478ed8e-8974-4800-af58-f20e8ad8bd62",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795254228811
+      },
+      {
+        "executionId": "2478ed8e-8974-4800-af58-f20e8ad8bd62",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795254820267
       }
     ],
     "2.2 Add client and server messages": [
@@ -161,6 +191,36 @@
         "executionId": "2a9a7ff7-0e32-48ae-ad85-961634801ba6",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795235414476
+      },
+      {
+        "executionId": "2478ed8e-8974-4800-af58-f20e8ad8bd62",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795254845386
+      },
+      {
+        "executionId": "5297c59e-34d1-4853-b5a1-b9287df42df4",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795255605912
+      },
+      {
+        "executionId": "5297c59e-34d1-4853-b5a1-b9287df42df4",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795255626877
+      },
+      {
+        "executionId": "5297c59e-34d1-4853-b5a1-b9287df42df4",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795255779113
+      },
+      {
+        "executionId": "0c99818c-1a5a-4be1-b8ef-2419222e966d",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795256700344
+      },
+      {
+        "executionId": "0c99818c-1a5a-4be1-b8ef-2419222e966d",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795256715203
       }
     ],
     "2.3 Export the Instrument_Table and regenerate types": [
@@ -183,6 +243,16 @@
         "executionId": "2a9a7ff7-0e32-48ae-ad85-961634801ba6",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795235416764
+      },
+      {
+        "executionId": "0c99818c-1a5a-4be1-b8ef-2419222e966d",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795256470682
+      },
+      {
+        "executionId": "0c99818c-1a5a-4be1-b8ef-2419222e966d",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795256630100
       }
     ],
     "2.4 Mirror the protocol in the server": [
@@ -205,6 +275,21 @@
         "executionId": "2a9a7ff7-0e32-48ae-ad85-961634801ba6",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795235420134
+      },
+      {
+        "executionId": "0c99818c-1a5a-4be1-b8ef-2419222e966d",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795256730753
+      },
+      {
+        "executionId": "03d0cc00-b69b-4b84-afeb-713d0f3a4304",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795258155931
+      },
+      {
+        "executionId": "03d0cc00-b69b-4b84-afeb-713d0f3a4304",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795259978914
       }
     ],
     "3.1 Ten-symbol Instrument_Table": [
@@ -227,6 +312,21 @@
         "executionId": "2a9a7ff7-0e32-48ae-ad85-961634801ba6",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795235420869
+      },
+      {
+        "executionId": "03d0cc00-b69b-4b84-afeb-713d0f3a4304",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260003190
+      },
+      {
+        "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260102820
+      },
+      {
+        "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260491124
       }
     ],
     "3.2 Venue_Symbol_Map for ten symbols": [
@@ -249,6 +349,16 @@
         "executionId": "2a9a7ff7-0e32-48ae-ad85-961634801ba6",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795235422735
+      },
+      {
+        "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260513892
+      },
+      {
+        "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260907681
       }
     ],
     "3.3 4h candles": [
@@ -271,6 +381,16 @@
         "executionId": "2a9a7ff7-0e32-48ae-ad85-961634801ba6",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795235423939
+      },
+      {
+        "executionId": "03d0cc00-b69b-4b84-afeb-713d0f3a4304",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795258158316
+      },
+      {
+        "executionId": "03d0cc00-b69b-4b84-afeb-713d0f3a4304",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795259981175
       }
     ],
     "3.4 Ticker24h": [
@@ -293,6 +413,16 @@
         "executionId": "2a9a7ff7-0e32-48ae-ad85-961634801ba6",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795235425081
+      },
+      {
+        "executionId": "03d0cc00-b69b-4b84-afeb-713d0f3a4304",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795258166130
+      },
+      {
+        "executionId": "03d0cc00-b69b-4b84-afeb-713d0f3a4304",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795259981787
       }
     ],
     "3.5 Consume ten symbols in the server, web, and TUI": [
@@ -337,6 +467,11 @@
         "executionId": "2a9a7ff7-0e32-48ae-ad85-961634801ba6",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795235445859
+      },
+      {
+        "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260929762
       }
     ],
     "4. Checkpoint - protocol and registry compile and pass": [
@@ -356,6 +491,16 @@
         "executionId": "1e0ec270-6d79-41db-93c5-8f65507a2ccb",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795232416345
+      },
+      {
+        "executionId": "03d0cc00-b69b-4b84-afeb-713d0f3a4304",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795258173782
+      },
+      {
+        "executionId": "03d0cc00-b69b-4b84-afeb-713d0f3a4304",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795259982185
       }
     ],
     "5.2 Engine rejection and Balance events": [
@@ -363,6 +508,21 @@
         "executionId": "1e0ec270-6d79-41db-93c5-8f65507a2ccb",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795232417161
+      },
+      {
+        "executionId": "03d0cc00-b69b-4b84-afeb-713d0f3a4304",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260004434
+      },
+      {
+        "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260105062
+      },
+      {
+        "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260486255
       }
     ],
     "5.3 Server balance math and golden vectors": [
@@ -370,6 +530,16 @@
         "executionId": "1e0ec270-6d79-41db-93c5-8f65507a2ccb",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795232417930
+      },
+      {
+        "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260514869
+      },
+      {
+        "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260908383
       }
     ],
     "5.4 Risk_Engine balance check": [
@@ -377,6 +547,11 @@
         "executionId": "1e0ec270-6d79-41db-93c5-8f65507a2ccb",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795232418289
+      },
+      {
+        "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260933940
       }
     ],
     "6.1 Per-(venue, symbol) state in the core": [
@@ -405,6 +580,16 @@
         "executionId": "1e0ec270-6d79-41db-93c5-8f65507a2ccb",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795232419811
+      },
+      {
+        "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260517761
+      },
+      {
+        "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260905933
       }
     ],
     "6.5 Jupiter_Adapter": [
@@ -475,6 +660,11 @@
         "executionId": "1e0ec270-6d79-41db-93c5-8f65507a2ccb",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795232423374
+      },
+      {
+        "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260932914
       }
     ],
     "8.2 TWAP slicing": [
@@ -503,6 +693,16 @@
         "executionId": "1e0ec270-6d79-41db-93c5-8f65507a2ccb",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795232424512
+      },
+      {
+        "executionId": "03d0cc00-b69b-4b84-afeb-713d0f3a4304",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795258177712
+      },
+      {
+        "executionId": "03d0cc00-b69b-4b84-afeb-713d0f3a4304",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795259982665
       }
     ],
     "9.2 OpenAI provider": [
@@ -510,6 +710,21 @@
         "executionId": "1e0ec270-6d79-41db-93c5-8f65507a2ccb",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795232424857
+      },
+      {
+        "executionId": "03d0cc00-b69b-4b84-afeb-713d0f3a4304",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260007053
+      },
+      {
+        "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260107277
+      },
+      {
+        "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260486740
       }
     ],
     "9.3 Anthropic provider": [
@@ -517,6 +732,21 @@
         "executionId": "1e0ec270-6d79-41db-93c5-8f65507a2ccb",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795232425159
+      },
+      {
+        "executionId": "03d0cc00-b69b-4b84-afeb-713d0f3a4304",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260007550
+      },
+      {
+        "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260108124
+      },
+      {
+        "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260488927
       }
     ],
     "9.4 NVIDIA NIM provider": [
@@ -524,6 +754,21 @@
         "executionId": "1e0ec270-6d79-41db-93c5-8f65507a2ccb",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795232425427
+      },
+      {
+        "executionId": "03d0cc00-b69b-4b84-afeb-713d0f3a4304",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260007908
+      },
+      {
+        "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260110153
+      },
+      {
+        "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260489408
       }
     ],
     "9.5 Ollama provider": [
@@ -531,6 +776,16 @@
         "executionId": "1e0ec270-6d79-41db-93c5-8f65507a2ccb",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795232425840
+      },
+      {
+        "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260514328
+      },
+      {
+        "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260910844
       }
     ],
     "9.6 Plain-English parser on any provider": [
@@ -594,6 +849,16 @@
         "executionId": "1e0ec270-6d79-41db-93c5-8f65507a2ccb",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795232432717
+      },
+      {
+        "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260517295
+      },
+      {
+        "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260910431
       }
     ],
     "11.2 NewsAPI provider": [
@@ -601,6 +866,11 @@
         "executionId": "1e0ec270-6d79-41db-93c5-8f65507a2ccb",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795232433371
+      },
+      {
+        "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260930896
       }
     ],
     "11.3 CryptoPanic provider": [
@@ -608,6 +878,11 @@
         "executionId": "1e0ec270-6d79-41db-93c5-8f65507a2ccb",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795232434392
+      },
+      {
+        "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795260931967
       }
     ],
     "11.4 Cache and gateway subscription": [
@@ -837,4 +1112,16 @@
     "2. Protocol changes (protocol v3)": [
       {
         "executionId": "d64b2adc-b525-4e91-929d-bdb0a3055cf7",
-  
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795233204111
+      }
+    ],
+    "3. Symbol registry, 4h timeframe, and 24h stats": [
+      {
+        "executionId": "d64b2adc-b525-4e91-929d-bdb0a3055cf7",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795233587516
+      }
+    ]
+  }
+}

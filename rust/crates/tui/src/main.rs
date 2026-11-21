@@ -507,12 +507,15 @@ fn watchlist_subscriptions() -> Vec<Subscription> {
 fn chart_key_messages(app: &App, old_symbol: &str, old_timeframe: Timeframe) -> Vec<ClientMessage> {
     let mut messages = Vec::with_capacity(2);
     if !is_watch_key(old_symbol, old_timeframe) {
+        // Task 16.3 makes the TUI venue-aware; until then it subscribes to `replay`.
         messages.push(ClientMessage::Unsubscribe {
+            venue: protocol::Venue::Replay,
             symbol: old_symbol.to_owned(),
             timeframe: old_timeframe,
         });
     }
     messages.push(ClientMessage::Subscribe {
+        venue: protocol::Venue::Replay,
         symbol: app.symbol.clone(),
         timeframe: app.timeframe,
     });
@@ -731,6 +734,7 @@ mod tests {
 
     fn sub(symbol: &str, timeframe: Timeframe) -> ClientMessage {
         ClientMessage::Subscribe {
+            venue: protocol::Venue::Replay,
             symbol: symbol.into(),
             timeframe,
         }
@@ -738,6 +742,7 @@ mod tests {
 
     fn unsub(symbol: &str, timeframe: Timeframe) -> ClientMessage {
         ClientMessage::Unsubscribe {
+            venue: protocol::Venue::Replay,
             symbol: symbol.into(),
             timeframe,
         }
@@ -1125,6 +1130,7 @@ mod order_routing_tests {
                     text: "BUY BTC-USD 0.1".into(),
                     action: PreviewAction::Place {
                         symbol: "BTC-USD".into(),
+                        venue: protocol::Venue::Replay,
                         side: Side::Buy,
                         qty: Qty(10_000_000),
                         kind: OrderKind::Market,

@@ -181,9 +181,10 @@ fn trim_terminator(line: &str) -> &str {
 
 fn validate(command: &Command) -> Result<(), DecodeError> {
     match command {
-        Command::Subscribe { symbol, .. } | Command::Unsubscribe { symbol, .. } => {
-            known_symbol(symbol)
-        }
+        Command::Subscribe { symbol, .. }
+        | Command::Unsubscribe { symbol, .. }
+        | Command::SubscribeTicker { symbol, .. }
+        | Command::UnsubscribeTicker { symbol, .. } => known_symbol(symbol),
         Command::PlaceOrder {
             symbol, qty, kind, ..
         } => {
@@ -309,7 +310,7 @@ fn bound_serde_message(msg: &str) -> String {
 mod tests {
     use super::*;
     use crate::num::{Price, Qty};
-    use crate::types::{AccountId, OrderId, Side, Timeframe};
+    use crate::types::{AccountId, OrderId, Side, Timeframe, Venue};
 
     fn err(line: &str) -> DecodeError {
         decode_command(line).unwrap_err()
@@ -324,12 +325,15 @@ mod tests {
     }
 
     fn place_order(symbol: &str, qty: &str, kind: &str) -> String {
-        let head = r#""type":"place_order","account_id":"guest","order_id":"o-1","side":"buy""#;
+        let head = concat!(
+            r#""type":"place_order","account_id":"guest","venue":"replay","#,
+            r#""order_id":"o-1","side":"buy""#
+        );
         format!(r#"{{{head},"symbol":"{symbol}","qty":"{qty}","kind":{kind}}}"#)
     }
 
     fn subscription(kind: &str, symbol: &str) -> String {
-        format!(r#"{{"type":"{kind}","symbol":"{symbol}","timeframe":"1m"}}"#)
+        format!(r#"{{"type":"{kind}","venue":"replay","symbol":"{symbol}","timeframe":"1m"}}"#)
     }
 
     fn replay(fixture: &str, speed: i64) -> String {
@@ -340,15 +344,17 @@ mod tests {
     fn decodes_every_command_variant() {
         let cases = [
             (
-                r#"{"type":"subscribe","symbol":"BTC-USD","timeframe":"1m"}"#,
+                r#"{"type":"subscribe","venue":"replay","symbol":"BTC-USD","timeframe":"1m"}"#,
                 Command::Subscribe {
+                    venue: Venue::Replay,
                     symbol: "BTC-USD".into(),
                     timeframe: Timeframe::M1,
                 },
             ),
             (
-                r#"{"type":"unsubscribe","symbol":"SOL-USD","timeframe":"1d"}"#,
+                r#"{"type":"unsubscribe","venue":"backpack","symbol":"SOL-USD","timeframe":"1d"}"#,
                 Command::Unsubscribe {
+                    venue: Venue::Backpack,
                     symbol: "SOL-USD".into(),
                     timeframe: Timeframe::D1,
                 },
@@ -413,6 +419,7 @@ mod tests {
             let line = place_order("ETH-USD", "10", kind_json);
             let expected = Command::PlaceOrder {
                 account_id: guest(),
+                venue: Venue::Replay,
                 order_id: OrderId::new("o-1").unwrap(),
                 symbol: "ETH-USD".into(),
                 side: Side::Buy,
@@ -449,7 +456,9 @@ mod tests {
             r#"{"type":"ping","id":"7"}"#,
             r#"{"type":"cancel","account_id":"guest","order_id":"a b"}"#,
             r#"{"type":"cancel","account_id":"guest","order_id":""}"#,
-            r#"{"type":"subscribe","symbol":"BTC-USD","timeframe":"2m"}"#,
+            r#"{"type":"subscribe","venue":"replay","symbol":"BTC-USD","timeframe":"2m"}"#,
+            r#"{"type":"subscribe","venue":"binance","symbol":"BTC-USD","timeframe":"1m"}"#,
+            r#"{"type":"subscribe","symbol":"BTC-USD","timeframe":"1m"}"#,
         ] {
             assert_eq!(code(line), ErrorCode::InvalidCommand, "{line}");
         }
@@ -579,6 +588,7 @@ mod tests {
     #[test]
     fn encode_line_ends_with_exactly_one_newline() {
         let command = Command::Subscribe {
+            venue: Venue::Replay,
             symbol: "a\nb\r\nc".into(),
             timeframe: Timeframe::M1,
         };
@@ -657,7 +667,9 @@ mod tests {
             format!(r#"{{"type":"{long}"}}"#),
             format!(r#"{{"type":"cancel","account_id":"guest","order_id":"{long}"}}"#),
             format!(r#"{{"type":"cancel_all","account_id":"{long}"}}"#),
-            format!(r#"{{"type":"subscribe","symbol":"BTC-USD","timeframe":"{long}"}}"#),
+            format!(
+                r#"{{"type":"subscribe","venue":"replay","symbol":"BTC-USD","timeframe":"{long}"}}"#
+            ),
         ];
         let kept = format!("{}…", "z".repeat(MAX_ECHO_CHARS));
         let too_much = "z".repeat(MAX_ECHO_CHARS + 1);

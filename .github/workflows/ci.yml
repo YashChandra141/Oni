@@ -42,67 +42,11 @@ jobs:
       - name: Check (fmt, clippy, tests, typecheck)
         run: bun run check
 
-  # Req 41.5: journal tests against a real Postgres. The service credentials are throwaway.
-  journal-pg:
-    name: journal (postgres 17)
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:17
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      DIRECT_URL: postgres://postgres:postgres@localhost:5432/postgres
-      TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
-      DB_ADAPTER: pg
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.4
-
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
-
-      - name: Generate Prisma Client
-        run: bun run db:generate
-
-      - name: Apply Migrations
-        working-directory: server
-        run: bunx prisma migrate deploy
-
-      - name: Journal tests against Postgres
-        run: bun test server
-
-  # Req 41.3, 41.6: build the Server_Image, run it against the Postgres service, place a paper order.
+  # Build the Server_Image, run it, and place a paper order. The smoke script waits for engine: "running".
   docker-smoke:
     name: docker smoke test
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    services:
-      postgres:
-        image: postgres:17
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     steps:
       - uses: actions/checkout@v5
 
@@ -121,9 +65,6 @@ jobs:
         # The image sets NODE_ENV=production, PORT=10000 and ENGINE_PATH itself.
         run: |
           docker run -d --name oni-smoke --network host \
-            -e DATABASE_URL=postgres://postgres:postgres@localhost:5432/postgres \
-            -e DIRECT_URL=postgres://postgres:postgres@localhost:5432/postgres \
-            -e DB_ADAPTER=pg \
             -e SESSION_SECRET=ci-smoke-throwaway-session-secret-0123456789abcdef \
             -e ALLOWED_ORIGINS=http://localhost:3000 \
             -e WEB_URL=http://localhost:3000 \

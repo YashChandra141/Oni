@@ -32,7 +32,11 @@
 //   result becomes `Error { invalid_command }` with "<action> rejected: <reason>"; a throwing
 //   Router becomes `Error { internal }`. Without a Router they are refused.
 // - CommandText, Confirm, and Discard use the CommandBar set with `setCommandBar` (Task 12.1):
-//   CommandText → `Preview` or `ParseError` (`?` text → LLM_Order_Parser → `Preview` or `ParseError`, or `Notice llm_disabled` without a key, Req 23);
+//   CommandText → `Preview` or `ParseError` (`?` text → LLM_Order_Parser → `Preview` or `ParseError`, or `Notice ai_disabled` without a key, Req 23);
+//   the preview's venue is the message's venue or the default, checked against the hello list.
+// - Protocol v3 stubs answer `Notice ai_disabled` "<feature>: not implemented yet": ticker
+//   subscriptions (Task 3.5), CancelTwap (Task 8.4), SetProvider/AiRequest/AiCancel (Task 10.6),
+//   and Subscribe/UnsubscribeNews (Task 11.4).
 //   Confirm → `PreviewStore.take` for this connection and its current account, then the Router;
 //   Discard → `PreviewStore.discard`. Without a CommandBar they are refused.
 // - `sendTo(connectionId, message)` and `onConnectionClosed(listener)` serve the Router wiring
@@ -52,8 +56,10 @@ import {
   type AccountId,
   type ClientMessage,
   type Event,
+  type NoticeKind,
   type ServerMessage,
   type Timeframe,
+  type Venue,
   parseClientMessage,
 } from "../protocol.ts";
 import { formatCommand } from "../commands/formatter.ts";
@@ -75,7 +81,29 @@ import {
 export { NOTICES_TOPIC, accountTopic, candlesTopic, marketTopic };
 
 /** Wire protocol version sent in `Hello` (`PROTOCOL_VERSION` in rust/crates/protocol/src/lib.rs). */
-export const PROTOCOL_VERSION = 2;
+export const PROTOCOL_VERSION = 3;
+
+/**
+ * Starting_Balance sent in `Hello`, as Money (10^-10 USD): 100,000 USD, the design default of
+ * STARTING_BALANCE. The config variable and the engine flag arrive with the balance task.
+ */
+export const DEFAULT_STARTING_BALANCE = "1000000000000000";
+
+/** Text of the typed Notice that a not-yet-built feature answers with. */
+export const NOT_IMPLEMENTED_MESSAGE = "not implemented yet";
+
+/**
+ * The default venue for a configuration: the Live_Venue in live mode, `replay` otherwise.
+ * Task 7.x widens this to LIVE_VENUES (four venues).
+ */
+export function defaultVenueOf(config: Pick<Config, "dataMode" | "liveVenue">): Venue {
+  return config.dataMode === "live" ? config.liveVenue : "replay";
+}
+
+/** The venues a client may name: the live venues in live mode, `replay` in replay mode. */
+export function availableVenuesOf(config: Pick<Config, "dataMode" | "liveVenue">): readonly Venue[] {
+  return config.dataMode === "live" ? [config.liveVenue] : ["replay"];
+}
 
 /** Largest accepted inbound message. Bun closes the socket with 1009 above it. */
 export const MAX_INBOUND_BYTES = 64 * 1024;
@@ -162,7 +190,7 @@ export interface CommandBar {
   readonly router: Pick<Router, "submit" | "cancelAll" | "flattenAll">;
   /**
    * The LLM_Order_Parser (Task 13.2, Req 23). Absent or disabled: `?` text gets
-   * `Notice llm_disabled` (Req 23.7). It yields commands only; they become previews here and
+   * `Notice ai_disabled` (Req 23.7). It yields commands only; they become previews here and
    * reach the Router only through Confirm.
    */
   readonly llm?: Pick<LlmOrderParser, "parse">;
@@ -357,15 +385,23 @@ export class Gateway {
     this.#sockets.set(clientId, ws);
     ws.subscribe(accountTopic(GUEST_ACCOUNT_ID)); // Req 46.1
     ws.subscribe(NOTICES_TOPIC); // Req 17.9
+    const liveVenues: Venue[] = this.#config.dataMode === "live" ? [this.#config.liveVenue] : [];
     ws.send(
       encode({
         type: "hello",
         protocol_version: PROTOCOL_VERSION,
         data_mode: this.#config.dataMode,
-        // Req 1.11: the Live_Venue in live mode, null in replay mode.
-        venue: this.#config.dataMode === "live" ? this.#config.liveVenue : null,
+        // Protocol v3: the live venues (empty in replay mode) replace the single `venue`.
+        live_venues: liveVenues,
+        // Real statuses come from engine VenueStatus events (Task 7.x); until then "connecting".
+        venue_status: liveVenues.map((venue) => ({ venue, status: "connecting" as const })),
+        default_venue: defaultVenueOf(this.#config),
+        starting_balance: DEFAULT_STARTING_BALANCE,
         engine_running: this.#supervisor.running,
-        instruments: INSTRUMENTS.map((i) => ({ ...i })),
+        instruments: INSTRUMENTS.map((i) => ({ ...i, venues: [...i.venues] })),
+        // Provider_Registry arrives in Task 10.x, news in Task 11.4.
+        providers: [],
+        news_enabled: false,
       }),
     );
     // Req 1.8, 46.1: tell the client which Paper_Account it is on.
@@ -519,11 +555,35 @@ export class Gateway {
 
   #handle(ws: GatewaySocket, clientId: string, msg: ClientMessage): void {
     switch (msg.type) {
-      case "subscribe":
-        this.#subscribe(ws, clientId, msg.symbol, msg.timeframe);
+      case "subscribe": {
+        const venue = this.#resolveVenue(ws, msg.venue);
+        if (venue !== null) this.#subscribe(ws, clientId, venue, msg.symbol, msg.timeframe);
         return;
-      case "unsubscribe":
-        this.#unsubscribe(ws, clientId, msg.symbol, msg.timeframe);
+      }
+      case "unsubscribe": {
+        const venue = this.#resolveVenue(ws, msg.venue);
+        if (venue !== null) this.#unsubscribe(ws, clientId, venue, msg.symbol, msg.timeframe);
+        return;
+      }
+      // Stub until Task 3.5 (ticker subscriptions).
+      case "subscribe_ticker":
+      case "unsubscribe_ticker":
+        this.#notImplemented(ws, "ticker subscriptions");
+        return;
+      // Stub until Task 8.4 (TWAP scheduler).
+      case "cancel_twap":
+        this.#notImplemented(ws, "TWAP");
+        return;
+      // Stub until Task 10.6 (Provider_Registry and AI_Analyst over the gateway).
+      case "set_provider":
+      case "ai_request":
+      case "ai_cancel":
+        this.#notImplemented(ws, "AI Copilot", "ai_disabled");
+        return;
+      // Stub until Task 11.4 (news over the gateway).
+      case "subscribe_news":
+      case "unsubscribe_news":
+        this.#notImplemented(ws, "news");
         return;
       case "ping":
         ws.send(encode({ type: "pong", id: msg.id }));
@@ -547,7 +607,10 @@ export class Gateway {
           ws.send(errorMessage("internal", ORDER_ENTRY_UNAVAILABLE));
           return;
         }
-        if (msg.type === "command_text") this.#commandText(ws, clientId, bar, msg.request_id, msg.text);
+        if (msg.type === "command_text") {
+          const venue = this.#resolveVenue(ws, msg.venue);
+          if (venue !== null) this.#commandText(ws, clientId, bar, msg.request_id, msg.text, venue);
+        }
         else if (msg.type === "confirm") this.#confirm(ws, clientId, bar, msg.preview_id);
         else bar.previews.discard(msg.preview_id, clientId);
         return;
@@ -565,9 +628,16 @@ export class Gateway {
    * to `#llmText`, which also ends in a preview.
    * Anything else is parsed here. The account for `%` amounts is the session's, never the message's.
    */
-  #commandText(ws: GatewaySocket, clientId: string, bar: CommandBar, requestId: string, text: string): void {
+  #commandText(
+    ws: GatewaySocket,
+    clientId: string,
+    bar: CommandBar,
+    requestId: string,
+    text: string,
+    venue: Venue,
+  ): void {
     if (text.trimStart().startsWith("?")) {
-      this.#llmText(ws, clientId, bar, requestId, text.trimStart().slice(1));
+      this.#llmText(ws, clientId, bar, requestId, text.trimStart().slice(1), venue);
       return;
     }
     const accountId = (ws.data.session ?? GUEST_SESSION).accountId;
@@ -583,7 +653,7 @@ export class Gateway {
       );
       return;
     }
-    const preview = bar.previews.create(clientId, accountId, result.command, formatCommand(result.command));
+    const preview = bar.previews.create(clientId, accountId, result.command, formatCommand(result.command), venue);
     ws.send(encode({ type: "preview", request_id: requestId, preview }));
   }
 
@@ -594,10 +664,11 @@ export class Gateway {
    * One request per connection at a time, to bound model calls. The account is read from the
    * session before the call and checked again after it: a switch in between drops the result.
    */
-  #llmText(ws: GatewaySocket, clientId: string, bar: CommandBar, requestId: string, text: string): void {
+  #llmText(ws: GatewaySocket, clientId: string, bar: CommandBar, requestId: string, text: string, venue: Venue): void {
     const llm = bar.llm;
     const disabled = (message: string): void => {
-      ws.send(encode({ type: "notice", kind: "llm_disabled", message }));
+      // Protocol v3 renames `llm_disabled` to `ai_disabled`.
+      ws.send(encode({ type: "notice", kind: "ai_disabled", message }));
     };
     if (llm === undefined) {
       disabled(LLM_DISABLED_MESSAGE);
@@ -625,7 +696,14 @@ export class Gateway {
           else fail(result.message);
           return;
         }
-        const preview = bar.previews.create(clientId, accountId, result.command, formatCommand(result.command));
+        // The venue is the client's (validated) or the default, never one from LLM output.
+        const preview = bar.previews.create(
+          clientId,
+          accountId,
+          result.command,
+          formatCommand(result.command),
+          venue,
+        );
         ws.send(encode({ type: "preview", request_id: requestId, preview }));
       })
       .catch(() => {
@@ -651,7 +729,7 @@ export class Gateway {
     }
     const origin: OrderOrigin = { connectionId: clientId, session, source: "web" };
     try {
-      this.#runConfirmed(ws, taken.command, bar.router, origin);
+      this.#runConfirmed(ws, taken.command, taken.venue, bar.router, origin);
     } catch {
       this.#log.error(`[gateway] client ${clientId} confirm failed unexpectedly`);
       ws.send(errorMessage("internal", "confirm failed"));
@@ -661,14 +739,16 @@ export class Gateway {
   #runConfirmed(
     ws: GatewaySocket,
     command: ParsedCommand,
+    venue: Venue,
     router: CommandBar["router"],
     origin: OrderOrigin,
   ): void {
     switch (command.kind) {
       case "place":
-        // A rejection is already delivered as an OrderRejected event (Req 19.7).
+        // A rejection is already delivered as an OrderRejected event (Req 19.7). The venue is
+        // the confirmed preview's (protocol v3).
         router.submit(
-          { symbol: command.symbol, side: command.side, qty: command.qty, kind: command.order },
+          { symbol: command.symbol, side: command.side, qty: command.qty, kind: command.order, venue },
           origin,
         );
         return;
@@ -683,6 +763,26 @@ export class Gateway {
         return;
       }
     }
+  }
+
+  /**
+   * The venue a message names, checked against the venues of this configuration (the `hello`
+   * list). Null or absent means the default venue. An unavailable venue gets an Error and null.
+   */
+  #resolveVenue(ws: GatewaySocket, venue: Venue | null): Venue | null {
+    const resolved = venue ?? defaultVenueOf(this.#config);
+    if (availableVenuesOf(this.#config).includes(resolved)) return resolved;
+    ws.send(errorMessage("invalid_message", `venue ${resolved} is not available`));
+    return null;
+  }
+
+  /**
+   * Typed reply of a feature whose task has not landed yet. NoticeKind has no generic kind, so
+   * every stub uses `ai_disabled` (the AI stub's natural kind, and harmless while Hello lists
+   * no providers); the message names the feature. Each caller names the task that replaces it.
+   */
+  #notImplemented(ws: GatewaySocket, feature: string, kind: NoticeKind = "ai_disabled"): void {
+    ws.send(encode({ type: "notice", kind, message: `${feature}: ${NOT_IMPLEMENTED_MESSAGE}` }));
   }
 
   /** Runs one Router action for this connection and reports a failure to it. */
@@ -707,40 +807,45 @@ export class Gateway {
     }
   }
 
-  #subscribe(ws: GatewaySocket, clientId: string, symbol: string, timeframe: Timeframe): void {
+  #subscribe(ws: GatewaySocket, clientId: string, venue: Venue, symbol: string, timeframe: Timeframe): void {
     if (instrumentBySymbol(symbol) === undefined) {
       const known = INSTRUMENTS.map((i) => i.symbol).join(", ");
       ws.send(errorMessage("unknown_symbol", `unknown symbol; expected one of ${known}`));
       return;
     }
-    const { first } = this.registry.subscribe(clientId, symbol, timeframe);
+    const { first } = this.registry.subscribe(clientId, venue, symbol, timeframe);
     // Bun topic subscriptions are idempotent, so a repeated subscribe is harmless.
-    ws.subscribe(candlesTopic(symbol, timeframe));
-    ws.subscribe(marketTopic(symbol));
+    ws.subscribe(candlesTopic(venue, symbol, timeframe));
+    ws.subscribe(marketTopic(venue, symbol));
     if (first) {
       // The engine answers with a history snapshot, published to the candles topic and cached.
       // While the engine is down this returns false; the supervisor resends on start (Req 15.4).
-      this.#supervisor.sendControl({ type: "subscribe", symbol, timeframe });
+      this.#supervisor.sendControl({ type: "subscribe", venue, symbol, timeframe });
       return;
     }
     // Later subscribers get the cached snapshot. Without one yet, the engine's snapshot is still
     // on its way and reaches this client through the topic.
-    const snapshot = this.market.snapshot(symbol, timeframe);
+    const snapshot = this.market.snapshot(symbol, timeframe, venue);
     if (snapshot !== null) ws.send(encode({ type: "event", event: snapshot }));
   }
 
   /** A key lost its last subscriber: stop the engine stream and drop its now-stale candles. */
   #release(key: SubscriptionKey): void {
-    this.market.dropCandles(key.symbol, key.timeframe);
-    this.#supervisor.sendControl({ type: "unsubscribe", symbol: key.symbol, timeframe: key.timeframe });
+    this.market.dropCandles(key.symbol, key.timeframe, key.venue);
+    this.#supervisor.sendControl({
+      type: "unsubscribe",
+      venue: key.venue,
+      symbol: key.symbol,
+      timeframe: key.timeframe,
+    });
   }
 
-  #unsubscribe(ws: GatewaySocket, clientId: string, symbol: string, timeframe: Timeframe): void {
-    if (!this.registry.isSubscribed(clientId, symbol, timeframe)) return;
-    const dropped = this.registry.unsubscribe(clientId, symbol, timeframe);
-    ws.unsubscribe(candlesTopic(symbol, timeframe));
-    // market:<symbol> is shared by every timeframe of the symbol: keep it while any remain.
-    if (!this.registry.clientHasSymbol(clientId, symbol)) ws.unsubscribe(marketTopic(symbol));
+  #unsubscribe(ws: GatewaySocket, clientId: string, venue: Venue, symbol: string, timeframe: Timeframe): void {
+    if (!this.registry.isSubscribed(clientId, venue, symbol, timeframe)) return;
+    const dropped = this.registry.unsubscribe(clientId, venue, symbol, timeframe);
+    ws.unsubscribe(candlesTopic(venue, symbol, timeframe));
+    // market:<venue>:<symbol> is shared by every timeframe of the pair: keep it while any remain.
+    if (!this.registry.clientHasSymbol(clientId, venue, symbol)) ws.unsubscribe(marketTopic(venue, symbol));
     for (const key of dropped) this.#release(key);
   }
 
@@ -752,7 +857,7 @@ export class Gateway {
   handleEngineEvent(event: Event): void {
     // Candles are cached only for keys that still have subscribers: a snapshot that arrives
     // after the last unsubscribe would otherwise sit in the cache, never updated again.
-    if (event.type !== "candle" || this.registry.count(event.symbol, event.timeframe) > 0) {
+    if (event.type !== "candle" || this.registry.count(event.venue, event.symbol, event.timeframe) > 0) {
       this.market.apply(event);
     }
     if (event.type === "error") {

@@ -5,19 +5,23 @@
 This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`) and `chart-and-tape-fix` code. It runs in the order below, and each step leaves the repo compiling.
 
 1. Remove the database (in-memory Activity_Log).
-2. Protocol changes plus `gen:protocol`.
+2. Protocol changes (protocol v3) plus `gen:protocol`.
 3. Symbol registry (ten symbols, per-symbol tick and lot), 4h timeframe, 24h stats.
-4. Paper balance plus `insufficient_balance`.
-5. Multi-venue engine adapters (Jupiter, Raydium, simulated DEX book, staleness, divergence) and the read-only allowlist guard.
-6. TWAP in the Router.
-7. LLM provider abstraction and the four providers.
-8. AI analyst and rate and cost limits.
-9. News.
-10. Latency (batching, coalescing, bench script).
-11. Web shell and pages.
-12. TUI panels.
-13. Deploy, CI, docs.
-14. Final checkpoint.
+4. Checkpoint (protocol and registry).
+5. Paper balance plus `insufficient_balance`.
+6. Multi-venue engine adapters (Jupiter, Raydium, simulated DEX book, staleness, divergence), the read-only allowlist guard, and venue-aware server routing.
+7. Checkpoint (engine, venues, balance).
+8. TWAP in the Router.
+9. LLM provider abstraction and the four providers.
+10. AI analyst and rate and cost limits.
+11. News.
+12. Checkpoint (server features).
+13. Latency (emit time, batching, coalescing, bench script).
+14. Web shell and pages.
+15. Checkpoint (web build).
+16. TUI panels.
+17. Deploy, CI, docs.
+18. Final checkpoint.
 
 ## Notes
 
@@ -39,18 +43,18 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
 
   - [x] 1.2 Rewire the server to the Activity_Log
     - Replace every Journal and Journal_Queue use in `router.ts`, the gateway, and the REST routes with Activity_Log appends
-    - Remove the `db` field and Journal_Status from `/health`; report Engine state, each Live_Venue status, and latency p50 and p95 (filled in by task 10.2)
+    - Remove the `db` field and Journal_Status from `/health`; report Engine state, each Live_Venue status, and latency p50 and p95 (filled in by task 13.2)
     - Remove Migration retry logic and `503` journal responses
     - _Requirements: 1.1, 1.2, 1.9, 2.6, 2.7_
 
-  - [ ] 1.3 Delete Prisma and journal code
+  - [x] 1.3 Delete Prisma and journal code
     - Delete `server/src/journal/`, `server/src/generated/`, `server/prisma/`, `server/prisma.config.ts`, and migration files
     - Remove Prisma and driver-adapter dependencies from `server/package.json` and the root `package.json` (exact versions stay pinned, commit the lockfile change when the user runs install)
     - Remove `DATABASE_URL`, `DIRECT_URL`, and `DB_ADAPTER` from `server/src/config.ts` and its Zod schema; make `server/scripts/start.ts` validate config and start the Server only
     - Drop `prisma generate` from the `check` script
     - _Requirements: 1.3, 1.4, 1.5, 1.8_
 
-  - [ ] 1.4 Remove database parts from CI, deploy, and docs
+  - [x] 1.4 Remove database parts from CI, deploy, and docs
     - Remove the Postgres CI job from `.github/workflows/ci.yml`
     - Remove database env vars and any database service from `render.yaml`
     - Remove database lines from `server/.env.example`, the Dockerfile, and `README.md`; state "orders, fills, and rejections live in memory for the current engine run only"
@@ -66,26 +70,26 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
     - **Validates: Requirements 2.4, 2.5, 2.19**
 
 - [x] 2. Protocol changes (protocol v3)
-  - [ ] 2.1 Add core types, commands, and events to the protocol crate
+  - [x] 2.1 Add core types, commands, and events to the protocol crate
     - In `rust/crates/protocol/src/`: `Venue` (coinbase, backpack, jupiter, raydium, replay) with `kind()`, `Timeframe::H4`, `Ticker`, `VenueStatusKind`, `PairHealth`, `WireEvent` (flatten plus `emit_us`), and the other types in the design's Types table
     - Add `venue` to `Subscribe`, `Unsubscribe`, `PlaceOrder`, `Candle`, `Trade`, `Book`, `Indicators`, `OrderAck`, `OrderRejected`, and `Fill`; add `synthetic` to `Book` and `Trade`
     - Add commands `SubscribeTicker` and `UnsubscribeTicker`; events `Ticker24h`, `VenueStatus`, `PairStatus`, `ReferenceVenue`, and `Balance`
     - Update existing engine and server call sites only enough to compile (default venue `replay` or the configured venue); update `strategies.rs` generators
     - _Requirements: 15.1, 15.2, 9.1, 9.8, 16.4, 18.1, 33.2_
 
-  - [ ] 2.2 Add client and server messages
+  - [x] 2.2 Add client and server messages
     - `ClientMessage`: `venue` on `Subscribe`, `Unsubscribe`, `CommandText`; add `SubscribeTicker`, `UnsubscribeTicker`, `CancelTwap`, `SetProvider`, `AiRequest`, `AiCancel`, `SubscribeNews`, `UnsubscribeNews`
     - `ServerMessage`: extend `Hello`; add `EventBatch`, `Providers`, `Analysis`, `ScanResult`, `StrategyDraft`, `AiError`, `News`, `Twap`; extend `PreviewAction` with `venue` and `Twap`; extend `NoticeKind`
     - Providers messages carry no key, base URL, or credential
     - _Requirements: 3.9, 4.1, 4.2, 5.9, 7.5, 7.6, 17.7, 17.9, 19.10, 34.1_
 
-  - [ ] 2.3 Export the Instrument_Table and regenerate types
+  - [x] 2.3 Export the Instrument_Table and regenerate types
     - Add a protocol-crate test that writes `shared/protocol/instruments.json`
     - Make sure every new type has `#[ts(export, export_to = crate::TS_EXPORT_DIR)]` and update the `index.ts` re-export line
     - Verification (`bun run gen:protocol`) runs in checkpoint 4
     - _Requirements: 8.1, 15.1_
 
-  - [ ] 2.4 Mirror the protocol in the server
+  - [x] 2.4 Mirror the protocol in the server
     - Update `server/src/protocol.ts` Zod mirrors, each declared `satisfies z.ZodType<Generated>`
     - Make `server/src/instruments.ts` a thin loader of `shared/protocol/instruments.json`
     - Update gateway message validation for the new messages (stubs return a typed `not implemented yet` Notice for AI, news, and TWAP until their tasks)
@@ -97,22 +101,23 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
     - **Validates: Requirements 15.1, 33.2, 34.10**
 
 - [x] 3. Symbol registry, 4h timeframe, and 24h stats
-  - [ ] 3.1 Ten-symbol Instrument_Table
+  - [x] 3.1 Ten-symbol Instrument_Table
     - In `protocol/src/instrument.rs` add BNB, XRP, DOGE, JUP, WIF, BONK, PEPE with the decimals from the design table; keep BTC, ETH, SOL decimals unchanged
     - Add a table test: tick at most 0.02% of `reference_price`, lot no coarser than the finest listing-venue increment, `price_decimals + qty_decimals <= 10`
     - _Requirements: 8.1, 8.2, 8.3, 8.4, 8.6, 8.7_
 
-  - [ ] 3.2 Venue_Symbol_Map for ten symbols
+  - [x] 3.2 Venue_Symbol_Map for ten symbols
     - In `engine/src/feed/venue.rs`: Backpack symbol, Coinbase product (or none), Jupiter and Raydium mint (or none) per symbol, from the committed table only; PEPE and BNB, XRP, DOGE have no DEX mint
     - Add a test that each committed mint string equals the table in `design.md`
     - Mints never come from the Server, a client, LLM output, or news
-    - _Requirements: 8.5, 8.8, 14.2_
+    - On venue start, log each mapped symbol's venue symbol or mint and any tick or lot mismatch against the Instrument_Table
+    - _Requirements: 8.4, 8.5, 8.7, 14.2_
 
-  - [ ] 3.3 4h candles
+  - [x] 3.3 4h candles
     - In `engine/src/candles.rs` aggregate 4h from 1h, aligned to 00, 04, 08, 12, 16, and 20 UTC; keep a 500-bar ring
     - _Requirements: 18.1, 18.2_
 
-  - [ ] 3.4 Ticker24h
+  - [x] 3.4 Ticker24h
     - Create `engine/src/ticker.rs` (pure): 24-bar window over the 1h series, `partial` flag, `change_bps`; wire `SubscribeTicker` and the 1 s emission into `core.rs`
     - _Requirements: 18.3, 18.4, 18.7_
 
@@ -121,7 +126,7 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
     - Add `4h` to Timeframe selectors, the shared keymap Timeframe keys, and the replay and live backfill paths (build 4h from 1h)
     - _Requirements: 8.1, 8.8, 18.1, 18.5, 18.8_
 
-  - [ ] 3.6 Regenerate the demo fixture for ten symbols
+  - [-] 3.6 Regenerate the demo fixture for ten symbols
     - Update `engine/src/feed/synth.rs` and regenerate `fixtures/demo.jsonl` so replay shows all ten symbols with plausible reference prices (design table)
     - _Requirements: 8.9_
 
@@ -141,25 +146,25 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
   - Ask the user to approve and run, in order: `bun run gen:protocol` (repo root), `cargo build -p engine` (rust/), then `bun run check` (repo root). Fix failures, then ask the user if questions arise.
 
 - [ ] 5. Paper balance and `insufficient_balance`
-  - [ ] 5.1 Engine balance model
+  - [x] 5.1 Engine balance model
     - Create `engine/src/balance.rs` (pure): `required_funds`, `free_balance = paper_balance - 2 * short_basis - reserved`, `equity`
     - Extend `account.rs` with `paper_balance`, short basis, and reserved funds; add `--starting-balance` and `--balance-slippage-bps` to `main.rs`
     - _Requirements: 16.1, 16.2, 16.3, 16.5, 16.7, 16.10_
 
-  - [ ] 5.2 Engine rejection and Balance events
+  - [x] 5.2 Engine rejection and Balance events
     - Reject in the matcher path with `insufficient_balance` when `free_balance - required_funds < 0`, before any state change; allow closing sells that fit the fee
     - Emit `Balance` events on fill, reset, and when Equity moves at least 0.01 USD; `ResetAccount` restores the starting balance
     - Position unrealized P&L uses the Mark_Price (reference pair)
     - _Requirements: 16.4, 16.6, 16.9, 16.11, 16.13_
 
-  - [ ] 5.3 Server balance math and golden vectors
+  - [x] 5.3 Server balance math and golden vectors
     - Add a Rust test that writes `shared/balance-vectors.json`
     - Create `server/src/risk/balance.ts` with `requiredFunds`, `freeBalance`, `equity` using BigInt only
     - _Requirements: 16.5, 16.7, 16.10_
 
-  - [ ] 5.4 Risk_Engine balance check
+  - [-] 5.4 Risk_Engine balance check
     - In `server/src/risk/` add the balance check after the HT checks; reject with `insufficient_balance`; keep the cached Balance per account from engine events; add `starting_balance` to Hello
-    - Clients show Free_Balance from `Balance` events (used by the ticket in task 11.6)
+    - Clients show Free_Balance from `Balance` events (used by the ticket in task 14.6)
     - _Requirements: 16.5, 16.8, 16.12_
 
   - [ ]* 5.5 Write property test for insufficient balance
@@ -204,7 +209,7 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
     - Mark a DEX pair `suspect` when it differs from the CEX Mark_Price by more than `--dex-max-deviation-pct`
     - _Requirements: 9.7, 14.6, 14.7, 14.8_
 
-  - [ ] 6.4 Engine allowlist and HTTP wrapper
+  - [x] 6.4 Engine allowlist and HTTP wrapper
     - Create `engine/src/feed/allowlist.rs` (exact scheme, host, port, path, method) and `feed/http.rs` (refuses non-allowlisted URLs, marks key headers sensitive)
     - Allowed: Coinbase and Backpack public market routes, `GET api.jup.ag/price/v3`, `GET api-v3.raydium.io/mint/price` and `/pools/info/mint`; no `transaction-v1.raydium.io`, no `/transaction` path, no swap, order, or execute route
     - Discard any response that carries a `transaction` field
@@ -237,11 +242,16 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
     - Create `server/src/net/allowlist.ts`, `net/http.ts` (`guardedFetch`), `net/redact.ts`; every outbound request goes through `guardedFetch`
     - Create `server/src/risk/guards.ts`: `venue_unavailable`, then `stale_market_data`, then `price_deviation`, in that order, before the HT and balance checks; add the new reasons to the reason list
     - Pass `LIVE_VENUES`, `JUPITER_API_KEY`, and the new flags to the engine through `Bun.spawn` environment and args (key never as an argument)
-    - _Requirements: 14.3, 14.6, 14.7, 14.8, 14.10, 15.8, 15.9_
+    - In `server/src/config.ts` add Zod validation for `LIVE_VENUES` (comma list, unknown name logs the variable name and exits 1; `LIVE_VENUE` alias logs a notice), `JUPITER_POLL_MS` (min 500), `RAYDIUM_POLL_MS` (min 1000), `DEX_*`, `STARTING_BALANCE` (1,000 to 100,000,000), `BALANCE_SLIPPAGE_BPS`, and `FEE_BPS`; log `DATABASE_URL`, `DIRECT_URL`, `DB_ADAPTER` as unused if set
+    - _Requirements: 1.3, 9.1, 9.2, 9.3, 10.4, 11.1, 14.3, 14.6, 14.7, 14.8, 14.10, 15.8, 15.9, 16.2_
 
   - [ ] 6.11 Venue-aware subscriptions and account events in the server
     - Route market events by `(venue, symbol)` subscription; track `venue_status` for `Hello`; send `account:<id>` events only to matching sessions; the order's venue comes from the confirmed preview and is validated against Hello venues
     - _Requirements: 9.10, 9.12, 15.6, 15.8_
+
+  - [ ] 6.25 MCP tools for ten symbols and venues
+    - In `server/src/mcp/`: `get_quote`, `get_candles`, `preview_order`, and `place_paper_order` accept the ten symbols and an optional `venue` (default: the symbol's Reference_Venue from the latest `ReferenceVenue` event); validate with Zod; no tool takes an account, wallet, or mint argument; orders still go through the Router
+    - _Requirements: 8.1, 8.5, 15.2, 15.8_
 
   - [ ]* 6.12 Write property test for staleness
     - **Property 14: Staleness follows the clock**
@@ -296,13 +306,13 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
 
   - [ ]* 6.24 Write property test for account-scoped delivery
     - **Property 51: Account-scoped events reach only their account**
-    - **Validates: Requirements 15.6, 17.9, 2.18**
+    - **Validates: Requirements 2.16**
 
 - [ ] 7. Checkpoint - engine, venues, and balance
   - Ask the user to approve and run `cargo build -p engine`, then `bun run check` (repo root). Fix failures, then ask the user if questions arise.
 
 - [ ] 8. TWAP in the Router
-  - [ ] 8.1 TWAP command parsing and formatting
+  - [-] 8.1 TWAP command parsing and formatting
     - Extend the Command_Parser and Command_Formatter with the TWAP command form from Requirement 17 (side, symbol, total quantity, slices, interval) and the `Twap` preview action
     - _Requirements: 17.1, 17.2, 17.12_
 
@@ -332,25 +342,26 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
     - **Validates: Requirements 17.3, 17.4, 17.5, 17.6, 17.7, 17.8, 17.10**
 
 - [ ] 9. LLM provider abstraction and four providers
-  - [ ] 9.1 Generic provider interface, schema, config, and registry
+  - [x] 9.1 Generic provider interface, schema, config, and registry
     - In `server/src/llm/`: `provider.ts` (`LlmProvider.completeJson`), `schema.ts`, `registry.ts`, `limits.ts` skeleton; config for `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `NVIDIA_API_KEY`, `NVIDIA_BASE_URL`, `OLLAMA_BASE_URL`, model names, and provider timeouts (15 s parser, 30 s analyst)
     - Reject base URLs with embedded credentials, log only their host; secrets come only from env
-    - Handle `SetProvider` and send `Providers` (no key or URL)
-    - _Requirements: 3.1, 3.2, 3.9, 3.10, 3.11, 3.12, 3.13, 3.14, 4.1, 4.2, 4.3_
+    - Unknown `LLM_PROVIDER` logs the variable name and exits 1; `ollama` availability via `/api/tags` within 2 s, re-checked at most every 30 s
+    - Handle `SetProvider` and send `Providers` (no key or URL); default selection from `LLM_PROVIDER`, else first available of `ollama`, `openai`, `anthropic`, `nvidia`; with no provider, answer `?` input with the disabled message
+    - _Requirements: 3.1, 3.2, 3.7, 3.8, 3.9, 3.10, 3.11, 3.12, 3.13, 3.14, 4.1, 4.2, 4.3, 4.4, 4.7_
 
-  - [ ] 9.2 OpenAI provider
+  - [x] 9.2 OpenAI provider
     - Responses API with structured output, through `guardedFetch`; keep the existing parser behaviour
     - _Requirements: 3.3_
 
-  - [ ] 9.3 Anthropic provider
+  - [x] 9.3 Anthropic provider
     - Messages API with `output_config.format` (no forced `tool_choice`)
     - _Requirements: 3.4_
 
-  - [ ] 9.4 NVIDIA NIM provider
+  - [x] 9.4 NVIDIA NIM provider
     - Chat completions with `nvext.guided_json` plus `response_format: json_object`; one same-provider retry without `nvext`
     - _Requirements: 3.5_
 
-  - [ ] 9.5 Ollama provider
+  - [x] 9.5 Ollama provider
     - `/api/chat` with a JSON schema in `format`; list models through `/api/tags`; no key
     - _Requirements: 3.6, 3.7_
 
@@ -429,25 +440,26 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
     - **Validates: Requirements 7.5**
 
 - [ ] 11. News
-  - [ ] 11.1 News provider interface, symbol matching, and config
-    - Create `server/src/news/provider.ts`, `symbols.ts`; config for `NEWS_PROVIDER` (`newsapi`, `cryptopanic`, `none`), `NEWS_API_KEY`, `CRYPTOPANIC_API_KEY` from env only; strict `NewsItem` Zod schema
-    - _Requirements: 19.1, 19.2, 19.7, 19.11_
+  - [x] 11.1 News provider interface, symbol matching, and config
+    - Create `server/src/news/provider.ts`, `symbols.ts`; config for `NEWS_PROVIDER` (`newsapi`, `cryptopanic`, `none`), `NEWS_API_KEY`, `CRYPTOPANIC_API_KEY` from env only; strict `NewsItem` Zod schema; default selection rule and `NEWS_TTL_SECONDS` (300 to 3,600)
+    - _Requirements: 19.1, 19.2, 19.3, 19.6, 19.7, 19.11_
 
-  - [ ] 11.2 NewsAPI provider
-    - Create `news/newsapi.ts` through `guardedFetch`; local development only; never log the full URL
-    - _Requirements: 19.3, 20.1_
+  - [-] 11.2 NewsAPI provider
+    - Create `news/newsapi.ts` through `guardedFetch` with `X-Api-Key` header; local development only; in production set the provider to `none` with a warning unless `NEWS_ALLOW_NEWSAPI_IN_PRODUCTION=true`; never log the full URL
+    - _Requirements: 19.4, 20.1, 20.2_
 
-  - [ ] 11.3 CryptoPanic provider
-    - Create `news/cryptopanic.ts`; `auth_token` stays out of logs and errors; hosted default
-    - _Requirements: 19.4, 20.2, 20.3_
+  - [-] 11.3 CryptoPanic provider
+    - Create `news/cryptopanic.ts` with `CRYPTOPANIC_PLAN`; `auth_token` stays out of logs and errors; hosted default
+    - _Requirements: 19.5, 19.7_
 
   - [ ] 11.4 Cache and gateway subscription
-    - Create `news/cache.ts` (server-memory cache, refresh interval, at most 30 sanitized items sorted by time descending with unique URLs); handle `SubscribeNews`/`UnsubscribeNews`; send `News` with `available` flag; feed up to 10 items into the Market_Snapshot
-    - _Requirements: 19.5, 19.6, 19.8, 19.9, 19.10, 19.12, 19.13, 19.14_
+    - Create `news/cache.ts` (server-memory cache, refresh interval, NewsAPI cap of 80 requests per UTC day, backoff capped at 30 minutes, keep serving old items on failure, at most 30 sanitized items sorted by time descending with unique URLs); handle `SubscribeNews`/`UnsubscribeNews`; send `News` with `available` flag; feed up to 10 items into the Market_Snapshot
+    - _Requirements: 19.8, 19.9, 19.10, 19.11, 19.12, 19.13_
 
   - [ ] 11.5 Mock-server tests for both news providers
     - Bun tests with mock HTTP servers and recorded fixtures: success, malformed payload, HTTP errors, rate limit; assert keys never appear in logs
-    - _Requirements: 19.3, 19.4, 19.7_
+    - Also test the NewsAPI production disable and override, the 80-per-day cap with a fake clock, and TTL and backoff
+    - _Requirements: 19.4, 19.5, 19.7, 19.9, 19.12, 20.1, 20.2_
 
   - [ ]* 11.6 Write property test for news sanitization
     - **Property 37: News output is sanitized**
@@ -459,23 +471,26 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
 - [ ] 13. Latency batching, coalescing, and bench script
   - [ ] 13.1 Engine emit time and book throttle
     - In `runtime.rs` wrap every event as `WireEvent` with `emit_us`; in the core, throttle Book events to at most one per venue and symbol per 50 ms of market time, emitting the latest state on the next message after the interval
-    - _Requirements: 33.1, 33.2, 33.8_
+    - Write and flush each Event line to stdout at once, without waiting for a batch
+    - _Requirements: 33.1, 33.2, 33.8, 33.9_
 
   - [ ] 13.2 Latency histogram and health
     - Create `server/src/metrics/histogram.ts` (2,048-sample ring, p50 and p95); record engine-to-send and ping round-trip samples; fill the `/health` p50 and p95 fields
-    - _Requirements: 1.9, 33.3, 33.12_
+    - Record the stages `engine_to_write`, `line_to_write`, `command_to_preview`, and `confirm_to_ack`; answer `Ping` with `Pong` outside the batcher
+    - _Requirements: 1.9, 33.1, 33.3, 33.4, 33.5, 33.11, 33.12_
 
   - [ ] 13.3 Batcher and coalescer
-    - Create `server/src/gateway/coalesce.ts` and `batcher.ts`: 10 ms Flush_Window, per-key coalescing (Candle by bar start time, Book, Ticker24h, Indicators, Trade tape limits), urgent events (OrderAck, OrderRejected, Fill, Position, Balance, Notice) flush at once, at most 200 events and 256 KB per batch, snapshots never coalesced with updates
-    - _Requirements: 34.1, 34.2, 34.3, 34.4, 34.5, 34.6_
+    - Create `server/src/gateway/coalesce.ts` and `batcher.ts`: 10 ms Flush_Window, per-key coalescing (Candle by bar start time, Book, Ticker24h, Indicators, Trade tape limits), urgent events (OrderAck, OrderRejected, Fill, Position, Balance, Notice) flush at once, at most 200 events and 256 KB per batch, snapshots never coalesced with updates; skip compression for batches under 1 KB
+    - _Requirements: 34.1, 34.2, 34.3, 34.4, 34.5, 34.6, 34.7_
 
   - [ ] 13.4 Gateway integration and slow clients
-    - Send `EventBatch` per connection through the batcher; detect slow clients by socket backpressure, drop coalescible data first, send a `slow_client` Notice
-    - _Requirements: 34.7, 34.8, 34.9, 34.10, 34.11_
+    - Send `EventBatch` per connection through the batcher; detect slow clients by socket backpressure, drop coalescible data first above 1 MB buffered and send a `slow_client` Notice, close with code 1013 above 4 MB; parse each engine line once and share the object among recipients
+    - _Requirements: 33.10, 34.8, 34.9_
 
   - [ ] 13.5 Latency bench script
     - Create `server/scripts/bench-latency.ts` and the root `bench:latency` script: start server and engine in replay mode, drive loopback clients, print p50 and p95 for each target
-    - _Requirements: 33.4, 33.5, 33.6, 33.7_
+    - Subscribe all ten symbols; add a `--check` flag that exits non-zero when a p95 exceeds its target times `CI_LATENCY_FACTOR` (default 2)
+    - _Requirements: 33.6, 33.7_
 
   - [ ]* 13.6 Write property test for book throttling
     - **Property 43: Book events are throttled**
@@ -508,11 +523,12 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
 
   - [ ] 14.2 Store updates and batch handling
     - Update `web/lib/store.ts` for venues, `venue_status`, Balance, Ticker24h, news, AI state, TWAP, providers; apply `EventBatch` in one store update; per-venue keys for books, candles, and trades
-    - _Requirements: 35.1, 35.2, 35.8, 35.9, 35.10_
+    - Accept both single `Event` messages and `EventBatch`; keep at most 500 candles per Timeframe, 200 trades, and 50 news items per symbol and venue
+    - _Requirements: 34.10, 35.1, 35.6_
 
   - [ ] 14.3 Exchange chips and symbol header
-    - Chips All, CEX, DEX and per-venue chips (Binance and Bybit as disabled); symbol header with last, 24h change, high, low, volume ("n/a" when absent); "simulated depth" label on DEX
-    - _Requirements: 9.12, 22.1, 22.2, 22.3, 22.4, 22.5, 22.6, 22.7, 22.8, 22.9_
+    - Chips All, CEX, DEX and per-venue chips (Binance and Bybit as disabled); symbol header with last, 24h change, high, low, volume ("n/a" when absent); "simulated depth" label on DEX; in replay mode show the four live chips disabled with "live mode only"
+    - _Requirements: 9.5, 9.12, 12.7, 22.1, 22.2, 22.3, 22.4, 22.5, 22.6, 22.7, 22.8, 22.9_
 
   - [ ] 14.4 Chart types and timeframes
     - Candles, Heikin-Ashi, line, and area chart types; Timeframes including 4h; persist chart type, symbol, Timeframe, and Active_Venue in local storage
@@ -520,35 +536,48 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
 
   - [ ]* 14.5 Chart drawing tools (lowest priority)
     - Horizontal line, trend line, and clear-all tools drawn over the chart with mouse input only, kept in local state
-    - _Requirements: 23.5, 23.6, 23.7, 23.8_
+    - Store drawings in `localStorage` keyed by symbol, venue, and Timeframe, never on the Server; a click on a horizontal line may prefill the ticket limit price and sends no order
+    - _Requirements: 23.5, 23.6, 23.7_
 
   - [ ] 14.6 Order ticket
     - Buy and Sell tabs, Market, Limit, Stop, and TWAP types, percentage slider limited by Free_Balance, position, and max order value, total, command text built for the Command_Parser, preview and confirm flow
     - _Requirements: 24.1, 24.2, 24.3, 24.4, 24.5, 24.6, 24.7, 24.8, 24.9, 24.10_
 
   - [ ] 14.7 Order book, trades, and bottom tabs
-    - Order book with spread and depth bars, trades tape, tabs for Positions, Orders, Fills, Balances, and Activity; update on Position, OrderAck, Fill, and Balance events
-    - _Requirements: 25.1, 25.2, 25.3, 25.4, 25.5, 25.6, 25.7, 25.8, 25.9, 25.10_
+    - Order book with spread and depth bars, trades tape, bottom tabs Positions, Orders (open orders, active TWAP_Orders with slices sent and a cancel action, last 50 fills and rejections), Balances, P&L, and Strategies (text only); update on Position, OrderAck, Fill, Balance, and Twap events
+    - _Requirements: 17.9, 25.1, 25.2, 25.3, 25.4, 25.5, 25.6, 25.7, 25.8, 25.9, 25.10_
 
   - [ ] 14.8 Watchlist, portfolio, and news column
-    - Watchlist with 24h changes for ten symbols, portfolio summary, News panel that shows only News_Items
-    - _Requirements: 26.1, 26.2, 26.3, 26.4, 26.5, 26.6, 26.7_
+    - Watchlist with 24h changes for ten symbols, portfolio summary, News panel that shows only News_Items as plain text, opened on click in a new tab with `rel="noopener noreferrer"`, "News unavailable" when empty
+    - _Requirements: 19.13, 19.14, 26.1, 26.2, 26.3, 26.4, 26.5, 26.6, 26.7_
 
   - [ ] 14.9 AI Copilot panel and page
     - Provider picker, action buttons (Analyze, Ask, Create strategy, Scan), analysis cards with a confirmable preview, error display, prompt text kept after an error, disabled state when no provider
     - _Requirements: 27.1, 27.2, 27.3, 27.4, 27.5, 27.6, 27.7, 27.8_
 
   - [ ] 14.10 Simple and placeholder pages
-    - Dashboard, Markets, Strategies, Backtest, Portfolio, Logs (Activity_Log), Settings, Pair pages that either work or say clearly they are not ready; all data comes through the Server
-    - _Requirements: 28.1, 28.2, 28.3, 28.4, 28.5, 28.6, 28.7_
+    - Dashboard, Markets, Strategies, Backtest, Portfolio, Logs (Activity_Log), Settings (provider selection through `SetProvider`, default venue, default chart type, wallet sign-in, no key or URL input), Pair pages that either work or say clearly they are not ready; all data comes through the Server
+    - _Requirements: 4.5, 4.6, 28.1, 28.2, 28.3, 28.4, 28.5, 28.6, 28.7_
 
   - [ ] 14.11 Header status and latency readout
-    - Live status dot, "N of M connected" venues, ping median of the last 10 round trips in milliseconds
-    - _Requirements: 29.1, 29.2, 29.3, 29.4, 29.5, 29.6_
+    - LIVE/REPLAY/STALE indicator, "N/M Exchanges" count, ping every 2 s with the median of the last 10 round trips in milliseconds, notification bell (last 50 Notice, OrderRejected, Fill, and venue status messages), settings gear, and account control
+    - _Requirements: 9.9, 21.6, 21.9, 29.1, 29.2, 29.3, 29.4, 29.5, 29.6_
 
   - [ ] 14.12 Keymap with per-client key lists
     - Update `shared/keymap.json` with a `clients` field and the new actions; add the TypeScript loader that rejects duplicates per client and context
     - _Requirements: 18.5, 30.4_
+
+  - [ ] 14.19 Render efficiency
+    - Drain queued `EventBatch` messages once per animation frame with one store commit; `session` and `pong` bypass the queue
+    - Use narrow per-pair selectors and `React.memo` rows keyed by price, trade id, symbol, and item id in the order book, trades, watchlist, and news panels
+    - Create the chart once and call `series.update` for live candles (`setData` only for snapshot, Timeframe, venue, or chart-type changes)
+    - Load the Copilot, Markets, Logs, Settings, and chart components with `next/dynamic`
+    - _Requirements: 35.2, 35.3, 35.4, 35.5, 35.7_
+
+  - [ ]* 14.20 Write render-efficiency and static-check tests
+    - `web/components/Trade.render.test.tsx`: render the Trade page with a stub socket, send one `EventBatch` of 100 Book events for one symbol, assert one store commit and zero renders of panels for other symbols (add `happy-dom` and `@testing-library/react` as exact-pinned dev dependencies)
+    - Scan `web/components` and `web/app` for hex, `rgb(`, and `hsl(` color literals; assert a route file exists for each page; assert the Settings page has no key or URL input
+    - _Requirements: 4.6, 21.3, 21.7, 28.7, 35.9_
 
   - [ ]* 14.13 Write property test for Heikin-Ashi
     - **Property 38: Heikin-Ashi bars are well formed**
@@ -572,35 +601,49 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
 
   - [ ]* 14.18 Write property test for batched store updates (web)
     - **Property 48: A batched store update equals sequential updates**
-    - **Validates: Requirements 35.1, 35.8, 35.10**
+    - **Validates: Requirements 35.1, 35.10**
 
 - [ ] 15. Checkpoint - web UI builds
   - Ask the user to approve and run `bun run --cwd web build` and `bun run check` (repo root). Fix failures, then ask the user if questions arise.
 
 - [ ] 16. TUI panels
   - [ ] 16.1 Panel layout, menu, and Hit_Map
-    - In `rust/crates/tui/src/`: panels [1] to [8] (chart, book, trades, ticket, positions and orders, watchlist, news, Copilot), menu, mouse and keyboard input only, Hit_Map updates
-    - _Requirements: 30.1, 30.2, 30.3, 30.5, 30.6, 30.7, 30.8, 30.9, 30.10_
+    - In `rust/crates/tui/src/`: panels [1] Chart, [2] Book, [3] Trades, [4] Positions, [5] Orders, [6] Watchlist, [7] News, [8] AI Copilot with the numbered menu, focus keys 1 to 8 and `Tab`, full layout at 140x40 and focused-panel-only below it, symbol header (last, 24h change, high, low, volume), F1 help overlay from the keymap, mouse and keyboard input only, Hit_Map entries for every new panel and item; label DEX book data "simulated depth" and DEX volume "n/a"
+    - _Requirements: 12.7, 13.3, 30.1, 30.2, 30.3, 30.5, 30.7, 30.9, 30.10_
 
   - [ ] 16.2 TUI header
-    - Live status, exchange count, latency readout, memory use
-    - _Requirements: 32.1, 32.2, 32.3, 32.4, 32.5_
+    - Create `tui/src/header.rs`: LIVE/REPLAY/STALE, "N/M Exchanges", latency readout, resident memory of the TUI process refreshed at most every 2 s (pin the chosen crate version); colors from `brand.rs`; redraw at most 30 times per second and only when state changed
+    - _Requirements: 9.9, 29.5, 32.1, 32.2, 32.3, 32.4_
 
   - [ ] 16.3 Venue and provider pickers
-    - Venue chips and a provider picker that sends `SetProvider`; 4h timeframe; ten symbols
-    - _Requirements: 30.11, 31.5_
+    - Venue picker on `v` and by click, with the same Venue_Status marks as the web chips; provider picker that sends `SetProvider`; Timeframe stepping with `<` and `>` and by clicking a label, including 4h; ten symbols
+    - _Requirements: 4.5, 9.12, 18.1, 30.4, 30.6_
 
   - [ ] 16.4 News and AI Copilot panels
-    - News list from `News` messages; Copilot actions through `AiRequest`; analysis with preview and confirm; disabled messages "AI features are disabled" and "News unavailable"
-    - _Requirements: 31.1, 31.2, 31.3, 31.4, 31.6, 31.7_
+    - News list from `News` messages; Copilot actions through `AiRequest`; analysis with preview and confirm; disabled messages "AI features are disabled" and "News unavailable"; News titles are plain text with control characters removed, Enter shows the URL and `y` copies it with an OSC 52 sequence, no browser is opened; the TUI sends only `SetProvider` and `SubscribeNews` and holds no key
+    - _Requirements: 7.1, 7.2, 7.3, 31.1, 31.2, 31.3, 31.4, 31.5, 31.6, 31.7_
 
   - [ ] 16.5 Batch application
-    - Handle `EventBatch`, per-venue keys, `Balance`, `Ticker24h`, `Twap`, redraw once per batch
-    - _Requirements: 35.5, 35.6, 35.7, 35.8_
+    - Handle both single messages and `EventBatch`, per-venue keys, `Balance`, `Ticker24h`, `Twap`, `VenueStatus`; apply all events of one batch before the next redraw
+    - _Requirements: 34.10, 35.8_
 
   - [ ] 16.6 Rust keymap loader
     - Update the TUI keymap loader for `clients` filtering and duplicate detection
     - _Requirements: 30.4_
+
+  - [ ] 16.9 TUI order ticket and chart type
+    - In the Orders panel add the ticket form (side, type Limit, Market, Stop, TWAP, price, quantity, percentage, total) that sends command text and shows the preview with confirm and discard before any order request
+    - Add the `c` key and a label click to switch the chart between candles and line
+    - _Requirements: 17.9, 23.8, 30.8_
+
+  - [ ] 16.10 TUI latency readout
+    - Create `tui/src/latency.rs`: ping every 2 s, median of the last 10 completed round trips in whole milliseconds, "—" while disconnected
+    - _Requirements: 29.1, 29.2, 29.4, 29.6_
+
+  - [ ]* 16.11 Write property test for the latency median (Rust)
+    - **Property 41: Latency readout is the median**
+    - Rust twin of task 14.16
+    - **Validates: Requirements 29.6**
 
   - [ ]* 16.7 Write property test for the keymap loader (Rust)
     - **Property 42: Keymap has no duplicates per client**
@@ -610,24 +653,29 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
   - [ ]* 16.8 Write property test for batched application (TUI)
     - **Property 48: A batched store update equals sequential updates**
     - TUI state reducer twin of task 14.18
-    - **Validates: Requirements 35.1, 35.8, 35.10**
+    - **Validates: Requirements 35.8, 35.10**
 
 - [ ] 17. Deploy, CI, and docs
   - [ ] 17.1 Dockerfile and Render Blueprint
-    - Dockerfile `rust:1.94-bookworm` to `oven/bun:1.4.4-debian`, no Prisma files, command is `bun` running the server entry; `render.yaml` with the web service and static site, secrets as `sync: false`, `SESSION_SECRET` generated, no database service
-    - _Requirements: 36.1, 36.2, 36.3, 36.7_
+    - Dockerfile `rust:1.94-bookworm` to `oven/bun:1.4.4-debian`, no Prisma files, command is `bun` running the server entry; `render.yaml` with the web service and static site, secrets (`CRYPTOPANIC_API_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `NVIDIA_API_KEY`, `JUPITER_API_KEY`) as `sync: false`, no `NEWS_API_KEY` value, `SESSION_SECRET` generated, variables `LIVE_VENUES`, `LLM_PROVIDER`, `OLLAMA_BASE_URL`, `NEWS_PROVIDER`, `STARTING_BALANCE`, no database service; update `buildFilter` for `shared/**` and `fixtures/**`
+    - _Requirements: 1.4, 1.5, 20.3, 36.1, 36.7_
 
   - [ ] 17.2 CI workflow
     - Update `.github/workflows/ci.yml`: no Postgres, new checks, and a `latency` job that runs `bun run bench:latency` and fails above target times `CI_LATENCY_FACTOR`; update `release.yml` only if build inputs changed
-    - _Requirements: 33.7, 36.4, 36.5, 36.6_
+    - Add a `render-blueprint` job that validates `render.yaml` against Render's schema; run the provider, news, DEX adapter, and allowlist tests inside `bun run check` with no network
+    - _Requirements: 1.6, 33.7, 36.2, 36.4, 36.5, 36.6_
 
-  - [ ] 17.3 Steering and MCP updates
-    - Update `.kiro/steering/product.md`, `tech.md`, and `trading-safety.md` for the Oni v2 stack; update MCP tools for ten symbols and venues
-    - _Requirements: 37.1, 37.2_
+  - [ ] 17.3 Steering updates
+    - Check that `.kiro/steering/product.md`, `tech.md`, `trading-safety.md`, and `rust.md` match the Oni v2 stack and allowlist (edit only where they differ)
+    - _Requirements: 37.6_
 
   - [ ] 17.4 README and env example
-    - README: every variable with default and secret flag, the allowlist, guest account, replay mode, Ollama setup (`ollama pull gemma4`, `OLLAMA_BASE_URL`, hosted server cannot reach local Ollama), NewsAPI and CryptoPanic notes, in-memory activity; update `server/.env.example` with names only and no values
-    - _Requirements: 20.4, 37.3, 37.4, 37.5_
+    - README: every variable with default and secret flag, the allowlist, guest account, replay mode, Ollama setup (`ollama pull gemma4`, `OLLAMA_BASE_URL`, hosted server cannot reach local Ollama), NewsAPI (local development) and CryptoPanic (hosted, may be unavailable without a key, Developer plan delay of about 24 hours) notes, the layout, ten symbols, four venues, chip filters, the statement that no real orders, transactions, or authenticated endpoints are used, in-memory activity; update `server/.env.example` with names only and no values and confirm `.env` files are gitignored
+    - _Requirements: 20.4, 20.5, 20.6, 37.1, 37.2, 37.3, 37.4, 37.5_
+
+  - [ ] 17.5 Docker smoke script
+    - Create `server/scripts/smoke.ts`: connect a WebSocket client to the running image with no database or key, place a paper order on `replay`, receive a Fill, read it from `/journal`; add the `docker-smoke` CI job that runs it
+    - _Requirements: 36.3, 1.8_
 
 - [ ] 18. Final checkpoint - full verification
   - Ask the user to approve and run, in order: `bun run gen:protocol`, `bun run check`, `bun run --cwd web build`, `cargo build -p engine` (all from the repo root, `cargo` in `rust/`), and optionally `bun run bench:latency`. Fix failures, then ask the user if questions arise.
@@ -663,7 +711,7 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
     { "id": 23, "tasks": ["6.5", "6.6", "6.10"] },
     { "id": 24, "tasks": ["6.8"] },
     { "id": 25, "tasks": ["6.9"] },
-    { "id": 26, "tasks": ["6.11"] },
+    { "id": 26, "tasks": ["6.11", "6.25"] },
     { "id": 27, "tasks": ["6.12", "6.13", "6.14", "6.15", "6.16", "6.17", "6.18", "6.19", "6.20", "6.21", "6.22", "6.23", "6.24"] },
     { "id": 28, "tasks": ["7"] },
     { "id": 29, "tasks": ["8.1"] },
@@ -694,13 +742,13 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
     { "id": 54, "tasks": ["14.1"] },
     { "id": 55, "tasks": ["14.2"] },
     { "id": 56, "tasks": ["14.3", "14.4", "14.6", "14.7", "14.8", "14.9", "14.10", "14.11", "14.12"] },
-    { "id": 57, "tasks": ["14.5"] },
-    { "id": 58, "tasks": ["14.13", "14.14", "14.15", "14.16", "14.17", "14.18"] },
+    { "id": 57, "tasks": ["14.5", "14.19"] },
+    { "id": 58, "tasks": ["14.13", "14.14", "14.15", "14.16", "14.17", "14.18", "14.20"] },
     { "id": 59, "tasks": ["15"] },
     { "id": 60, "tasks": ["16.1"] },
-    { "id": 61, "tasks": ["16.2", "16.3", "16.4", "16.5", "16.6"] },
-    { "id": 62, "tasks": ["16.7", "16.8"] },
-    { "id": 63, "tasks": ["17.1", "17.2", "17.3", "17.4"] },
+    { "id": 61, "tasks": ["16.2", "16.3", "16.4", "16.5", "16.6", "16.10"] },
+    { "id": 62, "tasks": ["16.9", "16.7", "16.8", "16.11"] },
+    { "id": 63, "tasks": ["17.1", "17.2", "17.3", "17.4", "17.5"] },
     { "id": 64, "tasks": ["18"] }
   ]
 }

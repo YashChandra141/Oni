@@ -14,13 +14,20 @@ use proptest::prelude::*;
 use proptest::sample::select;
 
 use crate::client::{
-    ClientMessage, DataMode, InstrumentInfo, NoticeKind, OrderPreview, PreviewAction, ServerMessage,
+    AiErrorReason, AnalysisResult, ClientMessage, DataMode, InstrumentInfo, NoticeKind,
+    OrderPreview, PreviewAction, PreviewError, ProviderInfo, ScanItem, ServerMessage, TradeIdea,
+    VenueStatusEntry,
 };
 use crate::command::Command;
-use crate::event::{Bar, ErrorCode, Event, IndicatorPoint, IndicatorValues, Level, OrderStatus};
+use crate::event::{
+    Bar, ErrorCode, Event, IndicatorPoint, IndicatorValues, Level, OrderStatus, WireEvent,
+};
 use crate::instrument::INSTRUMENTS;
 use crate::num::{Money, Price, Qty};
-use crate::types::{AccountId, OrderId, OrderKind, Side, TimeMs, Timeframe, Venue};
+use crate::types::{
+    AccountId, AnalysisBias, CopilotAction, NewsItem, OrderId, OrderKind, PairHealth, ProviderId,
+    Side, Ticker, TimeMs, Timeframe, TwapStatus, Venue, VenueStatusKind,
+};
 use crate::{MAX_REPLAY_SPEED, MIN_REPLAY_SPEED};
 
 /// Characters that stress JSON escaping, the single-line guarantee, and error message bounds:
@@ -157,7 +164,41 @@ pub fn invalid_account_id() -> impl Strategy<Value = String> + Clone {
 }
 
 pub fn venue() -> impl Strategy<Value = Venue> + Clone {
-    prop_oneof![Just(Venue::Coinbase), Just(Venue::Backpack)]
+    select(Venue::ALL.to_vec())
+}
+
+pub fn venue_status_kind() -> impl Strategy<Value = VenueStatusKind> + Clone {
+    select(vec![
+        VenueStatusKind::Connected,
+        VenueStatusKind::Connecting,
+        VenueStatusKind::Stale,
+        VenueStatusKind::Down,
+        VenueStatusKind::Disabled,
+    ])
+}
+
+pub fn pair_health() -> impl Strategy<Value = PairHealth> + Clone {
+    select(vec![PairHealth::Ok, PairHealth::Stale, PairHealth::Suspect])
+}
+
+pub fn ticker() -> impl Strategy<Value = Ticker> + Clone {
+    (
+        (any_price(), any_price(), any_price(), any_price()),
+        option::of(any_qty()),
+        any::<i32>(),
+        any::<bool>(),
+    )
+        .prop_map(
+            |((open, high, low, last), volume, change_bps, partial)| Ticker {
+                open,
+                high,
+                low,
+                last,
+                volume,
+                change_bps,
+                partial,
+            },
+        )
 }
 
 pub fn timeframe() -> impl Strategy<Value = Timeframe> + Clone {
@@ -246,11 +287,126 @@ pub fn notice_kind() -> impl Strategy<Value = NoticeKind> + Clone {
         NoticeKind::AccountReset,
         NoticeKind::EngineDown,
         NoticeKind::EngineUp,
-        NoticeKind::LlmDisabled,
+        NoticeKind::AiDisabled,
         NoticeKind::AuthFailed,
         NoticeKind::SessionExpired,
         NoticeKind::SignedOut,
+        NoticeKind::SlowClient,
+        NoticeKind::ProviderChanged,
     ])
+}
+
+pub fn provider_id() -> impl Strategy<Value = ProviderId> + Clone {
+    select(vec![
+        ProviderId::Openai,
+        ProviderId::Anthropic,
+        ProviderId::Nvidia,
+        ProviderId::Ollama,
+    ])
+}
+
+pub fn copilot_action() -> impl Strategy<Value = CopilotAction> + Clone {
+    select(vec![
+        CopilotAction::Analyze,
+        CopilotAction::Ask,
+        CopilotAction::CreateStrategy,
+        CopilotAction::Scan,
+    ])
+}
+
+pub fn analysis_bias() -> impl Strategy<Value = AnalysisBias> + Clone {
+    select(vec![
+        AnalysisBias::Long,
+        AnalysisBias::Short,
+        AnalysisBias::Neutral,
+    ])
+}
+
+pub fn twap_status() -> impl Strategy<Value = TwapStatus> + Clone {
+    select(vec![
+        TwapStatus::Active,
+        TwapStatus::Done,
+        TwapStatus::Canceled,
+    ])
+}
+
+pub fn ai_error_reason() -> impl Strategy<Value = AiErrorReason> + Clone {
+    select(vec![
+        AiErrorReason::AiDisabled,
+        AiErrorReason::AiRateLimit,
+        AiErrorReason::AiDailyCap,
+        AiErrorReason::ProviderError,
+        AiErrorReason::ValidationError,
+        AiErrorReason::Timeout,
+        AiErrorReason::Canceled,
+    ])
+}
+
+pub fn provider_info() -> impl Strategy<Value = ProviderInfo> + Clone {
+    (provider_id(), free_text(), option::of(free_text()))
+        .prop_map(|(id, model, reason)| ProviderInfo { id, model, reason })
+}
+
+pub fn venue_status_entry() -> impl Strategy<Value = VenueStatusEntry> + Clone {
+    (venue(), venue_status_kind()).prop_map(|(venue, status)| VenueStatusEntry { venue, status })
+}
+
+pub fn trade_idea() -> impl Strategy<Value = TradeIdea> + Clone {
+    (side(), any_qty(), order_kind(any_price()))
+        .prop_map(|(side, qty, kind)| TradeIdea { side, qty, kind })
+}
+
+pub fn analysis_result() -> impl Strategy<Value = AnalysisResult> + Clone {
+    (
+        free_text(),
+        free_text(),
+        analysis_bias(),
+        any::<u16>(),
+        vec(free_text(), 0..4),
+        option::of(trade_idea()),
+    )
+        .prop_map(
+            |(symbol, summary, bias, confidence_bps, rationale, suggested_order)| AnalysisResult {
+                symbol,
+                summary,
+                bias,
+                confidence_bps,
+                rationale,
+                suggested_order,
+            },
+        )
+}
+
+pub fn scan_item() -> impl Strategy<Value = ScanItem> + Clone {
+    (free_text(), analysis_bias(), any::<u16>(), free_text()).prop_map(
+        |(symbol, bias, confidence_bps, summary)| ScanItem {
+            symbol,
+            bias,
+            confidence_bps,
+            summary,
+        },
+    )
+}
+
+pub fn news_item() -> impl Strategy<Value = NewsItem> + Clone {
+    (
+        free_text(),
+        free_text(),
+        free_text(),
+        free_text(),
+        any_time(),
+        vec(free_text(), 0..4),
+    )
+        .prop_map(
+            |(id, title, source, url, published_at, symbols)| NewsItem {
+                id,
+                title,
+                source,
+                url,
+                published_at,
+                symbols,
+            },
+        )
 }
 
 pub fn data_mode() -> impl Strategy<Value = DataMode> + Clone {
@@ -280,21 +436,37 @@ pub fn fixture_name() -> impl Strategy<Value = String> + Clone {
 /// unknown symbols, non-positive quantities, and any replay speed.
 pub fn any_command() -> impl Strategy<Value = Command> {
     prop_oneof![
-        (free_text(), timeframe())
-            .prop_map(|(symbol, timeframe)| Command::Subscribe { symbol, timeframe }),
-        (free_text(), timeframe())
-            .prop_map(|(symbol, timeframe)| Command::Unsubscribe { symbol, timeframe }),
+        (venue(), free_text(), timeframe()).prop_map(|(venue, symbol, timeframe)| {
+            Command::Subscribe {
+                venue,
+                symbol,
+                timeframe,
+            }
+        }),
+        (venue(), free_text(), timeframe()).prop_map(|(venue, symbol, timeframe)| {
+            Command::Unsubscribe {
+                venue,
+                symbol,
+                timeframe,
+            }
+        }),
+        (free_text(), venue())
+            .prop_map(|(symbol, venue)| Command::SubscribeTicker { symbol, venue }),
+        (free_text(), venue())
+            .prop_map(|(symbol, venue)| Command::UnsubscribeTicker { symbol, venue }),
         (
             account_id(),
+            venue(),
             order_id(),
             free_text(),
             side(),
             any_qty(),
             order_kind(any_price())
         )
-            .prop_map(|(account_id, order_id, symbol, side, qty, kind)| {
+            .prop_map(|(account_id, venue, order_id, symbol, side, qty, kind)| {
                 Command::PlaceOrder {
                     account_id,
+                    venue,
                     order_id,
                     symbol,
                     side,
@@ -317,21 +489,37 @@ pub fn any_command() -> impl Strategy<Value = Command> {
 /// Every Command variant with field values that pass the codec's range rules.
 pub fn valid_command() -> impl Strategy<Value = Command> {
     prop_oneof![
-        (known_symbol(), timeframe())
-            .prop_map(|(symbol, timeframe)| Command::Subscribe { symbol, timeframe }),
-        (known_symbol(), timeframe())
-            .prop_map(|(symbol, timeframe)| Command::Unsubscribe { symbol, timeframe }),
+        (venue(), known_symbol(), timeframe()).prop_map(|(venue, symbol, timeframe)| {
+            Command::Subscribe {
+                venue,
+                symbol,
+                timeframe,
+            }
+        }),
+        (venue(), known_symbol(), timeframe()).prop_map(|(venue, symbol, timeframe)| {
+            Command::Unsubscribe {
+                venue,
+                symbol,
+                timeframe,
+            }
+        }),
+        (known_symbol(), venue())
+            .prop_map(|(symbol, venue)| Command::SubscribeTicker { symbol, venue }),
+        (known_symbol(), venue())
+            .prop_map(|(symbol, venue)| Command::UnsubscribeTicker { symbol, venue }),
         (
             account_id(),
+            venue(),
             order_id(),
             known_symbol(),
             side(),
             positive_qty(),
             order_kind(positive_price())
         )
-            .prop_map(|(account_id, order_id, symbol, side, qty, kind)| {
+            .prop_map(|(account_id, venue, order_id, symbol, side, qty, kind)| {
                 Command::PlaceOrder {
                     account_id,
+                    venue,
                     order_id,
                     symbol,
                     side,
@@ -359,6 +547,7 @@ pub fn valid_command() -> impl Strategy<Value = Command> {
 pub fn any_event() -> impl Strategy<Value = Event> + Clone {
     prop_oneof![
         (
+            venue(),
             free_text(),
             timeframe(),
             any::<bool>(),
@@ -369,8 +558,9 @@ pub fn any_event() -> impl Strategy<Value = Event> + Clone {
                 0..6
             ))
         )
-            .prop_map(|(symbol, timeframe, snapshot, bars, indicators)| {
+            .prop_map(|(venue, symbol, timeframe, snapshot, bars, indicators)| {
                 Event::Candle {
+                    venue,
                     symbol,
                     timeframe,
                     snapshot,
@@ -378,57 +568,81 @@ pub fn any_event() -> impl Strategy<Value = Event> + Clone {
                     indicators,
                 }
             }),
-        (free_text(), any_price(), any_qty(), side(), any_time()).prop_map(
-            |(symbol, price, qty, side, ts)| Event::Trade {
-                symbol,
-                price,
-                qty,
-                side,
-                ts,
-            }
-        ),
         (
+            venue(),
             free_text(),
+            any_price(),
+            any_qty(),
+            side(),
+            any::<bool>(),
+            any_time()
+        )
+            .prop_map(|(venue, symbol, price, qty, side, synthetic, ts)| {
+                Event::Trade {
+                    venue,
+                    symbol,
+                    price,
+                    qty,
+                    side,
+                    synthetic,
+                    ts,
+                }
+            }),
+        (
+            (venue(), free_text()),
             vec(level(), 0..6),
             vec(level(), 0..6),
             option::of(any_price()),
             any::<i32>(),
+            any::<bool>(),
             any_time(),
         )
             .prop_map(
-                |(symbol, bids, asks, spread, imbalance_bps, ts)| Event::Book {
-                    symbol,
-                    bids,
-                    asks,
-                    spread,
-                    imbalance_bps,
-                    ts,
+                |((venue, symbol), bids, asks, spread, imbalance_bps, synthetic, ts)| {
+                    Event::Book {
+                        venue,
+                        symbol,
+                        bids,
+                        asks,
+                        spread,
+                        imbalance_bps,
+                        synthetic,
+                        ts,
+                    }
                 }
             ),
-        (free_text(), timeframe(), any_time(), indicator_values()).prop_map(
-            |(symbol, timeframe, ts, values)| Event::Indicators {
+        (
+            venue(),
+            free_text(),
+            timeframe(),
+            any_time(),
+            indicator_values()
+        )
+            .prop_map(|(venue, symbol, timeframe, ts, values)| Event::Indicators {
+                venue,
                 symbol,
                 timeframe,
                 ts,
                 values,
-            }
-        ),
-        (account_id(), order_id(), order_status()).prop_map(|(account_id, order_id, status)| {
-            Event::OrderAck {
+            }),
+        (account_id(), venue(), order_id(), order_status()).prop_map(
+            |(account_id, venue, order_id, status)| Event::OrderAck {
                 account_id,
+                venue,
                 order_id,
                 status,
             }
-        }),
-        (account_id(), order_id(), free_text()).prop_map(|(account_id, order_id, reason)| {
-            Event::OrderRejected {
+        ),
+        (account_id(), venue(), order_id(), free_text()).prop_map(
+            |(account_id, venue, order_id, reason)| Event::OrderRejected {
                 account_id,
+                venue,
                 order_id,
                 reason,
             }
-        }),
+        ),
         (
-            account_id(),
+            (account_id(), venue()),
             order_id(),
             free_text(),
             side(),
@@ -438,9 +652,10 @@ pub fn any_event() -> impl Strategy<Value = Event> + Clone {
             (any_qty(), any_time()),
         )
             .prop_map(
-                |(account_id, order_id, symbol, side, price, qty, fee, (remaining, ts))| {
+                |((account_id, venue), order_id, symbol, side, price, qty, fee, (remaining, ts))| {
                     Event::Fill {
                         account_id,
+                        venue,
                         order_id,
                         symbol,
                         side,
@@ -470,10 +685,58 @@ pub fn any_event() -> impl Strategy<Value = Event> + Clone {
                     unrealized,
                 }
             ),
+        (
+            free_text(),
+            venue(),
+            ticker(),
+            any::<bool>(),
+            any_time()
+        )
+            .prop_map(|(symbol, venue, ticker, synthetic, ts)| Event::Ticker24h {
+                symbol,
+                venue,
+                ticker,
+                synthetic,
+                ts,
+            }),
+        (venue(), venue_status_kind(), any_time())
+            .prop_map(|(venue, status, ts)| Event::VenueStatus { venue, status, ts }),
+        (venue(), free_text(), pair_health(), any_time()).prop_map(
+            |(venue, symbol, health, ts)| Event::PairStatus {
+                venue,
+                symbol,
+                health,
+                ts,
+            }
+        ),
+        (free_text(), option::of(venue()))
+            .prop_map(|(symbol, venue)| Event::ReferenceVenue { symbol, venue }),
+        (
+            account_id(),
+            any_money(),
+            any_money(),
+            any_money(),
+            any_time()
+        )
+            .prop_map(
+                |(account_id, paper_balance, free_balance, equity, ts)| Event::Balance {
+                    account_id,
+                    paper_balance,
+                    free_balance,
+                    equity,
+                    ts,
+                }
+            ),
         any_time().prop_map(|ts| Event::Heartbeat { ts }),
         any::<u64>().prop_map(|id| Event::Pong { id }),
         (error_code(), free_text()).prop_map(|(code, message)| Event::Error { code, message }),
     ]
+}
+
+/// A [`WireEvent`]: any Event with or without an `emit_us`.
+pub fn wire_event() -> impl Strategy<Value = WireEvent> + Clone {
+    (any_event(), option::of(any::<u64>()))
+        .prop_map(|(event, emit_us)| WireEvent { event, emit_us })
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -483,12 +746,55 @@ pub fn any_event() -> impl Strategy<Value = Event> + Clone {
 /// Every ClientMessage variant with any well-typed field values.
 pub fn any_client_message() -> impl Strategy<Value = ClientMessage> {
     prop_oneof![
-        (free_text(), timeframe())
-            .prop_map(|(symbol, timeframe)| ClientMessage::Subscribe { symbol, timeframe }),
-        (free_text(), timeframe())
-            .prop_map(|(symbol, timeframe)| ClientMessage::Unsubscribe { symbol, timeframe }),
+        (venue(), free_text(), timeframe()).prop_map(|(venue, symbol, timeframe)| {
+            ClientMessage::Subscribe {
+                venue,
+                symbol,
+                timeframe,
+            }
+        }),
+        (venue(), free_text(), timeframe()).prop_map(|(venue, symbol, timeframe)| {
+            ClientMessage::Unsubscribe {
+                venue,
+                symbol,
+                timeframe,
+            }
+        }),
+        (free_text(), venue())
+            .prop_map(|(symbol, venue)| ClientMessage::SubscribeTicker { symbol, venue }),
+        (free_text(), venue())
+            .prop_map(|(symbol, venue)| ClientMessage::UnsubscribeTicker { symbol, venue }),
+        (free_text(), free_text(), option::of(venue())).prop_map(|(request_id, text, venue)| {
+            ClientMessage::CommandText {
+                request_id,
+                text,
+                venue,
+            }
+        }),
         (free_text(), free_text())
-            .prop_map(|(request_id, text)| ClientMessage::CommandText { request_id, text }),
+            .prop_map(|(request_id, twap_id)| ClientMessage::CancelTwap { request_id, twap_id }),
+        provider_id().prop_map(|provider| ClientMessage::SetProvider { provider }),
+        (
+            free_text(),
+            copilot_action(),
+            long_text(),
+            free_text(),
+            timeframe(),
+            venue()
+        )
+            .prop_map(
+                |(request_id, action, text, symbol, timeframe, venue)| ClientMessage::AiRequest {
+                    request_id,
+                    action,
+                    text,
+                    symbol,
+                    timeframe,
+                    venue,
+                }
+            ),
+        free_text().prop_map(|request_id| ClientMessage::AiCancel { request_id }),
+        Just(ClientMessage::SubscribeNews),
+        Just(ClientMessage::UnsubscribeNews),
         (free_text(), free_text()).prop_map(|(request_id, preview_id)| ClientMessage::Confirm {
             request_id,
             preview_id,
@@ -509,14 +815,38 @@ pub fn any_client_message() -> impl Strategy<Value = ClientMessage> {
 /// Every PreviewAction variant.
 pub fn preview_action() -> impl Strategy<Value = PreviewAction> + Clone {
     prop_oneof![
-        (free_text(), side(), any_qty(), order_kind(any_price())).prop_map(
-            |(symbol, side, qty, kind)| PreviewAction::Place {
+        (
+            free_text(),
+            venue(),
+            side(),
+            any_qty(),
+            order_kind(any_price())
+        )
+            .prop_map(|(symbol, venue, side, qty, kind)| PreviewAction::Place {
                 symbol,
+                venue,
                 side,
                 qty,
                 kind,
-            }
-        ),
+            }),
+        (
+            free_text(),
+            side(),
+            venue(),
+            any_qty(),
+            any::<u32>(),
+            any::<u32>()
+        )
+            .prop_map(
+                |(symbol, side, venue, total_qty, slices, interval_s)| PreviewAction::Twap {
+                    symbol,
+                    side,
+                    venue,
+                    total_qty,
+                    slices,
+                    interval_s,
+                }
+            ),
         Just(PreviewAction::CancelAll),
         Just(PreviewAction::FlattenAll),
     ]
@@ -534,38 +864,137 @@ pub fn order_preview() -> impl Strategy<Value = OrderPreview> + Clone {
 }
 
 pub fn instrument_info() -> impl Strategy<Value = InstrumentInfo> + Clone {
-    (free_text(), free_text(), any::<u32>(), any::<u32>()).prop_map(
-        |(symbol, short, price_decimals, qty_decimals)| InstrumentInfo {
-            symbol,
-            short,
-            price_decimals,
-            qty_decimals,
-        },
+    (
+        free_text(),
+        free_text(),
+        any::<u32>(),
+        any::<u32>(),
+        free_text(),
+        vec(venue(), 0..5),
     )
+        .prop_map(
+            |(symbol, short, price_decimals, qty_decimals, reference_price, venues)| {
+                InstrumentInfo {
+                    symbol,
+                    short,
+                    price_decimals,
+                    qty_decimals,
+                    reference_price,
+                    venues,
+                }
+            },
+        )
 }
 
 /// Every ServerMessage variant with any well-typed field values.
 pub fn any_server_message() -> impl Strategy<Value = ServerMessage> {
     prop_oneof![
         (
-            any::<u32>(),
-            data_mode(),
-            option::of(venue()),
-            any::<bool>(),
-            vec(instrument_info(), 0..4)
+            (any::<u32>(), data_mode(), vec(venue(), 0..5)),
+            vec(venue_status_entry(), 0..5),
+            (venue(), any_money(), any::<bool>()),
+            vec(instrument_info(), 0..4),
+            (vec(provider_info(), 0..4), any::<bool>()),
         )
             .prop_map(
-                |(protocol_version, data_mode, venue, engine_running, instruments)| {
+                |(
+                    (protocol_version, data_mode, live_venues),
+                    venue_status,
+                    (default_venue, starting_balance, engine_running),
+                    instruments,
+                    (providers, news_enabled),
+                )| {
                     ServerMessage::Hello {
                         protocol_version,
                         data_mode,
-                        venue,
+                        live_venues,
+                        venue_status,
+                        default_venue,
+                        starting_balance,
                         engine_running,
                         instruments,
+                        providers,
+                        news_enabled,
                     }
                 }
             ),
         any_event().prop_map(|event| ServerMessage::Event { event }),
+        vec(wire_event(), 0..4).prop_map(|events| ServerMessage::EventBatch { events }),
+        (
+            vec(provider_info(), 0..4),
+            option::of(provider_id()),
+            option::of(provider_id())
+        )
+            .prop_map(
+                |(available, default, selected)| ServerMessage::Providers {
+                    available,
+                    default,
+                    selected,
+                }
+            ),
+        (
+            (free_text(), provider_id(), free_text()),
+            analysis_result(),
+            option::of(order_preview()),
+            option::of(
+                (free_text(), any::<usize>())
+                    .prop_map(|(message, position)| PreviewError { message, position })
+            ),
+        )
+            .prop_map(
+                |((request_id, provider, model), analysis, preview, preview_error)| {
+                    ServerMessage::Analysis {
+                        request_id,
+                        provider,
+                        model,
+                        analysis,
+                        preview,
+                        preview_error,
+                    }
+                }
+            ),
+        (free_text(), vec(scan_item(), 0..4))
+            .prop_map(|(request_id, items)| ServerMessage::ScanResult { request_id, items }),
+        (free_text(), long_text())
+            .prop_map(|(request_id, text)| ServerMessage::StrategyDraft { request_id, text }),
+        (free_text(), ai_error_reason(), free_text()).prop_map(|(request_id, reason, message)| {
+            ServerMessage::AiError {
+                request_id,
+                reason,
+                message,
+            }
+        }),
+        (
+            any::<bool>(),
+            vec(news_item(), 0..4),
+            option::of(any_time())
+        )
+            .prop_map(
+                |(available, items, updated_at)| ServerMessage::News {
+                    available,
+                    items,
+                    updated_at,
+                }
+            ),
+        (
+            (free_text(), free_text(), side(), venue()),
+            (any::<u32>(), any::<u32>(), twap_status()),
+            option::of(free_text()),
+        )
+            .prop_map(
+                |((twap_id, symbol, side, venue), (slices, sent, status), reason)| {
+                    ServerMessage::Twap {
+                        twap_id,
+                        symbol,
+                        side,
+                        venue,
+                        slices,
+                        sent,
+                        status,
+                        reason,
+                    }
+                }
+            ),
         (free_text(), order_preview()).prop_map(|(request_id, preview)| ServerMessage::Preview {
             request_id,
             preview

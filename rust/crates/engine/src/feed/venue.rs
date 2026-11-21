@@ -44,25 +44,89 @@ impl std::error::Error for VenueError {}
 
 /// Lowercase venue name, as on the wire and in logs.
 pub fn venue_name(venue: Venue) -> &'static str {
+    venue.name()
+}
+
+/// One Venue_Symbol_Map row: internal symbol, Coinbase product, Backpack symbol, DEX mint.
+type SymbolRow = (
+    &'static str,
+    Option<&'static str>,
+    &'static str,
+    Option<&'static str>,
+);
+
+/// Venue_Symbol_Map (task 3.2, Req 14.2). The mints are a compile-time table: they never come
+/// from client input, LLM output, or news data. Backpack's USDC pairs stand in for USD
+/// (Decision A8). BNB, XRP, DOGE, and PEPE have no verified mint, so they are not DEX-listed.
+/// JUP has no Coinbase product (delisted).
+const SYMBOL_MAP: [SymbolRow; 10] = [
+    (
+        "BTC-USD",
+        Some("BTC-USD"),
+        "BTC_USDC",
+        Some("3NZ9JMVBmGAqocybic2c7LQCJScmgsAZ6vQqTDzcqmJh"),
+    ),
+    (
+        "ETH-USD",
+        Some("ETH-USD"),
+        "ETH_USDC",
+        Some("7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs"),
+    ),
+    (
+        "SOL-USD",
+        Some("SOL-USD"),
+        "SOL_USDC",
+        Some("So11111111111111111111111111111111111111112"),
+    ),
+    ("BNB-USD", Some("BNB-USD"), "BNB_USDC", None),
+    ("XRP-USD", Some("XRP-USD"), "XRP_USDC", None),
+    ("DOGE-USD", Some("DOGE-USD"), "DOGE_USDC", None),
+    (
+        "JUP-USD",
+        None,
+        "JUP_USDC",
+        Some("JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN"),
+    ),
+    (
+        "WIF-USD",
+        Some("WIF-USD"),
+        "WIF_USDC",
+        Some("EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm"),
+    ),
+    (
+        "BONK-USD",
+        Some("BONK-USD"),
+        "BONK_USDC",
+        Some("DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263"),
+    ),
+    ("PEPE-USD", Some("PEPE-USD"), "PEPE_USDC", None),
+];
+
+/// The venue's column of a map row. Coinbase and Backpack use symbols; the DEX venues use mints
+/// (see `dex_mint`); replay has none.
+fn venue_column(venue: Venue, row: &SymbolRow) -> Option<&'static str> {
     match venue {
-        Venue::Coinbase => "coinbase",
-        Venue::Backpack => "backpack",
+        Venue::Coinbase => row.1,
+        Venue::Backpack => Some(row.2),
+        Venue::Jupiter | Venue::Raydium | Venue::Replay => None,
     }
 }
 
-/// (internal symbol, Coinbase symbol, Backpack symbol). Backpack's USDC pairs stand in for USD
-/// (Decision A8).
-const SYMBOL_MAP: [(&str, &str, &str); 3] = [
-    ("BTC-USD", "BTC-USD", "BTC_USDC"),
-    ("ETH-USD", "ETH-USD", "ETH_USDC"),
-    ("SOL-USD", "SOL-USD", "SOL_USDC"),
-];
-
-fn venue_column(venue: Venue, row: &(&'static str, &'static str, &'static str)) -> &'static str {
+/// The Jupiter or Raydium mint for an internal symbol, or `None` for other venues, unknown
+/// symbols, and symbols without a verified mint.
+pub fn dex_mint(venue: Venue, internal: &str) -> Option<&'static str> {
     match venue {
-        Venue::Coinbase => row.1,
-        Venue::Backpack => row.2,
+        Venue::Jupiter | Venue::Raydium => SYMBOL_MAP
+            .iter()
+            .find(|row| row.0 == internal)
+            .and_then(|row| row.3),
+        Venue::Coinbase | Venue::Backpack | Venue::Replay => None,
     }
+}
+
+/// True when the DEX venue has a verified mint for the symbol.
+pub fn dex_listed(venue: Venue, internal: &str) -> bool {
+    dex_mint(venue, internal).is_some()
 }
 
 /// The venue's symbol for an internal symbol, or `None` if the internal symbol is unknown.
@@ -70,14 +134,14 @@ pub fn to_venue_symbol(venue: Venue, internal: &str) -> Option<&'static str> {
     SYMBOL_MAP
         .iter()
         .find(|row| row.0 == internal)
-        .map(|row| venue_column(venue, row))
+        .and_then(|row| venue_column(venue, row))
 }
 
 /// The internal symbol (from `INSTRUMENTS`) for a venue symbol, or `None` if it is unknown.
 pub fn from_venue_symbol(venue: Venue, venue_symbol: &str) -> Option<&'static str> {
     let row = SYMBOL_MAP
         .iter()
-        .find(|row| venue_column(venue, row) == venue_symbol)?;
+        .find(|row| venue_column(venue, row) == Some(venue_symbol))?;
     INSTRUMENTS
         .iter()
         .find(|instrument| instrument.symbol == row.0)
@@ -277,8 +341,9 @@ mod tests {
         }
         for instrument in INSTRUMENTS {
             for venue in VENUES {
-                let external = to_venue_symbol(venue, instrument.symbol).unwrap();
-                assert_eq!(from_venue_symbol(venue, external), Some(instrument.symbol));
+                if let Some(external) = to_venue_symbol(venue, instrument.symbol) {
+                    assert_eq!(from_venue_symbol(venue, external), Some(instrument.symbol));
+                }
             }
         }
     }
@@ -286,11 +351,10 @@ mod tests {
     #[test]
     fn symbol_map_rejects_unknown_and_foreign_symbols() {
         for venue in VENUES {
-            assert_eq!(to_venue_symbol(venue, "DOGE-USD"), None);
             assert_eq!(to_venue_symbol(venue, "BTC"), None);
             assert_eq!(to_venue_symbol(venue, "btc-usd"), None);
             assert_eq!(to_venue_symbol(venue, ""), None);
-            assert_eq!(from_venue_symbol(venue, "DOGE_USDC"), None);
+            assert_eq!(from_venue_symbol(venue, "NOPE_USDC"), None);
             assert_eq!(from_venue_symbol(venue, ""), None);
         }
         assert_eq!(from_venue_symbol(Venue::Coinbase, "BTC_USDC"), None);
@@ -440,7 +504,7 @@ mod tests {
         let rows = [
             row("BTC-USD", "0", "0.01"),
             row("ETH-USD", "abc", "0.01"),
-            row("DOGE-USD", "0.01", "0.01"),
+            row("NOPE-USD", "0.01", "0.01"),
         ];
         let errors = check_metadata(Venue::Coinbase, &rows);
         assert_eq!(errors.len(), 3, "{errors:?}");

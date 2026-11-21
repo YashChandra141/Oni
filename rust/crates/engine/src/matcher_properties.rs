@@ -134,6 +134,7 @@ fn run(ops: &[Op]) -> Run {
                 placed.push((*wallet, id.clone()));
                 orders.insert(id.clone(), (*side, kind, *qty));
                 events.extend(engine.on_command(Command::PlaceOrder {
+                    venue: protocol::Venue::Replay,
                     account_id: account(*wallet),
                     order_id: OrderId::new(&id).unwrap(),
                     symbol: BTC.into(),

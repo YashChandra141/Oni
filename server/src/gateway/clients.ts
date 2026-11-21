@@ -1,19 +1,21 @@
 // Subscription registry for the gateway (design §3 "Gateway (Req 17)").
 //
-// - Ref-counts subscriptions per (symbol, timeframe) across clients. The gateway sends the
-//   engine `Subscribe` when a key gets its first subscriber and `Unsubscribe` when its last
-//   subscriber leaves. A client subscribing twice to the same key counts once.
+// - Ref-counts subscriptions per (venue, symbol, timeframe) across clients (protocol v3,
+//   Req 15.1). The gateway sends the engine `Subscribe` when a key gets its first subscriber and
+//   `Unsubscribe` when its last subscriber leaves. A client subscribing twice to the same key
+//   counts once.
 // - `active()` lists every key with at least one subscriber. The gateway hands it to
-//   `supervisor.setSubscriptionProvider`, so the supervisor resends them after a restart
-//   (Req 15.4).
+//   `supervisor.setSubscriptionProvider`, so the supervisor resends them, with their venue,
+//   after a restart (Req 15.4).
 //
 // The candle snapshot cache lives in `state/market.ts` (MarketState), not here (Task 4.6).
 //
 // Pure: no I/O, no timers. The Bun topic subscriptions themselves live in ws.ts.
 
-import type { Timeframe } from "../protocol.ts";
+import type { Timeframe, Venue } from "../protocol.ts";
 
 export interface SubscriptionKey {
+  readonly venue: Venue;
   readonly symbol: string;
   readonly timeframe: Timeframe;
 }
@@ -25,14 +27,19 @@ export interface SubscribeResult {
   readonly added: boolean;
 }
 
-function keyOf(symbol: string, timeframe: Timeframe): string {
-  // Timeframes never contain "|", so the split in `parseKey` is unambiguous.
-  return `${timeframe}|${symbol}`;
+function keyOf(venue: Venue, symbol: string, timeframe: Timeframe): string {
+  // Venues and timeframes never contain "|", so the split in `parseKey` is unambiguous.
+  return `${venue}|${timeframe}|${symbol}`;
 }
 
 function parseKey(key: string): SubscriptionKey {
-  const bar = key.indexOf("|");
-  return { timeframe: key.slice(0, bar) as Timeframe, symbol: key.slice(bar + 1) };
+  const a = key.indexOf("|");
+  const b = key.indexOf("|", a + 1);
+  return {
+    venue: key.slice(0, a) as Venue,
+    timeframe: key.slice(a + 1, b) as Timeframe,
+    symbol: key.slice(b + 1),
+  };
 }
 
 export class SubscriptionRegistry {
@@ -42,8 +49,8 @@ export class SubscriptionRegistry {
   readonly #byClient = new Map<string, Set<string>>();
 
   /** Adds a subscription. Idempotent per (client, key). */
-  subscribe(clientId: string, symbol: string, timeframe: Timeframe): SubscribeResult {
-    const key = keyOf(symbol, timeframe);
+  subscribe(clientId: string, venue: Venue, symbol: string, timeframe: Timeframe): SubscribeResult {
+    const key = keyOf(venue, symbol, timeframe);
     let clients = this.#subscribers.get(key);
     const first = clients === undefined;
     if (clients === undefined) {
@@ -62,8 +69,8 @@ export class SubscriptionRegistry {
   }
 
   /** Removes a subscription. Returns the key if its count dropped to 0 (send `Unsubscribe`). */
-  unsubscribe(clientId: string, symbol: string, timeframe: Timeframe): SubscriptionKey[] {
-    const key = keyOf(symbol, timeframe);
+  unsubscribe(clientId: string, venue: Venue, symbol: string, timeframe: Timeframe): SubscriptionKey[] {
+    const key = keyOf(venue, symbol, timeframe);
     const keys = this.#byClient.get(clientId);
     if (keys === undefined || !keys.delete(key)) return [];
     if (keys.size === 0) this.#byClient.delete(clientId);
@@ -83,23 +90,24 @@ export class SubscriptionRegistry {
   }
 
   /** Whether the client is subscribed to the key. */
-  isSubscribed(clientId: string, symbol: string, timeframe: Timeframe): boolean {
-    return this.#byClient.get(clientId)?.has(keyOf(symbol, timeframe)) ?? false;
+  isSubscribed(clientId: string, venue: Venue, symbol: string, timeframe: Timeframe): boolean {
+    return this.#byClient.get(clientId)?.has(keyOf(venue, symbol, timeframe)) ?? false;
   }
 
-  /** Whether the client has any subscription for the symbol, at any timeframe. */
-  clientHasSymbol(clientId: string, symbol: string): boolean {
+  /** Whether the client has any subscription for the (venue, symbol), at any timeframe. */
+  clientHasSymbol(clientId: string, venue: Venue, symbol: string): boolean {
     const keys = this.#byClient.get(clientId);
     if (keys === undefined) return false;
     for (const key of keys) {
-      if (parseKey(key).symbol === symbol) return true;
+      const parsed = parseKey(key);
+      if (parsed.venue === venue && parsed.symbol === symbol) return true;
     }
     return false;
   }
 
   /** Number of clients subscribed to the key. */
-  count(symbol: string, timeframe: Timeframe): number {
-    return this.#subscribers.get(keyOf(symbol, timeframe))?.size ?? 0;
+  count(venue: Venue, symbol: string, timeframe: Timeframe): number {
+    return this.#subscribers.get(keyOf(venue, symbol, timeframe))?.size ?? 0;
   }
 
   /** Every key with at least one subscriber, for `supervisor.setSubscriptionProvider`. */

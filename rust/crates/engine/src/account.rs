@@ -27,8 +27,11 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
-use protocol::{AccountId, Event, Instrument, Money, Price, Qty, Side, instrument, notional};
+use protocol::{
+    AccountId, Event, Instrument, Money, OrderId, Price, Qty, Side, instrument, notional,
+};
 
+use crate::balance::{self, BalanceConfig, BalanceError};
 use crate::matcher::FillRecord;
 
 /// Default cap on the number of Paper_Accounts (Req 14.5).
@@ -180,13 +183,174 @@ fn unit(inst: &Instrument) -> Result<i128, AccountError> {
     leg_notional(inst, Price(1), 1)
 }
 
-/// One Paper_Account: positions by symbol. A symbol that was never traded has no entry.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+impl From<BalanceError> for AccountError {
+    fn from(err: BalanceError) -> Self {
+        match err {
+            BalanceError::Overflow => Self::Overflow,
+            BalanceError::InvalidInput => Self::InvalidFill,
+        }
+    }
+}
+
+/// Funds held back for one open order (design "Paper balance", Reserved_Balance). The amount is
+/// derived on demand from the order and the current position, so it follows position changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Reservation {
+    symbol: String,
+    side: Side,
+    /// Remaining quantity in lots.
+    qty: i64,
+    /// Fill price with the slippage allowance applied.
+    fill_price: Price,
+}
+
+/// One Paper_Account: positions by symbol, Paper_Balance, and reserved funds of open orders. A
+/// symbol that was never traded has no entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaperAccount {
     positions: BTreeMap<String, PositionState>,
+    config: BalanceConfig,
+    /// Paper_Balance in Money units (Req 16.1, 16.3).
+    paper_balance: i128,
+    reservations: BTreeMap<OrderId, Reservation>,
+}
+
+impl Default for PaperAccount {
+    fn default() -> Self {
+        Self::new(BalanceConfig::default())
+    }
 }
 
 impl PaperAccount {
+    /// A flat account whose Paper_Balance is the Starting_Balance (Req 16.1).
+    pub fn new(config: BalanceConfig) -> Self {
+        Self {
+            positions: BTreeMap::new(),
+            config,
+            paper_balance: config.starting_balance,
+            reservations: BTreeMap::new(),
+        }
+    }
+
+    /// Paper_Balance in Money units.
+    pub fn paper_balance(&self) -> i128 {
+        self.paper_balance
+    }
+
+    /// Short_Basis: the sum of the absolute cost basis of every short position.
+    pub fn short_basis(&self) -> Result<i128, AccountError> {
+        Ok(balance::short_basis(
+            self.positions.values().map(|p| (p.qty, p.cost_basis)),
+        )?)
+    }
+
+    /// Required_Funds of an order from its reference price, against the current position.
+    pub fn required_funds(
+        &self,
+        symbol: &str,
+        side: Side,
+        qty: Qty,
+        reference: Price,
+    ) -> Result<i128, AccountError> {
+        let inst = instrument(symbol).ok_or(AccountError::UnknownSymbol)?;
+        let pos = self.position(symbol);
+        Ok(balance::required_funds(
+            inst,
+            side,
+            qty,
+            reference,
+            pos.qty,
+            pos.cost_basis,
+            &self.config,
+        )?)
+    }
+
+    /// Reserved_Balance: the sum of `max(0, RF)` over the open orders, each against the
+    /// current position.
+    pub fn reserved(&self) -> Result<i128, AccountError> {
+        let mut required = Vec::with_capacity(self.reservations.len());
+        for r in self.reservations.values() {
+            let inst = instrument(&r.symbol).ok_or(AccountError::UnknownSymbol)?;
+            let pos = self.position(&r.symbol);
+            required.push(balance::required_funds_at(
+                inst,
+                r.side,
+                Qty(r.qty),
+                r.fill_price,
+                pos.qty,
+                pos.cost_basis,
+                self.config.fee_bps,
+            )?);
+        }
+        Ok(balance::reserved_total(required)?)
+    }
+
+    /// Free_Balance = Paper_Balance − 2 × Short_Basis − Reserved. May be negative.
+    pub fn free_balance(&self) -> Result<i128, AccountError> {
+        Ok(balance::free_balance(
+            self.paper_balance,
+            self.short_basis()?,
+            self.reserved()?,
+        )?)
+    }
+
+    /// Equity = Paper_Balance + Σ N(Mark, pos). A position with no known mark counts at its cost
+    /// basis, so it adds no unrealized P&L.
+    pub fn equity(&self, mark: impl Fn(&str) -> Option<Price>) -> Result<i128, AccountError> {
+        let mut base = self.paper_balance;
+        let mut holdings = Vec::new();
+        for (symbol, pos) in self.positions.iter().filter(|(_, p)| p.qty != 0) {
+            match mark(symbol) {
+                Some(price) => {
+                    let inst = instrument(symbol).ok_or(AccountError::UnknownSymbol)?;
+                    holdings.push((inst, price, pos.qty));
+                }
+                None => base = checked(base.checked_add(pos.cost_basis))?,
+            }
+        }
+        Ok(balance::equity(base, holdings)?)
+    }
+
+    /// Records the funds held for an accepted order (design: on order accept). The fill price is
+    /// the reference price with the slippage allowance applied. An existing reservation for the
+    /// same order id is replaced.
+    pub fn reserve_order(
+        &mut self,
+        order_id: &OrderId,
+        symbol: &str,
+        side: Side,
+        qty: Qty,
+        reference: Price,
+    ) -> Result<(), AccountError> {
+        instrument(symbol).ok_or(AccountError::UnknownSymbol)?;
+        if qty.0 <= 0 {
+            return Err(AccountError::InvalidFill);
+        }
+        let fill_price = balance::slipped_price(reference, side, self.config.slippage_bps)?;
+        self.reservations.insert(
+            order_id.clone(),
+            Reservation {
+                symbol: symbol.to_owned(),
+                side,
+                qty: qty.0,
+                fill_price,
+            },
+        );
+        Ok(())
+    }
+
+    /// Drops the reservation of a canceled or finished order (design: on order cancel). Returns
+    /// whether one existed.
+    pub fn release_order(&mut self, order_id: &OrderId) -> bool {
+        self.reservations.remove(order_id).is_some()
+    }
+
+    /// Number of open orders that hold a reservation.
+    #[cfg(test)]
+    pub fn reservation_count(&self) -> usize {
+        self.reservations.len()
+    }
+
     /// The position in `symbol`; flat if there is none.
     pub fn position(&self, symbol: &str) -> PositionState {
         self.positions.get(symbol).copied().unwrap_or_default()
@@ -208,8 +372,29 @@ impl PaperAccount {
             fill.qty,
             fill.fee,
         )?;
+        // Req 16.3: a buy pays notional + fee, a sell receives notional − fee.
+        let value = leg_notional(inst, fill.price, i128::from(fill.qty.0))?;
+        let fee = i128::from(fill.fee.0);
+        let delta = match fill.side {
+            Side::Buy => checked(0_i128.checked_sub(value))?,
+            Side::Sell => value,
+        };
+        let change = checked(delta.checked_sub(fee))?;
+        let paper_balance = checked(self.paper_balance.checked_add(change))?;
         self.positions.insert(fill.symbol.clone(), next);
+        self.paper_balance = paper_balance;
+        self.reduce_reservation(&fill.order_id, fill.qty.0);
         Ok(())
+    }
+
+    /// Shrinks an order's reservation by the filled lots; a filled-out order frees it.
+    fn reduce_reservation(&mut self, order_id: &OrderId, filled: i64) {
+        if let Some(r) = self.reservations.get_mut(order_id) {
+            r.qty = r.qty.saturating_sub(filled);
+            if r.qty <= 0 {
+                self.reservations.remove(order_id);
+            }
+        }
     }
 
     /// Unrealized P&L: `notional(last, qty) − cost_basis` (Req 13.3). Zero for a flat position
@@ -260,9 +445,12 @@ impl PaperAccount {
         })
     }
 
-    /// Flattens every position and zeroes all P&L (Req 14.3).
+    /// Flattens every position, zeroes all P&L (Req 14.3), drops reservations, and restores the
+    /// Paper_Balance to the Starting_Balance (Req 16.1).
     pub fn reset(&mut self) {
         self.positions.clear();
+        self.reservations.clear();
+        self.paper_balance = self.config.starting_balance;
     }
 }
 
@@ -271,6 +459,7 @@ impl PaperAccount {
 pub struct Accounts {
     map: BTreeMap<AccountId, PaperAccount>,
     cap: usize,
+    config: BalanceConfig,
 }
 
 impl Default for Accounts {
@@ -281,9 +470,15 @@ impl Default for Accounts {
 
 impl Accounts {
     pub fn new(cap: usize) -> Self {
+        Self::with_config(cap, BalanceConfig::default())
+    }
+
+    /// Accounts that start with the balance settings in `config` (Req 16.1, 16.2).
+    pub fn with_config(cap: usize, config: BalanceConfig) -> Self {
         Self {
             map: BTreeMap::new(),
             cap,
+            config,
         }
     }
 
@@ -293,7 +488,11 @@ impl Accounts {
         if !self.map.contains_key(id) && self.map.len() >= self.cap {
             return Err(AccountLimit);
         }
-        Ok(self.map.entry(id.clone()).or_default())
+        let config = self.config;
+        Ok(self
+            .map
+            .entry(id.clone())
+            .or_insert_with(|| PaperAccount::new(config)))
     }
 
     pub fn get(&self, id: &AccountId) -> Option<&PaperAccount> {
@@ -576,6 +775,138 @@ mod tests {
         let ids: Vec<&str> = accounts.iter().map(|(id, _)| id.as_str()).collect();
         assert_eq!(ids, ["a", "b"]);
         assert_eq!(Accounts::default().cap, DEFAULT_ACCOUNT_CAP);
+    }
+
+    const USD: i128 = balance::MONEY_PER_USD;
+
+    fn oid(name: &str) -> OrderId {
+        OrderId::new(name).unwrap()
+    }
+
+    #[test]
+    fn new_account_starts_with_the_starting_balance() {
+        let a = PaperAccount::default();
+        assert_eq!(a.paper_balance(), 100_000 * USD);
+        assert_eq!(a.free_balance(), Ok(100_000 * USD));
+        let config = BalanceConfig::default().with_starting_usd(5_000).unwrap();
+        let mut accounts = Accounts::with_config(10, config);
+        let created = accounts.get_or_create(&acct("a")).unwrap();
+        assert_eq!(created.paper_balance(), 5_000 * USD);
+    }
+
+    #[test]
+    fn fills_move_the_paper_balance() {
+        // Req 16.3 and 16.11: buy 10 at 100 (fee 1), sell 10 at 120 (fee 2).
+        let mut a = PaperAccount::default();
+        let start = a.paper_balance();
+        apply(&mut a, Side::Buy, 100, 10, 1);
+        assert_eq!(a.paper_balance(), start - 1_000 - 1);
+        apply(&mut a, Side::Sell, 120, 10, 2);
+        assert_eq!(a.paper_balance(), start + (120 - 100) * 10 - 3);
+        assert_eq!(a.short_basis(), Ok(0));
+    }
+
+    #[test]
+    fn short_basis_and_free_balance_follow_a_short() {
+        let mut a = PaperAccount::default();
+        let start = a.paper_balance();
+        apply(&mut a, Side::Sell, 100, 10, 0);
+        assert_eq!(a.paper_balance(), start + 1_000);
+        assert_eq!(a.short_basis(), Ok(1_000));
+        assert_eq!(a.free_balance(), Ok(start + 1_000 - 2_000));
+    }
+
+    #[test]
+    fn equity_is_start_plus_realized_plus_unrealized() {
+        // Req 16.10.
+        let mut a = PaperAccount::default();
+        let start = a.paper_balance();
+        apply(&mut a, Side::Buy, 100, 10, 3);
+        apply(&mut a, Side::Sell, 110, 4, 2);
+        let mark = |_: &str| Some(Price(105));
+        let p = a.position(BTC);
+        let unrealized = i128::from(a.mark(BTC, Some(Price(105))).unwrap().0);
+        assert_eq!(a.equity(mark), Ok(start + p.realized + unrealized));
+        // A short.
+        let mut s = PaperAccount::default();
+        apply(&mut s, Side::Sell, 100, 10, 1);
+        let unrealized = i128::from(s.mark(BTC, Some(Price(90))).unwrap().0);
+        assert_eq!(
+            s.equity(|_| Some(Price(90))),
+            Ok(start + s.position(BTC).realized + unrealized)
+        );
+        // No mark: the position counts at cost, so equity is start plus realized.
+        assert_eq!(s.equity(|_| None), Ok(start + s.position(BTC).realized));
+    }
+
+    #[test]
+    fn reservations_follow_orders_and_fills() {
+        let mut a = PaperAccount::default();
+        let start = a.paper_balance();
+        // Buy 10 at 1000 with 100 bps slippage: fill price 1010, N = 10_100, fee 5.
+        a.reserve_order(&oid("o1"), BTC, Side::Buy, Qty(10), Price(1_000))
+            .unwrap();
+        assert_eq!(a.reservation_count(), 1);
+        assert_eq!(a.reserved(), Ok(10_105));
+        assert_eq!(a.free_balance(), Ok(start - 10_105));
+        assert_eq!(
+            a.required_funds(BTC, Side::Buy, Qty(10), Price(1_000)),
+            Ok(10_105)
+        );
+        // A partial fill of 4 lots shrinks the reservation to 6 lots (N = 6_060, fee 3).
+        let mut partial = fill(Side::Buy, 1_000, 4, 0);
+        partial.order_id = oid("o1");
+        a.apply_fill(&partial).unwrap();
+        assert_eq!(a.reserved(), Ok(6_063));
+        // The rest fills: the reservation is gone.
+        partial.qty = Qty(6);
+        a.apply_fill(&partial).unwrap();
+        assert_eq!(a.reservation_count(), 0);
+        assert_eq!(a.reserved(), Ok(0));
+        // Cancel releases.
+        a.reserve_order(&oid("o2"), BTC, Side::Sell, Qty(1), Price(500))
+            .unwrap();
+        assert!(a.release_order(&oid("o2")));
+        assert!(!a.release_order(&oid("o2")));
+        assert_eq!(a.reserved(), Ok(0));
+    }
+
+    #[test]
+    fn reservations_never_go_negative_and_reject_bad_orders() {
+        let mut a = PaperAccount::default();
+        apply(&mut a, Side::Buy, 100, 10, 0);
+        // A sell that only closes the long frees funds, so it reserves nothing.
+        a.reserve_order(&oid("o1"), BTC, Side::Sell, Qty(10), Price(100))
+            .unwrap();
+        assert_eq!(a.reserved(), Ok(0));
+        assert_eq!(
+            a.reserve_order(&oid("o2"), BTC, Side::Buy, Qty(0), Price(100)),
+            Err(AccountError::InvalidFill)
+        );
+        assert_eq!(
+            a.reserve_order(&oid("o2"), "DOGE-USD", Side::Buy, Qty(1), Price(100)),
+            Err(AccountError::UnknownSymbol)
+        );
+        assert_eq!(a.reservation_count(), 1);
+    }
+
+    #[test]
+    fn reset_restores_balance_and_drops_reservations() {
+        let mut a = PaperAccount::default();
+        apply(&mut a, Side::Buy, 100, 10, 3);
+        a.reserve_order(&oid("o1"), BTC, Side::Buy, Qty(1), Price(100))
+            .unwrap();
+        a.reset();
+        assert_eq!(a, PaperAccount::default());
+        assert_eq!(a.paper_balance(), 100_000 * USD);
+    }
+
+    #[test]
+    fn balance_overflow_leaves_the_account_unchanged() {
+        let mut a = PaperAccount::default();
+        let huge = fill(Side::Buy, i64::MAX, i64::MAX, 0);
+        assert_eq!(a.apply_fill(&huge), Err(AccountError::Overflow));
+        assert_eq!(a, PaperAccount::default());
     }
 
     #[test]

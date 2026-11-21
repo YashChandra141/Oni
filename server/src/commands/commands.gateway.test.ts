@@ -105,7 +105,14 @@ describe("command_text", () => {
       preview: {
         preview_id: "p1",
         text: "BUY BTC-USD 0.1 LMT 64000.00",
-        action: { type: "place", symbol: "BTC-USD", side: "buy", qty: "10000000", kind: { type: "limit", price: "6400000" } },
+        action: {
+          type: "place",
+          symbol: "BTC-USD",
+          venue: "replay",
+          side: "buy",
+          qty: "10000000",
+          kind: { type: "limit", price: "6400000" },
+        },
         expires_at: NOW + PREVIEW_TTL_MS,
       },
     });
@@ -150,11 +157,11 @@ describe("command_text", () => {
     expect(lastOf(ws)).toMatchObject({ type: "parse_error", position: 9 });
   });
 
-  test("? text is a plain-English order: llm_disabled notice, no preview, no order", () => {
+  test("? text is a plain-English order: ai_disabled notice, no preview, no order", () => {
     const { connect, send, previews, calls } = setup();
     const ws = connect();
     send(ws, { type: "command_text", request_id: "r1", text: "? buy a bit of bitcoin" });
-    expect(lastOf(ws)).toMatchObject({ type: "notice", kind: "llm_disabled" });
+    expect(lastOf(ws)).toMatchObject({ type: "notice", kind: "ai_disabled" });
     expect(previews.size).toBe(0);
     expect(calls).toEqual([]);
   });
@@ -170,7 +177,13 @@ describe("confirm", () => {
       {
         action: "submit",
         origin: { connectionId: "client-1", session: { accountId: "guest", address: null, jti: null, exp: null }, source: "web" },
-        order: { symbol: "BTC-USD", side: "buy", qty: 10_000_000n, kind: { type: "limit", price: 6_400_000n } },
+        order: {
+          symbol: "BTC-USD",
+          side: "buy",
+          qty: 10_000_000n,
+          kind: { type: "limit", price: 6_400_000n },
+          venue: "replay",
+        },
       },
     ]);
   });

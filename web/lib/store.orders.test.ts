@@ -39,13 +39,14 @@ function position(
 }
 
 function ack(account: string, orderId: string, status: "accepted" | "canceled" | "filled"): ServerMessage {
-  return event({ type: "order_ack", account_id: account, order_id: orderId, status });
+  return event({ type: "order_ack", account_id: account, venue: "replay", order_id: orderId, status });
 }
 
 function fill(account: string, orderId: string, qty: string, remaining: string): ServerMessage {
   return event({
     type: "fill",
     account_id: account,
+    venue: "replay",
     order_id: orderId,
     symbol: "BTC-USD",
     side: "buy",
@@ -58,7 +59,7 @@ function fill(account: string, orderId: string, qty: string, remaining: string):
 }
 
 function rejected(account: string, orderId: string, reason: string): ServerMessage {
-  return event({ type: "order_rejected", account_id: account, order_id: orderId, reason });
+  return event({ type: "order_rejected", account_id: account, venue: "replay", order_id: orderId, reason });
 }
 
 const PLACE_PREVIEW: OrderPreview = {
@@ -67,6 +68,7 @@ const PLACE_PREVIEW: OrderPreview = {
   action: {
     type: "place",
     symbol: "BTC-USD",
+    venue: "replay",
     side: "buy",
     qty: "10000000",
     kind: { type: "limit", price: "6400000" },

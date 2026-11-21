@@ -22,6 +22,8 @@ import {
   LlmRefused,
   LlmTimeout,
   LlmUnavailable,
+  type JsonLlmProvider,
+  type JsonRequest,
   type LlmContext,
   type LlmProvider,
 } from "./provider.ts";
@@ -111,7 +113,7 @@ export function createOpenAiProvider(options: OpenAiProviderOptions): LlmProvide
 
   /** Scrubs the API key from text that goes into an error message. */
   const scrub = (text: string): string =>
-    redactSecrets(text, { openaiApiKey: apiKey, databaseUrl: undefined, directUrl: undefined });
+    redactSecrets(text, { openaiApiKey: apiKey });
 
   return {
     async interpret(text, context, signal) {
@@ -141,6 +143,62 @@ export function createOpenAiProvider(options: OpenAiProviderOptions): LlmProvide
         throw new LlmBadOutput("The language model response was not valid JSON");
       }
 
+      return extractIntent(raw, scrub);
+    },
+  };
+}
+
+export interface OpenAiJsonProviderOptions {
+  readonly apiKey: string;
+  /** Default model comes from config (OPENAI_MODEL). */
+  readonly model: string;
+  readonly fetch: FetchLike;
+  readonly baseUrl?: string;
+}
+
+/** Generic structured-output provider over the Responses API (design D1, task 9.2). */
+export function createOpenAiJsonProvider(options: OpenAiJsonProviderOptions): JsonLlmProvider {
+  const { apiKey, model, fetch: doFetch } = options;
+  const base = new URL(options.baseUrl ?? OPENAI_BASE_URL);
+  if (base.protocol !== "https:") throw new Error("OpenAI base URL must use https");
+  const endpoint = new URL("/v1/responses", base).toString();
+  const scrub = (text: string): string => redactSecrets(text, { openaiApiKey: apiKey });
+
+  return {
+    id: "openai",
+    model,
+    async completeJson(req: JsonRequest): Promise<unknown> {
+      const timeout = AbortSignal.timeout(req.timeoutMs);
+      const combined = req.signal === undefined ? timeout : AbortSignal.any([timeout, req.signal]);
+      let response: Response;
+      try {
+        response = await doFetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
+          body: JSON.stringify({
+            model,
+            input: [
+              { role: "system", content: req.system },
+              { role: "user", content: req.user },
+            ],
+            store: false,
+            max_output_tokens: req.maxOutputTokens,
+            text: { format: { type: "json_schema", name: req.schemaName, strict: true, schema: req.schema } },
+          }),
+          signal: combined,
+        });
+      } catch (error) {
+        throw transportError(error, timeout, scrub);
+      }
+      if (!response.ok) throw statusError(response.status);
+      let raw: unknown;
+      try {
+        raw = await response.json();
+      } catch {
+        if (timeout.aborted) throw new LlmTimeout();
+        if (req.signal?.aborted === true) throw new LlmUnavailable("The request was aborted");
+        throw new LlmBadOutput("The language model response was not valid JSON");
+      }
       return extractIntent(raw, scrub);
     },
   };

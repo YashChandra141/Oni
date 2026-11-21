@@ -150,11 +150,11 @@ describe("get_positions", () => {
 
   test("an unreachable server is an error without the underlying message", async () => {
     const { get } = setup(() => {
-      throw new Error("ECONNREFUSED DATABASE_URL=postgres://user:pw@db");
+      throw new Error("ECONNREFUSED OPENAI_API_KEY=sk-secret-value");
     });
     const result = await get("get_positions").run({});
     expect(result.isError).toBe(true);
-    expect(text(result)).not.toContain("pw@db");
+    expect(text(result)).not.toContain("sk-secret-value");
     expectNoStack(result);
   });
 });
@@ -211,11 +211,12 @@ describe("place_paper_order", () => {
     const { get, sockets } = setup(undefined, (ws, msg) => {
       if (msg.type === "command_text") ws.receive(previewReply(msg.request_id));
       if (msg.type === "confirm") {
-        ws.receive(event({ type: "order_ack", account_id: "guest", order_id: "o1", status: "accepted" }));
+        ws.receive(event({ type: "order_ack", account_id: "guest", venue: "replay", order_id: "o1", status: "accepted" }));
         ws.receive(
           event({
             type: "fill",
             account_id: "guest",
+            venue: "replay",
             order_id: "o1",
             symbol: "BTC-USD",
             side: "buy",
@@ -240,7 +241,7 @@ describe("place_paper_order", () => {
     const { get } = setup(undefined, (ws, msg) => {
       if (msg.type === "command_text") ws.receive(previewReply(msg.request_id));
       if (msg.type === "confirm") {
-        ws.receive(event({ type: "order_rejected", account_id: "guest", order_id: "o2", reason: "kill_switch" }));
+        ws.receive(event({ type: "order_rejected", account_id: "guest", venue: "replay", order_id: "o2", reason: "kill_switch" }));
       }
     });
     const result = await get("place_paper_order").run({ command: "BUY BTC 0.01" });
@@ -263,7 +264,7 @@ describe("place_paper_order", () => {
     const { get, sockets } = setup(undefined, (ws, msg) => {
       if (msg.type === "command_text") ws.receive(previewReply(msg.request_id));
       if (msg.type === "confirm") {
-        ws.receive(event({ type: "order_rejected", account_id: "guest", order_id: "o3", reason: "price_band" }));
+        ws.receive(event({ type: "order_rejected", account_id: "guest", venue: "replay", order_id: "o3", reason: "price_band" }));
       }
     });
     await get("place_paper_order").run({ command: "BUY BTC 0.01", account_id: "w_victim" });

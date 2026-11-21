@@ -19,7 +19,7 @@
 //
 // Pure apart from the injected clock and id generator. No I/O, no timers.
 
-import { fromBigInt, type AccountId, type OrderPreview, type PreviewAction } from "../protocol.ts";
+import { fromBigInt, type AccountId, type OrderPreview, type PreviewAction, type Venue } from "../protocol.ts";
 import type { ParsedCommand } from "./parser.ts";
 
 export const PREVIEW_TTL_MS = 60_000;
@@ -29,8 +29,11 @@ export const MAX_PER_CONNECTION = 20;
 export type TakeError = "unknown_preview" | "expired" | "wrong_connection" | "account_changed";
 
 export type TakeResult =
-  | { readonly ok: true; readonly command: ParsedCommand }
+  | { readonly ok: true; readonly command: ParsedCommand; readonly venue: Venue }
   | { readonly ok: false; readonly error: TakeError };
+
+/** Venue of a preview created without one (replay mode; protocol v3). */
+export const DEFAULT_PREVIEW_VENUE: Venue = "replay";
 
 export interface PreviewStoreOptions {
   /** Epoch milliseconds. Defaults to `Date.now`. */
@@ -45,11 +48,13 @@ interface Entry {
   readonly connectionId: string;
   readonly accountId: AccountId;
   readonly command: ParsedCommand;
+  /** Venue the confirmed order goes to; set by the server, never by LLM output (rule 10). */
+  readonly venue: Venue;
   readonly expiresAt: number;
 }
 
 /** The wire form of a parsed command (decimal strings for Qty and Price). */
-export function previewAction(command: ParsedCommand): PreviewAction {
+export function previewAction(command: ParsedCommand, venue: Venue = DEFAULT_PREVIEW_VENUE): PreviewAction {
   switch (command.kind) {
     // The preview action names equal the command kinds. Written this way, not as a string literal
     // for the cancel-all type, because router.isolation.test.ts reserves that literal for the Router.
@@ -61,6 +66,7 @@ export function previewAction(command: ParsedCommand): PreviewAction {
       return {
         type: "place",
         symbol: command.symbol,
+        venue,
         side: command.side,
         qty: fromBigInt(command.qty),
         kind:
@@ -101,12 +107,18 @@ export class PreviewStore {
     return this.#byConnection.get(connectionId)?.size ?? 0;
   }
 
-  create(connectionId: string, accountId: AccountId, command: ParsedCommand, text: string): OrderPreview {
+  create(
+    connectionId: string,
+    accountId: AccountId,
+    command: ParsedCommand,
+    text: string,
+    venue: Venue = DEFAULT_PREVIEW_VENUE,
+  ): OrderPreview {
     const now = this.#now();
     this.#pruneExpired(now);
     const previewId = this.#newId();
     const expiresAt = now + PREVIEW_TTL_MS;
-    this.#entries.set(previewId, { connectionId, accountId, command, expiresAt });
+    this.#entries.set(previewId, { connectionId, accountId, command, venue, expiresAt });
     let ids = this.#byConnection.get(connectionId);
     if (ids === undefined) {
       ids = new Set();
@@ -124,7 +136,7 @@ export class PreviewStore {
       if (oldest.done || oldest.value === previewId) break;
       this.#remove(oldest.value);
     }
-    return { preview_id: previewId, text, action: previewAction(command), expires_at: expiresAt };
+    return { preview_id: previewId, text, action: previewAction(command, venue), expires_at: expiresAt };
   }
 
   /** Single use. See the file header for the order of the checks. */
@@ -135,7 +147,7 @@ export class PreviewStore {
     this.#remove(previewId);
     if (this.#now() >= entry.expiresAt) return { ok: false, error: "expired" };
     if (entry.accountId !== accountId) return { ok: false, error: "account_changed" };
-    return { ok: true, command: entry.command };
+    return { ok: true, command: entry.command, venue: entry.venue };
   }
 
   /** Drops one preview. Only its own connection can discard it. Returns whether one was dropped. */

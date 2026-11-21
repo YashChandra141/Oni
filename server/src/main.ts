@@ -26,9 +26,9 @@ import { activityRoutes } from "./activity/routes.ts";
 import { EngineSupervisor, type Logger, spawnEngineProcess } from "./engine/supervisor.ts";
 import { SubscriptionRegistry } from "./gateway/clients.ts";
 import { checkOrigin } from "./gateway/origin.ts";
-import { type ClientData, Gateway, type GatewaySupervisor } from "./gateway/ws.ts";
+import { type ClientData, Gateway, type GatewaySupervisor, defaultVenueOf } from "./gateway/ws.ts";
 import { configuredVenueHealth, createHttpApp } from "./http.ts";
-import type { Event } from "./protocol.ts";
+import type { Event, Venue } from "./protocol.ts";
 import { defaultLimits } from "./risk/limits.ts";
 import {
   Router,
@@ -172,9 +172,9 @@ export function createApp(deps: AppDeps): App {
   // current engine run only, so it is emptied on every engine start.
   const activity = deps.activity ?? new ActivityLog();
   deps.supervisor.onSessionStart(() => activity.clear());
-  // Until protocol v3 puts a venue on events (Task 2.x), every record carries the configured
-  // live venue, or `replay`.
-  const venue = (): string => (deps.config.dataMode === "replay" ? "replay" : deps.config.liveVenue);
+  // The default venue: the configured live venue, or `replay` (protocol v3). Fill and OrderRejected
+  // events carry their own venue; this is the Router's default for orders without one.
+  const venue = (): Venue => defaultVenueOf(deps.config);
   deps.supervisor.onEvent((event) => {
     try {
       recordEngineEvent(activity, event, venue(), now());
@@ -212,7 +212,7 @@ export function createApp(deps: AppDeps): App {
   const llm = new LlmOrderParser({
     provider: deps.llm ?? null,
     positionLots: (accountId, symbol) => accounts.positionLots(accountId, symbol),
-    lastPrice: (symbol) => prices.lastPrice(symbol),
+    lastPrice: (symbol) => prices.lastPrice(symbol, venue()),
   });
   gateway.setCommandBar({ previews, accounts, router, llm });
   gateway.onAccountChange((connectionId) => {
@@ -229,7 +229,7 @@ export function createApp(deps: AppDeps): App {
     // Req 1.9: one entry for the configured venue (or replay) until VenueStatus events (Task 9).
     venues: () => [configuredVenueHealth(deps.config, deps.supervisor)],
     activity: activityRoutes({ log: activity, positions: accounts, auth: tokens }),
-    market: marketRoutes({ market }),
+    market: marketRoutes({ market, venue }),
   });
 
   const fetch = (req: Request, server: Server<ClientData>): Response | Promise<Response> | undefined => {
@@ -252,11 +252,12 @@ export function createApp(deps: AppDeps): App {
  * order fields of the Router's order record for that order id, when the log still has one (an
  * engine rejection of a Cancel for an unknown id has none). Other events are ignored.
  */
-export function recordEngineEvent(log: ActivityLog, event: Event, venue: string, now: number): void {
+export function recordEngineEvent(log: ActivityLog, event: Event, _defaultVenue: string, now: number): void {
+  // Protocol v3: Fill and OrderRejected carry their venue, so the default is no longer needed.
   if (event.type === "fill") {
     log.append({
       kind: "fill",
-      venue,
+      venue: event.venue,
       accountId: event.account_id,
       orderId: event.order_id,
       symbol: event.symbol,
@@ -271,7 +272,7 @@ export function recordEngineEvent(log: ActivityLog, event: Event, venue: string,
     const order = log.listOrders(event.account_id, MAX_LIST_LIMIT).find((r) => r.orderId === event.order_id);
     log.append({
       kind: "rejection",
-      venue: order?.venue ?? venue,
+      venue: event.venue,
       accountId: event.account_id,
       orderId: event.order_id,
       reason: event.reason,

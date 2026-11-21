@@ -7,7 +7,7 @@
 // - WebSocket at `<baseUrl>/ws` (http→ws, https→wss), opened lazily on the first order call and
 //   reopened on the next call after it closes. Ready after `Hello` and the `Session` that follows.
 //   - `preview(text)`: `CommandText` → the matching `Preview` or `ParseError`; `Notice
-//     llm_disabled` rejects (Req 24.5: nothing is confirmed).
+//     ai_disabled` rejects (Req 24.5: nothing is confirmed).
 //   - `place(text)`: preview, then `Confirm` with its preview_id (Req 24.6). The order goes
 //     through the server's Router and Risk_Engine like any client order (trading-safety rules
 //     2-4). The outcome is correlated by time and account, see `#awaitOutcome`.
@@ -77,7 +77,7 @@ export type TerminalErrorKind =
   | "protocol"
   /** `ParseError` for command text. */
   | "parse_error"
-  /** `Notice llm_disabled` for `?` text. */
+  /** `Notice ai_disabled` for `?` text. */
   | "llm_disabled"
   /** An Error event for the request (for example an invalid message). */
   | "server_error";
@@ -563,7 +563,9 @@ export class TerminalClient implements TerminalApi {
             ok: false,
             error: new TerminalError("parse_error", `${msg.message} (at character ${msg.position})`),
           });
-        } else if (msg.type === "notice" && msg.kind === "llm_disabled") {
+        } else if (msg.type === "notice" && msg.kind === "ai_disabled") {
+          // Protocol v3 renamed the notice kind `llm_disabled` to `ai_disabled`; the error kind
+          // the tools see keeps its name.
           finish({ ok: false, error: new TerminalError("llm_disabled", "plain-English orders are disabled on the server") });
         } else if (msg.type === "event" && msg.event.type === "error") {
           finish({
@@ -580,7 +582,8 @@ export class TerminalClient implements TerminalApi {
 
       conn.listener = listener;
       try {
-        this.#send(conn, { type: "command_text", request_id: requestId, text });
+        // No venue: the server uses its default venue. MCP arguments never choose one (rule 10).
+        this.#send(conn, { type: "command_text", request_id: requestId, text, venue: null });
       } catch (err) {
         finish({ ok: false, error: err instanceof TerminalError ? err : new TerminalError("unavailable", "send failed") });
       }

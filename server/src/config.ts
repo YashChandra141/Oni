@@ -6,10 +6,10 @@
 // `loadConfigOrExit` is the startup wrapper that logs variable NAMES (never
 // values) and exits 1.
 //
-// Secrets (Req 16.4, trading-safety rule 6): OPENAI_API_KEY, the whole
-// DATABASE_URL, the whole DIRECT_URL, and SESSION_SECRET. They live in private
-// fields, are hidden from toJSON and inspect, and `redactSecrets` scrubs them
-// (and the URL passwords) from any text before it reaches a log or a response.
+// Secrets (Req 16.4, trading-safety rule 6): OPENAI_API_KEY and SESSION_SECRET.
+// They live in private fields, are hidden from toJSON and inspect, and
+// `redactSecrets` scrubs them from any text before it reaches a log or a response.
+// There is no database, so there are no database URLs (Req 1.3).
 // TERMINAL_TOKEN is not read here: it belongs to the MCP process (Task 14.3).
 
 import { z } from "zod";
@@ -30,14 +30,38 @@ export const CONFIG_VARS = [
   "ALLOWED_ORIGINS",
   "WEB_URL",
   "SESSION_SECRET",
-  "DATABASE_URL",
-  "DIRECT_URL",
-  "DB_ADAPTER",
   "KILL_SWITCH",
   "OPENAI_API_KEY",
   "OPENAI_MODEL",
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_MODEL",
+  "NVIDIA_API_KEY",
+  "NVIDIA_MODEL",
+  "NVIDIA_BASE_URL",
+  "OLLAMA_BASE_URL",
+  "OLLAMA_MODEL",
+  "LLM_PROVIDER",
+  "NEWS_PROVIDER",
+  "NEWS_API_KEY",
+  "CRYPTOPANIC_API_KEY",
+  "CRYPTOPANIC_PLAN",
+  "NEWS_TTL_SECONDS",
+  "NEWS_ALLOW_NEWSAPI_IN_PRODUCTION",
   "NODE_ENV",
 ] as const;
+
+/** News provider choices (Req 19.3) and CryptoPanic plans (Req 19.5). */
+export const NEWS_PROVIDER_CHOICES = ["newsapi", "cryptopanic", "none"] as const;
+export type NewsProviderChoice = (typeof NEWS_PROVIDER_CHOICES)[number];
+export const CRYPTOPANIC_PLANS = ["developer", "growth", "enterprise"] as const;
+export type CryptoPanicPlan = (typeof CRYPTOPANIC_PLANS)[number];
+export const MIN_NEWS_TTL_SECONDS = 300;
+export const MAX_NEWS_TTL_SECONDS = 3600;
+export const DEFAULT_NEWS_TTL_SECONDS = 900;
+
+/** LLM provider identifiers in default-selection order (Req 4.4). */
+export const LLM_PROVIDER_IDS = ["ollama", "openai", "anthropic", "nvidia"] as const;
+export type LlmProviderId = (typeof LLM_PROVIDER_IDS)[number];
 
 export type ConfigVar = (typeof CONFIG_VARS)[number];
 
@@ -85,12 +109,23 @@ const EXPECTED: Record<ConfigVar, string> = {
   ALLOWED_ORIGINS: "a comma-separated list of http(s) origins such as http://localhost:3000",
   WEB_URL: "an http(s) origin such as http://localhost:3000",
   SESSION_SECRET: `at least ${MIN_SESSION_SECRET_BYTES} bytes (UTF-8 length)`,
-  DATABASE_URL: "a postgres:// or postgresql:// URL",
-  DIRECT_URL: "a postgres:// or postgresql:// URL",
-  DB_ADAPTER: '"pg" or unset',
   KILL_SWITCH: '"true" or "false"',
   OPENAI_API_KEY: "a non-empty string",
   OPENAI_MODEL: "a non-empty string",
+  ANTHROPIC_API_KEY: "a non-empty string",
+  ANTHROPIC_MODEL: "a non-empty string",
+  NVIDIA_API_KEY: "a non-empty string",
+  NVIDIA_MODEL: "a non-empty string",
+  NVIDIA_BASE_URL: "an http(s) URL with no credentials, query string, or fragment",
+  OLLAMA_BASE_URL: "an http(s) URL with no credentials, query string, or fragment",
+  OLLAMA_MODEL: "a non-empty string",
+  LLM_PROVIDER: `one of ${LLM_PROVIDER_IDS.join(", ")}`,
+  NEWS_PROVIDER: `one of ${NEWS_PROVIDER_CHOICES.join(", ")}`,
+  NEWS_API_KEY: "a non-empty string",
+  CRYPTOPANIC_API_KEY: "a non-empty string",
+  CRYPTOPANIC_PLAN: `one of ${CRYPTOPANIC_PLANS.join(", ")}`,
+  NEWS_TTL_SECONDS: `an integer from ${MIN_NEWS_TTL_SECONDS} to ${MAX_NEWS_TTL_SECONDS}`,
+  NEWS_ALLOW_NEWSAPI_IN_PRODUCTION: '"true" or "false"',
   NODE_ENV: '"development", "production", or "test"',
 };
 
@@ -98,22 +133,45 @@ const EXPECTED: Record<ConfigVar, string> = {
  * Default model for plain-English orders (Task 13.1). Verified as a listed model with
  * structured outputs on the Responses API at https://developers.openai.com/api/docs/models/gpt-5.4-mini
  */
-export const DEFAULT_OPENAI_MODEL = "gpt-5.4-mini";
+export const DEFAULT_OPENAI_MODEL = "gpt-6-luna";
+export const DEFAULT_ANTHROPIC_MODEL = "claude-haiku-5-5";
+export const DEFAULT_NVIDIA_MODEL = "z-ai/glm-5.3-flash";
+export const DEFAULT_OLLAMA_MODEL = "gemma4";
+export const DEFAULT_NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
+export const DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434";
+
+/**
+ * Validates a provider base URL: http(s), no userinfo, no query, no fragment. Returns the URL
+ * without a trailing slash, or null. Never throws and never echoes the input.
+ */
+export function normalizeBaseUrl(value: string): string | null {
+  try {
+    const url = new URL(value);
+    const ok =
+      (url.protocol === "http:" || url.protocol === "https:") &&
+      url.username === "" &&
+      url.password === "" &&
+      url.search === "" &&
+      url.hash === "" &&
+      !value.includes("?") &&
+      !value.includes("#");
+    if (!ok) return null;
+    return url.toString().replace(/\/+$/, "");
+  } catch {
+    return null;
+  }
+}
+
+const baseUrl = z
+  .string()
+  .refine((v) => normalizeBaseUrl(v) !== null)
+  .transform((v) => normalizeBaseUrl(v) ?? "");
 
 const DEFAULT_ENGINE_PATH = "rust/target/release/engine";
 const FIXTURE_NAME = /^[a-z0-9-]+\.jsonl$/;
 /** Replay speed bounds (Req 6.3, 6.4; `MIN_REPLAY_SPEED`/`MAX_REPLAY_SPEED` in the protocol crate). */
 export const MIN_REPLAY_SPEED = 1;
 export const MAX_REPLAY_SPEED = 50;
-
-function isPostgresUrl(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return (url.protocol === "postgres:" || url.protocol === "postgresql:") && url.hostname !== "";
-  } catch {
-    return false;
-  }
-}
 
 /** Parses one origin and returns its normalized form (`scheme://host[:port]`), or null. */
 function normalizeOrigin(value: string): string | null {
@@ -160,7 +218,6 @@ function generateSessionSecret(): string {
 }
 
 const nonEmpty = z.string().min(1);
-const postgresUrl = z.string().refine(isPostgresUrl);
 
 const EnvSchema = z.object({
   PORT: z
@@ -195,29 +252,54 @@ const EnvSchema = z.object({
     .string()
     .refine((v) => utf8Length(v) >= MIN_SESSION_SECRET_BYTES)
     .optional(),
-  DATABASE_URL: postgresUrl.optional(),
-  DIRECT_URL: postgresUrl.optional(),
-  DB_ADAPTER: z.literal("pg").optional(),
   KILL_SWITCH: z
     .enum(["true", "false"])
     .default("false")
     .transform((v) => v === "true"),
   OPENAI_API_KEY: nonEmpty.optional(),
   OPENAI_MODEL: nonEmpty.optional(),
+  ANTHROPIC_API_KEY: nonEmpty.optional(),
+  ANTHROPIC_MODEL: nonEmpty.default(DEFAULT_ANTHROPIC_MODEL),
+  NVIDIA_API_KEY: nonEmpty.optional(),
+  NVIDIA_MODEL: nonEmpty.default(DEFAULT_NVIDIA_MODEL),
+  NVIDIA_BASE_URL: baseUrl.default(DEFAULT_NVIDIA_BASE_URL),
+  OLLAMA_BASE_URL: baseUrl.default(DEFAULT_OLLAMA_BASE_URL),
+  OLLAMA_MODEL: nonEmpty.default(DEFAULT_OLLAMA_MODEL),
+  LLM_PROVIDER: z.enum(LLM_PROVIDER_IDS).optional(),
+  NEWS_PROVIDER: z.enum(NEWS_PROVIDER_CHOICES).optional(),
+  NEWS_API_KEY: nonEmpty.optional(),
+  CRYPTOPANIC_API_KEY: nonEmpty.optional(),
+  CRYPTOPANIC_PLAN: z.enum(CRYPTOPANIC_PLANS).default("developer"),
+  NEWS_TTL_SECONDS: z
+    .string()
+    .regex(/^[0-9]{1,4}$/)
+    .transform(Number)
+    .refine((n) => n >= MIN_NEWS_TTL_SECONDS && n <= MAX_NEWS_TTL_SECONDS)
+    .default(DEFAULT_NEWS_TTL_SECONDS),
+  NEWS_ALLOW_NEWSAPI_IN_PRODUCTION: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((v) => v === "true"),
   NODE_ENV: z.enum(["development", "production", "test"]).optional(),
 });
 
 type ParsedEnv = z.output<typeof EnvSchema>;
 
 interface Secrets {
+  readonly anthropicApiKey: string | undefined;
+  readonly nvidiaApiKey: string | undefined;
+  readonly newsApiKey: string | undefined;
+  readonly cryptopanicApiKey: string | undefined;
+  /** URLs can carry credentials, so they are secrets in logs (trading-safety rule 6). */
+  readonly nvidiaBaseUrl: string;
+  readonly ollamaBaseUrl: string;
   readonly openaiApiKey: string | undefined;
-  readonly databaseUrl: string | undefined;
-  readonly directUrl: string | undefined;
   readonly sessionSecret: string;
 }
 
 /** Values loadConfig derives from the parsed env before building the Config. */
 interface Resolved {
+  readonly newsProvider: NewsProviderChoice;
   readonly enginePath: string;
   readonly webUrl: string;
   readonly sessionSecret: string;
@@ -241,8 +323,16 @@ export class Config {
   readonly killSwitch: boolean;
   /** OPENAI_MODEL, or DEFAULT_OPENAI_MODEL when unset. */
   readonly openaiModel: string;
-  readonly dbAdapter: "pg" | undefined;
+  readonly anthropicModel: string;
+  readonly nvidiaModel: string;
+  readonly ollamaModel: string;
+  /** LLM_PROVIDER, or undefined to pick the first available (Req 4.4). */
+  readonly llmProvider: LlmProviderId | undefined;
   readonly nodeEnv: "development" | "production" | "test" | undefined;
+  /** Effective news provider after the default rule and the production NewsAPI rule (Req 19.3, 20.1, 20.2). */
+  readonly newsProvider: NewsProviderChoice;
+  readonly cryptopanicPlan: CryptoPanicPlan;
+  readonly newsTtlSeconds: number;
   // Private, so the secrets are not own enumerable properties (spread, Object.keys,
   // default inspect) and are reachable only through the getters below.
   readonly #secrets: Secrets;
@@ -258,12 +348,22 @@ export class Config {
     this.webUrl = resolved.webUrl;
     this.killSwitch = parsed.KILL_SWITCH;
     this.openaiModel = parsed.OPENAI_MODEL ?? DEFAULT_OPENAI_MODEL;
-    this.dbAdapter = parsed.DB_ADAPTER;
+    this.anthropicModel = parsed.ANTHROPIC_MODEL;
+    this.nvidiaModel = parsed.NVIDIA_MODEL;
+    this.ollamaModel = parsed.OLLAMA_MODEL;
+    this.llmProvider = parsed.LLM_PROVIDER;
     this.nodeEnv = parsed.NODE_ENV;
+    this.newsProvider = resolved.newsProvider;
+    this.cryptopanicPlan = parsed.CRYPTOPANIC_PLAN;
+    this.newsTtlSeconds = parsed.NEWS_TTL_SECONDS;
     this.#secrets = Object.freeze({
+      newsApiKey: parsed.NEWS_API_KEY,
+      cryptopanicApiKey: parsed.CRYPTOPANIC_API_KEY,
+      anthropicApiKey: parsed.ANTHROPIC_API_KEY,
+      nvidiaApiKey: parsed.NVIDIA_API_KEY,
+      nvidiaBaseUrl: parsed.NVIDIA_BASE_URL,
+      ollamaBaseUrl: parsed.OLLAMA_BASE_URL,
       openaiApiKey: parsed.OPENAI_API_KEY,
-      databaseUrl: parsed.DATABASE_URL,
-      directUrl: parsed.DIRECT_URL,
       sessionSecret: resolved.sessionSecret,
     });
     Object.freeze(this);
@@ -278,12 +378,37 @@ export class Config {
     return this.#secrets.openaiApiKey;
   }
 
-  get databaseUrl(): string | undefined {
-    return this.#secrets.databaseUrl;
+  get anthropicApiKey(): string | undefined {
+    return this.#secrets.anthropicApiKey;
   }
 
-  get directUrl(): string | undefined {
-    return this.#secrets.directUrl;
+  get nvidiaApiKey(): string | undefined {
+    return this.#secrets.nvidiaApiKey;
+  }
+
+  get newsApiKey(): string | undefined {
+    return this.#secrets.newsApiKey;
+  }
+
+  get cryptopanicApiKey(): string | undefined {
+    return this.#secrets.cryptopanicApiKey;
+  }
+
+  get nvidiaBaseUrl(): string {
+    return this.#secrets.nvidiaBaseUrl;
+  }
+
+  get ollamaBaseUrl(): string {
+    return this.#secrets.ollamaBaseUrl;
+  }
+
+  /** Host (with port) of a base URL: the only part that may be logged. */
+  get nvidiaHost(): string {
+    return new URL(this.#secrets.nvidiaBaseUrl).host;
+  }
+
+  get ollamaHost(): string {
+    return new URL(this.#secrets.ollamaBaseUrl).host;
   }
 
   get isProduction(): boolean {
@@ -304,11 +429,21 @@ export class Config {
       webUrl: this.webUrl,
       killSwitch: this.killSwitch,
       openaiModel: this.openaiModel,
-      dbAdapter: this.dbAdapter ?? null,
+      anthropicModel: this.anthropicModel,
+      nvidiaModel: this.nvidiaModel,
+      ollamaModel: this.ollamaModel,
+      llmProvider: this.llmProvider ?? null,
       nodeEnv: this.nodeEnv ?? null,
+      newsProvider: this.newsProvider,
+      cryptopanicPlan: this.cryptopanicPlan,
+      newsTtlSeconds: this.newsTtlSeconds,
+      newsApiKey: mask(this.newsApiKey),
+      cryptopanicApiKey: mask(this.cryptopanicApiKey),
+      anthropicApiKey: mask(this.anthropicApiKey),
+      nvidiaApiKey: mask(this.nvidiaApiKey),
+      nvidiaBaseUrl: REDACTED,
+      ollamaBaseUrl: REDACTED,
       openaiApiKey: mask(this.openaiApiKey),
-      databaseUrl: mask(this.databaseUrl),
-      directUrl: mask(this.directUrl),
       sessionSecret: mask(this.sessionSecret),
     };
   }
@@ -360,14 +495,13 @@ export function loadConfig(env: EnvRecord = Bun.env, options: LoadConfigOptions 
     });
   }
 
-  // Req 16.5, 16.7: in production both database URLs and SESSION_SECRET are required;
-  // report each unset one by name.
-  if (input.NODE_ENV === "production") {
-    for (const name of ["DATABASE_URL", "DIRECT_URL", "SESSION_SECRET"] as const) {
-      if (input[name] === undefined) {
-        issues.push({ variable: name, problem: "missing", message: `${name} is required when NODE_ENV=production` });
-      }
-    }
+  // Req 16.7: in production SESSION_SECRET is required.
+  if (input.NODE_ENV === "production" && input.SESSION_SECRET === undefined) {
+    issues.push({
+      variable: "SESSION_SECRET",
+      problem: "missing",
+      message: "SESSION_SECRET is required when NODE_ENV=production",
+    });
   }
 
   if (!parsed.success || issues.length > 0) {
@@ -380,10 +514,6 @@ export function loadConfig(env: EnvRecord = Bun.env, options: LoadConfigOptions 
   const webUrl = data.WEB_URL ?? data.ALLOWED_ORIGINS[0] ?? DEFAULT_ALLOWED_ORIGINS[0] ?? "";
 
   const warnings: string[] = [];
-  if (data.DATABASE_URL === undefined) {
-    // Req 16.6: outside production the journal falls back to memory.
-    warnings.push("DATABASE_URL is unset: the Journal is kept in memory only and is not persisted");
-  }
 
   let sessionSecret = data.SESSION_SECRET;
   if (sessionSecret === undefined) {
@@ -395,7 +525,31 @@ export function loadConfig(env: EnvRecord = Bun.env, options: LoadConfigOptions 
     );
   }
 
-  return { ok: true, config: new Config(data, { enginePath, webUrl, sessionSecret }), warnings };
+  const newsProvider = resolveNewsProvider(data, warnings);
+
+  return { ok: true, config: new Config(data, { enginePath, webUrl, sessionSecret, newsProvider }), warnings };
+}
+
+/**
+ * News provider selection (Req 19.3) and the production NewsAPI rule (Req 20.1, 20.2).
+ * Default: newsapi outside production with NEWS_API_KEY, cryptopanic in production with
+ * CRYPTOPANIC_API_KEY, else none. Production disables newsapi unless explicitly allowed.
+ */
+function resolveNewsProvider(data: ParsedEnv, warnings: string[]): NewsProviderChoice {
+  const production = data.NODE_ENV === "production";
+  let choice: NewsProviderChoice;
+  if (data.NEWS_PROVIDER !== undefined) choice = data.NEWS_PROVIDER;
+  else if (!production && data.NEWS_API_KEY !== undefined) choice = "newsapi";
+  else if (production && data.CRYPTOPANIC_API_KEY !== undefined) choice = "cryptopanic";
+  else choice = "none";
+
+  if (production && choice === "newsapi" && !data.NEWS_ALLOW_NEWSAPI_IN_PRODUCTION) {
+    warnings.push(
+      "NEWS_PROVIDER=newsapi is disabled in production: the NewsAPI Developer plan permits development use only (set NEWS_ALLOW_NEWSAPI_IN_PRODUCTION=true for a plan that allows production)",
+    );
+    return "none";
+  }
+  return choice;
 }
 
 export interface ExitDeps {
@@ -431,42 +585,35 @@ export function loadConfigOrExit(
 }
 
 /** `Config` satisfies this; `sessionSecret` is optional so narrow test doubles still type-check. */
-export type SecretSource = Pick<Config, "openaiApiKey" | "databaseUrl" | "directUrl"> & {
+export type SecretSource = Pick<Config, "openaiApiKey"> & {
+  readonly newsApiKey?: string | undefined;
+  readonly cryptopanicApiKey?: string | undefined;
   readonly sessionSecret?: string | undefined;
+  readonly anthropicApiKey?: string | undefined;
+  readonly nvidiaApiKey?: string | undefined;
+  readonly nvidiaBaseUrl?: string | undefined;
+  readonly ollamaBaseUrl?: string | undefined;
 };
 
-function urlPasswords(value: string | undefined): string[] {
-  if (value === undefined) return [];
-  try {
-    const raw = new URL(value).password;
-    if (raw === "") return [];
-    let decoded = raw;
-    try {
-      decoded = decodeURIComponent(raw);
-    } catch {
-      // Malformed percent-encoding: only the raw form can appear in text.
-    }
-    return [raw, decoded];
-  } catch {
-    return [];
-  }
-}
-
 /**
- * Replaces every occurrence of OPENAI_API_KEY, the full DATABASE_URL, the full
- * DIRECT_URL, each URL password (raw and percent-decoded), and SESSION_SECRET
- * with "[redacted]" (Req 16.4). Use on any text that may quote connection details
- * before logging it.
+ * Replaces every occurrence of OPENAI_API_KEY and SESSION_SECRET with "[redacted]"
+ * (Req 16.4). Use on any text that may quote a secret before logging it.
  */
 export function redactSecrets(text: string, config: SecretSource): string {
   const secrets = new Set<string>();
-  for (const value of [config.openaiApiKey, config.databaseUrl, config.directUrl, config.sessionSecret]) {
+  for (const value of [
+    config.openaiApiKey,
+    config.sessionSecret,
+    config.anthropicApiKey,
+    config.nvidiaApiKey,
+    config.newsApiKey,
+    config.cryptopanicApiKey,
+    config.nvidiaBaseUrl,
+    config.ollamaBaseUrl,
+  ]) {
     if (value !== undefined && value !== "") secrets.add(value);
   }
-  for (const pw of [...urlPasswords(config.databaseUrl), ...urlPasswords(config.directUrl)]) {
-    if (pw !== "") secrets.add(pw);
-  }
-  // Longest first, so a full URL is replaced before its password would split it.
+  // Longest first, so a secret that contains another is replaced whole.
   const ordered = [...secrets].sort((a, b) => b.length - a.length);
   let out = text;
   for (const secret of ordered) out = out.split(secret).join(REDACTED);

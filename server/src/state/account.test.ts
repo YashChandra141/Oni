@@ -7,18 +7,21 @@ type Ev<T extends Event["type"]> = Extract<Event, { type: T }>;
 const ack = (account_id: string, order_id: string, status: Ev<"order_ack">["status"]): Event => ({
   type: "order_ack",
   account_id,
+  venue: "replay",
   order_id,
   status,
 });
 const rejected = (account_id: string, order_id: string): Event => ({
   type: "order_rejected",
   account_id,
+  venue: "replay",
   order_id,
   reason: "unknown_order",
 });
 const fill = (account_id: string, order_id: string, qty: string, remaining: string): Event => ({
   type: "fill",
   account_id,
+  venue: "replay",
   order_id,
   symbol: "BTC-USD",
   side: "buy",
@@ -159,7 +162,7 @@ describe("accounts", () => {
     const s = new AccountState();
     s.apply({ type: "heartbeat", ts: 1 });
     s.apply({ type: "pong", id: 1 });
-    s.apply({ type: "trade", symbol: "BTC-USD", price: "1", qty: "1", side: "buy", ts: 1 });
+    s.apply({ type: "trade", venue: "replay", symbol: "BTC-USD", price: "1", qty: "1", side: "buy", synthetic: false, ts: 1 });
     expect(s.size).toBe(0);
   });
 

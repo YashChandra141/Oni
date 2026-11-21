@@ -37,7 +37,7 @@ function indicators(
 ): ServerMessage {
   return {
     type: "event",
-    event: { type: "indicators", symbol, timeframe, ts, values: { ...EMPTY, ...values } },
+    event: { type: "indicators", venue: "replay", symbol, timeframe, ts, values: { ...EMPTY, ...values } },
   };
 }
 
@@ -100,6 +100,7 @@ describe("indicators events", () => {
     const state = initialState();
     const next = applyEvent(state, {
       type: "indicators",
+      venue: "replay",
       symbol: "BTC-USD",
       timeframe: "1m",
       ts: Number.NaN,
@@ -193,6 +194,7 @@ describe("Property 1: indicator points align to candle open times (web store)", 
             type: "event",
             event: {
               type: "candle",
+              venue: "replay",
               symbol: "BTC-USD",
               timeframe: "1m",
               snapshot: false,
@@ -220,6 +222,7 @@ describe("Property 4: a candle snapshot replaces stored indicator points (web st
       type: "event",
       event: {
         type: "candle",
+        venue: "replay",
         symbol: "BTC-USD",
         timeframe: "1m",
         snapshot: true,
@@ -269,7 +272,7 @@ describe("Property 1 (all timeframes): indicator points align to candle open tim
   type Tf = (typeof ALL_TFS)[number];
   const ev = (tf: Tf, ts: number, ema: number): ServerMessage => ({
     type: "event",
-    event: { type: "indicators", symbol: "BTC-USD", timeframe: tf, ts, values: { ...EMPTY, ema } },
+    event: { type: "indicators", venue: "replay", symbol: "BTC-USD", timeframe: tf, ts, values: { ...EMPTY, ema } },
   });
 
   test("one point per bucket, strictly ascending, at most 500, last values win", () => {

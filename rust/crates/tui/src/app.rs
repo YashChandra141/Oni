@@ -421,15 +421,16 @@ fn apply_message(app: &mut App, message: ServerMessage) -> bool {
         ServerMessage::Hello {
             protocol_version,
             data_mode,
-            venue,
+            live_venues,
             engine_running,
             instruments,
+            ..
         } => {
             app.watchlist = watchlist_symbols(&instruments);
             app.hello = Some(HelloInfo {
                 protocol_version,
                 data_mode,
-                venue,
+                venue: live_venues.first().copied(),
                 engine_running,
             });
             true
@@ -447,71 +448,26 @@ fn apply_message(app: &mut App, message: ServerMessage) -> bool {
             true
         }
         ServerMessage::Event { event } => {
-            app.events_received = app.events_received.saturating_add(1);
-            match event {
-                Event::Error { code, message } => {
-                    app.record_error(format!("server error {code:?}: {message}"));
-                }
-                Event::Candle {
-                    symbol,
-                    timeframe,
-                    snapshot,
-                    bars,
-                    indicators,
-                } => {
-                    if symbol == app.symbol && timeframe == app.timeframe {
-                        app.apply_candles(snapshot, &bars);
-                        if snapshot {
-                            app.apply_indicator_history(&symbol, timeframe, indicators.as_deref());
-                        }
-                    }
-                }
-                Event::Indicators {
-                    symbol,
-                    timeframe,
-                    ts,
-                    values,
-                } => app.apply_indicators(&symbol, timeframe, ts, values),
-                Event::Book {
-                    symbol,
-                    bids,
-                    asks,
-                    spread,
-                    imbalance_bps,
-                    ts,
-                } => app.apply_book(
-                    symbol,
-                    BookState {
-                        bids,
-                        asks,
-                        spread,
-                        imbalance_bps,
-                        ts,
-                    },
-                ),
-                Event::Trade {
-                    symbol,
-                    price,
-                    qty,
-                    side,
-                    ts,
-                } => app.push_trade(TapeEntry {
-                    symbol,
-                    price,
-                    qty,
-                    side,
-                    ts,
-                }),
-                account_event @ (Event::OrderAck { .. }
-                | Event::OrderRejected { .. }
-                | Event::Fill { .. }
-                | Event::Position { .. }) => {
-                    app.account.apply_event(&account_event, app.now_ms);
-                }
-                _ => {}
-            }
+            apply_engine_event(app, event);
             true
         }
+        // Apply the batch event by event, in order (Req 34.1).
+        ServerMessage::EventBatch { events } => {
+            let changed = !events.is_empty();
+            for wire in events {
+                apply_engine_event(app, wire.event);
+            }
+            changed
+        }
+        // Task 16.4 adds the TUI's Copilot, news, provider, and TWAP views; until then these
+        // messages are ignored.
+        ServerMessage::Providers { .. }
+        | ServerMessage::Analysis { .. }
+        | ServerMessage::ScanResult { .. }
+        | ServerMessage::StrategyDraft { .. }
+        | ServerMessage::AiError { .. }
+        | ServerMessage::News { .. }
+        | ServerMessage::Twap { .. } => false,
         // The engine restarted: every paper account is flat again (Req 15.7).
         ServerMessage::Notice {
             kind: NoticeKind::AccountReset,
@@ -547,6 +503,77 @@ fn apply_message(app: &mut App, message: ServerMessage) -> bool {
     }
 }
 
+/// Applies one engine event to the app state and counts it.
+fn apply_engine_event(app: &mut App, event: Event) {
+    app.events_received = app.events_received.saturating_add(1);
+    match event {
+        Event::Error { code, message } => {
+            app.record_error(format!("server error {code:?}: {message}"));
+        }
+        Event::Candle {
+            symbol,
+            timeframe,
+            snapshot,
+            bars,
+            indicators,
+            ..
+        } => {
+            if symbol == app.symbol && timeframe == app.timeframe {
+                app.apply_candles(snapshot, &bars);
+                if snapshot {
+                    app.apply_indicator_history(&symbol, timeframe, indicators.as_deref());
+                }
+            }
+        }
+        Event::Indicators {
+            symbol,
+            timeframe,
+            ts,
+            values,
+            ..
+        } => app.apply_indicators(&symbol, timeframe, ts, values),
+        Event::Book {
+            symbol,
+            bids,
+            asks,
+            spread,
+            imbalance_bps,
+            ts,
+            ..
+        } => app.apply_book(
+            symbol,
+            BookState {
+                bids,
+                asks,
+                spread,
+                imbalance_bps,
+                ts,
+            },
+        ),
+        Event::Trade {
+            symbol,
+            price,
+            qty,
+            side,
+            ts,
+            ..
+        } => app.push_trade(TapeEntry {
+            symbol,
+            price,
+            qty,
+            side,
+            ts,
+        }),
+        account_event @ (Event::OrderAck { .. }
+        | Event::OrderRejected { .. }
+        | Event::Fill { .. }
+        | Event::Position { .. }) => {
+            app.account.apply_event(&account_event, app.now_ms);
+        }
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -557,9 +584,14 @@ mod tests {
         NetEvent::Message(ServerMessage::Hello {
             protocol_version: 2,
             data_mode,
-            venue,
+            live_venues: venue.into_iter().collect(),
+            venue_status: Vec::new(),
+            default_venue: Venue::Replay,
+            starting_balance: protocol::Money(0),
             engine_running: true,
             instruments: InstrumentInfo::all(),
+            providers: Vec::new(),
+            news_enabled: false,
         })
     }
 
@@ -573,10 +605,12 @@ mod tests {
     fn trade() -> NetEvent {
         NetEvent::Message(ServerMessage::Event {
             event: Event::Trade {
+                venue: Venue::Replay,
                 symbol: "BTC-USD".into(),
                 price: Price(6_400_000),
                 qty: Qty(1),
                 side: Side::Buy,
+                synthetic: false,
                 ts: 1,
             },
         })
@@ -646,7 +680,7 @@ mod tests {
             NoticeKind::AccountReset,
             NoticeKind::EngineDown,
             NoticeKind::EngineUp,
-            NoticeKind::LlmDisabled,
+            NoticeKind::AiDisabled,
         ] {
             assert!(!forgets_token(&notice(kind)), "{kind:?}");
         }
@@ -771,6 +805,7 @@ mod tests {
     fn candles(timeframe: Timeframe, snapshot: bool, bars: Vec<Bar>) -> NetEvent {
         NetEvent::Message(ServerMessage::Event {
             event: Event::Candle {
+                venue: Venue::Replay,
                 symbol: "BTC-USD".into(),
                 timeframe,
                 snapshot,
@@ -836,11 +871,13 @@ mod tests {
         };
         NetEvent::Message(ServerMessage::Event {
             event: Event::Book {
+                venue: Venue::Replay,
                 symbol: symbol.into(),
                 bids: bids.iter().map(level).collect(),
                 asks: asks.iter().map(level).collect(),
                 spread: Some(Price(50)),
                 imbalance_bps: 10,
+                synthetic: false,
                 ts: 7,
             },
         })
@@ -849,10 +886,12 @@ mod tests {
     fn trade_at(symbol: &str, price: i64) -> NetEvent {
         NetEvent::Message(ServerMessage::Event {
             event: Event::Trade {
+                venue: Venue::Replay,
                 symbol: symbol.into(),
                 price: Price(price),
                 qty: Qty(1),
                 side: Side::Sell,
+                synthetic: false,
                 ts: price,
             },
         })
@@ -925,6 +964,7 @@ mod tests {
     fn indicators_event(symbol: &str, timeframe: Timeframe, ts: i64, ema: f64) -> NetEvent {
         NetEvent::Message(ServerMessage::Event {
             event: Event::Indicators {
+                venue: Venue::Replay,
                 symbol: symbol.into(),
                 timeframe,
                 ts,
@@ -964,6 +1004,7 @@ mod tests {
     fn snapshot_with_indicators(points: Option<Vec<(i64, f64)>>) -> NetEvent {
         NetEvent::Message(ServerMessage::Event {
             event: Event::Candle {
+                venue: Venue::Replay,
                 symbol: "BTC-USD".into(),
                 timeframe: Timeframe::M1,
                 snapshot: true,
@@ -1226,9 +1267,14 @@ mod tests {
             NetEvent::Message(ServerMessage::Hello {
                 protocol_version: 2,
                 data_mode: DataMode::Replay,
-                venue: None,
+                live_venues: Vec::new(),
+                venue_status: Vec::new(),
+                default_venue: Venue::Replay,
+                starting_balance: protocol::Money(0),
                 engine_running: true,
                 instruments: only_sol,
+                providers: Vec::new(),
+                news_enabled: false,
             }),
         );
         assert_eq!(app.watchlist, ["SOL-USD"]);
@@ -1240,9 +1286,14 @@ mod tests {
             NetEvent::Message(ServerMessage::Hello {
                 protocol_version: 2,
                 data_mode: DataMode::Replay,
-                venue: None,
+                live_venues: Vec::new(),
+                venue_status: Vec::new(),
+                default_venue: Venue::Replay,
+                starting_balance: protocol::Money(0),
                 engine_running: true,
                 instruments: Vec::new(),
+                providers: Vec::new(),
+                news_enabled: false,
             }),
         );
         assert_eq!(app.watchlist, ["BTC-USD", "ETH-USD", "SOL-USD"]);
@@ -1283,6 +1334,7 @@ mod order_reducer_tests {
 
     fn ack(id: &str, status: OrderStatus) -> NetEvent {
         event(Event::OrderAck {
+            venue: Venue::Replay,
             account_id: guest(),
             order_id: OrderId::new(id).unwrap(),
             status,
@@ -1297,6 +1349,7 @@ mod order_reducer_tests {
                 text: "BUY BTC-USD 0.1 LMT 64000.00".into(),
                 action: PreviewAction::Place {
                     symbol: "BTC-USD".into(),
+                    venue: Venue::Replay,
                     side: Side::Buy,
                     qty: Qty(10_000_000),
                     kind: OrderKind::Limit {
@@ -1343,6 +1396,7 @@ mod order_reducer_tests {
         update(
             &mut app,
             event(Event::Fill {
+                venue: Venue::Replay,
                 account_id: guest(),
                 order_id: OrderId::new("o-1").unwrap(),
                 symbol: "BTC-USD".into(),
@@ -1369,6 +1423,7 @@ mod order_reducer_tests {
         assert!(update(
             &mut app,
             event(Event::OrderRejected {
+                venue: Venue::Replay,
                 account_id: guest(),
                 order_id: OrderId::new("o-7").unwrap(),
                 reason: "kill_switch".into(),

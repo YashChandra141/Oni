@@ -14,6 +14,33 @@ export interface LlmContext {
   readonly lastPrices: Readonly<Record<string, string>>;
 }
 
+/** One structured-output request to a provider (design "LLM providers"). */
+export interface JsonRequest {
+  readonly system: string;
+  readonly user: string;
+  /** `[a-zA-Z0-9_-]{1,64}`. */
+  readonly schemaName: string;
+  /** Provider-ready JSON Schema (additionalProperties false, every property required). */
+  readonly schema: Readonly<Record<string, unknown>>;
+  readonly maxOutputTokens: number;
+  /** 15 000 for the parser, 30 000 for the analyst (Req 3.14). */
+  readonly timeoutMs: number;
+  readonly signal?: AbortSignal;
+}
+
+export type LlmProviderId = "openai" | "anthropic" | "nvidia" | "ollama";
+
+/**
+ * Provider-neutral structured completion. Implementations (tasks 9.2 to 9.5) reject with the
+ * typed errors below, and never put a key, URL, or response body in an error message.
+ */
+export interface JsonLlmProvider {
+  readonly id: LlmProviderId;
+  readonly model: string;
+  /** Parsed JSON, unvalidated. The caller validates it with Zod (trading-safety rule 4). */
+  completeJson(req: JsonRequest): Promise<unknown>;
+}
+
 export interface LlmProvider {
   /**
    * Returns the model's parsed JSON output, unvalidated. Rejects with one of the typed

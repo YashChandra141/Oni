@@ -23,6 +23,7 @@ use tokio::task::{JoinError, JoinHandle};
 use tokio::time::{Instant, MissedTickBehavior};
 use tracing::{debug, error, info, warn};
 
+use crate::balance::BalanceConfig;
 use crate::core::{Engine, HistoryRequest};
 use crate::feed::MarketMsg;
 use crate::feed::backfill::{
@@ -53,6 +54,8 @@ pub struct RunConfig {
     pub fixtures_dir: PathBuf,
     /// Live market data feed to start, or `None` for replay mode (Req 5.1).
     pub live: Option<LiveFeedConfig>,
+    /// Paper balance settings of every account (Req 16.1, 16.2).
+    pub balance: BalanceConfig,
 }
 
 /// Which live feed to start and for which symbols.
@@ -140,6 +143,9 @@ impl LiveFeed {
                     history: Some(history),
                 }
             }
+            // The Jupiter and Raydium adapters arrive with the DEX tasks; until then these
+            // venues have no live feed.
+            Venue::Jupiter | Venue::Raydium | Venue::Replay => none,
         }
     }
 
@@ -236,10 +242,14 @@ where
     W: AsyncWrite + Unpin,
 {
     // Only live mode fetches venue history; replay builds its history by warm-up.
-    let mut engine = if config.live.is_some() {
-        Engine::with_backfill()
-    } else {
-        Engine::new()
+    // The engine stamps every event with its market venue: the live venue, or `Replay`.
+    let mut engine = match config.live.as_ref() {
+        Some(live) => Engine::with_backfill()
+            .with_balance(config.balance)
+            .with_venue(live.venue),
+        None => Engine::new()
+            .with_balance(config.balance)
+            .with_venue(Venue::Replay),
     };
     let mut replay = Replay::new(config.fixtures_dir);
     let mut live = LiveFeed::start(config.live);
@@ -582,6 +592,7 @@ mod tests {
             heartbeat: HEARTBEAT_PERIOD,
             fixtures_dir: std::env::temp_dir(),
             live: None,
+            balance: BalanceConfig::default(),
         }
     }
 
@@ -650,10 +661,12 @@ mod tests {
     fn subscribe_line_gives_a_snapshot_and_unsubscribe_gives_nothing() {
         let mut engine = Engine::new();
         let mut replay = replay();
-        let subscribe = r#"{"type":"subscribe","symbol":"BTC-USD","timeframe":"1m"}"#;
+        let subscribe =
+            r#"{"type":"subscribe","venue":"replay","symbol":"BTC-USD","timeframe":"1m"}"#;
         assert_eq!(
             on_line(&mut engine, &mut replay, line(subscribe)),
             vec![Event::Candle {
+                venue: protocol::Venue::Replay,
                 symbol: "BTC-USD".into(),
                 timeframe: protocol::Timeframe::M1,
                 snapshot: true,
@@ -661,7 +674,8 @@ mod tests {
                 indicators: Some(Vec::new()),
             }]
         );
-        let unsubscribe = r#"{"type":"unsubscribe","symbol":"BTC-USD","timeframe":"1m"}"#;
+        let unsubscribe =
+            r#"{"type":"unsubscribe","venue":"replay","symbol":"BTC-USD","timeframe":"1m"}"#;
         assert_eq!(
             on_line(&mut engine, &mut replay, line(unsubscribe)),
             Vec::new()
@@ -961,6 +975,7 @@ mod tests {
         let engine = tokio::spawn(run(BufReader::new(stdin_reader), stdout_writer, config()));
 
         let subscribe = Command::Subscribe {
+            venue: Venue::Replay,
             symbol: "BTC-USD".into(),
             timeframe: protocol::Timeframe::M1,
         };

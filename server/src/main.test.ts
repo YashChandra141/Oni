@@ -77,6 +77,7 @@ describe("startServer", () => {
     supervisor.emitEvent({
       type: "fill",
       account_id: "guest",
+      venue: "replay",
       order_id: "o_f",
       symbol: "BTC-USD",
       side: "sell",
@@ -86,7 +87,13 @@ describe("startServer", () => {
       remaining: "0",
       ts: 2,
     });
-    supervisor.emitEvent({ type: "order_rejected", account_id: "guest", order_id: "o_r", reason: "insufficient_balance" });
+    supervisor.emitEvent({
+      type: "order_rejected",
+      account_id: "guest",
+      venue: "replay",
+      order_id: "o_r",
+      reason: "insufficient_balance",
+    });
 
     const rows = (await (await fetch(`http://${base}/journal`)).json()) as Record<string, unknown>[];
     expect(rows[0]).toMatchObject({ type: "rejection", order_id: "o_r", reason: "insufficient_balance", source: "tui", venue: "replay", qty: "5" });
@@ -137,12 +144,21 @@ describe("startServer", () => {
     try {
       expect((await next()).type).toBe("hello");
       expect(await next()).toEqual({ type: "session", account_id: "guest", address: null });
-      ws.send(JSON.stringify({ type: "subscribe", symbol: "BTC-USD", timeframe: "1m" }));
+      ws.send(JSON.stringify({ type: "subscribe", venue: "replay", symbol: "BTC-USD", timeframe: "1m" }));
       ws.send(JSON.stringify({ type: "ping", id: 1 }));
       expect(await next()).toEqual({ type: "pong", id: 1 }); // messages are handled in order
-      expect(supervisor.sent).toContainEqual({ type: "subscribe", symbol: "BTC-USD", timeframe: "1m" });
+      expect(supervisor.sent).toContainEqual({ type: "subscribe", venue: "replay", symbol: "BTC-USD", timeframe: "1m" });
 
-      const trade = { type: "trade", symbol: "BTC-USD", price: "100", qty: "1", side: "buy", ts: 1 } as const;
+      const trade = {
+        type: "trade",
+        venue: "replay",
+        symbol: "BTC-USD",
+        price: "100",
+        qty: "1",
+        side: "buy",
+        synthetic: false,
+        ts: 1,
+      } as const;
       supervisor.emitEvent(trade);
       expect(await next()).toEqual({ type: "event", event: trade });
 

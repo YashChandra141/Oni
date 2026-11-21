@@ -36,6 +36,13 @@ export interface PositionRow {
   readonly unrealized: bigint;
 }
 
+/** Latest Balance event of one account, in Money units (10^-10 USD). */
+export interface BalanceRow {
+  readonly paperBalance: bigint;
+  readonly freeBalance: bigint;
+  readonly equity: bigint;
+}
+
 export interface OrderNote {
   readonly symbol: string;
   readonly side: Side;
@@ -97,6 +104,7 @@ export interface AccountStateOptions {
 
 export class AccountState implements AccountView {
   readonly #accounts = new Map<AccountId, AccountEntry>();
+  readonly #balances = new Map<AccountId, BalanceRow>();
   readonly #logger: Pick<Logger, "info" | "warn"> | undefined;
   readonly #maxAccounts: number;
   readonly #maxOrders: number;
@@ -117,6 +125,17 @@ export class AccountState implements AccountView {
     switch (event.type) {
       case "position":
         this.#applyPosition(event);
+        return;
+      case "balance":
+        if (!this.#balances.has(event.account_id) && this.#balances.size >= this.#maxAccounts) {
+          const oldest = this.#balances.keys().next();
+          if (!oldest.done) this.#balances.delete(oldest.value);
+        }
+        this.#balances.set(event.account_id, {
+          paperBalance: toBigInt(event.paper_balance),
+          freeBalance: toBigInt(event.free_balance),
+          equity: toBigInt(event.equity),
+        });
         return;
       case "order_ack":
         this.#applyAck(event);
@@ -169,8 +188,15 @@ export class AccountState implements AccountView {
     }));
   }
 
+  /** Latest engine Balance of the account, or undefined before the first Balance event. */
+  balance(accountId: AccountId): BalanceRow | undefined {
+    const b = this.#balances.get(accountId);
+    return b === undefined ? undefined : { ...b };
+  }
+
   /** Empties every account (Req 15.7). */
   clear(): void {
+    this.#balances.clear();
     this.#accounts.clear();
   }
 

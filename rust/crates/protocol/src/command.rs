@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::num::Qty;
-use crate::types::{AccountId, OrderId, OrderKind, Side, Timeframe};
+use crate::types::{AccountId, OrderId, OrderKind, Side, Timeframe, Venue};
 
 /// A message sent to the engine on stdin, one JSON line each.
 ///
@@ -20,17 +20,24 @@ use crate::types::{AccountId, OrderId, OrderKind, Side, Timeframe};
 pub enum Command {
     /// Start streaming candles and indicators for a symbol and timeframe.
     Subscribe {
+        venue: Venue,
         symbol: String,
         timeframe: Timeframe,
     },
     /// Stop streaming candles and indicators for a symbol and timeframe.
     Unsubscribe {
+        venue: Venue,
         symbol: String,
         timeframe: Timeframe,
     },
+    /// Start the 24-hour ticker stream for a (venue, symbol), without a candle subscription.
+    SubscribeTicker { symbol: String, venue: Venue },
+    /// Stop the 24-hour ticker stream for a (venue, symbol).
+    UnsubscribeTicker { symbol: String, venue: Venue },
     /// Place a paper order. Only the server's Router sends this (Req 18.3).
     PlaceOrder {
         account_id: AccountId,
+        venue: Venue,
         order_id: OrderId,
         symbol: String,
         side: Side,
@@ -114,18 +121,43 @@ mod tests {
     #[test]
     fn subscribe_uses_timeframe_wire_names() {
         let command = Command::Subscribe {
+            venue: Venue::Backpack,
             symbol: "BTC-USD".into(),
             timeframe: Timeframe::M15,
         };
-        let expected = r#"{"type":"subscribe","symbol":"BTC-USD","timeframe":"15m"}"#;
+        let expected =
+            r#"{"type":"subscribe","venue":"backpack","symbol":"BTC-USD","timeframe":"15m"}"#;
         assert_eq!(json(&command), expected);
         assert_round_trip(&command);
+    }
+
+    #[test]
+    fn ticker_subscriptions_carry_symbol_and_venue() {
+        let sub = Command::SubscribeTicker {
+            symbol: "SOL-USD".into(),
+            venue: Venue::Jupiter,
+        };
+        let unsub = Command::UnsubscribeTicker {
+            symbol: "SOL-USD".into(),
+            venue: Venue::Raydium,
+        };
+        assert_eq!(
+            json(&sub),
+            r#"{"type":"subscribe_ticker","symbol":"SOL-USD","venue":"jupiter"}"#
+        );
+        assert_eq!(
+            json(&unsub),
+            r#"{"type":"unsubscribe_ticker","symbol":"SOL-USD","venue":"raydium"}"#
+        );
+        assert_round_trip(&sub);
+        assert_round_trip(&unsub);
     }
 
     #[test]
     fn place_order_nests_the_order_kind() {
         let command = Command::PlaceOrder {
             account_id: guest(),
+            venue: Venue::Replay,
             order_id: OrderId::new("o-1").unwrap(),
             symbol: "ETH-USD".into(),
             side: Side::Sell,
@@ -135,7 +167,8 @@ mod tests {
             },
         };
         let expected = concat!(
-            r#"{"type":"place_order","account_id":"guest","order_id":"o-1","symbol":"ETH-USD","#,
+            r#"{"type":"place_order","account_id":"guest","venue":"replay","order_id":"o-1","#,
+            r#""symbol":"ETH-USD","#,
             r#""side":"sell","qty":"250","kind":{"type":"limit","price":"310000"}}"#
         );
         assert_eq!(json(&command), expected);

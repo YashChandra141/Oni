@@ -24,6 +24,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_rustls::TlsConnector;
 
+use super::allowlist;
+
 /// Largest response (headers and body) the helper reads, in bytes.
 pub const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 /// Time allowed for connect, TLS, request, and response together.
@@ -36,6 +38,8 @@ pub const USER_AGENT: &str = "haunted-terminal-engine/0.1";
 pub enum HttpError {
     /// The host or path is not safe to put in a request line.
     BadTarget,
+    /// The request is not on the endpoint allowlist; nothing was sent.
+    Denied(allowlist::Denied),
     /// The whole exchange took longer than [`REQUEST_TIMEOUT`].
     Timeout,
     /// The response grew past [`MAX_RESPONSE_BYTES`].
@@ -52,6 +56,7 @@ impl fmt::Display for HttpError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::BadTarget => f.write_str("invalid host or path"),
+            Self::Denied(d) => write!(f, "request refused: {d}"),
             Self::Timeout => f.write_str("request timed out"),
             Self::TooLarge => f.write_str("response too large"),
             Self::Io(e) => write!(f, "I/O error: {e}"),
@@ -86,13 +91,38 @@ fn valid_path(path: &str) -> bool {
 
 /// Builds the request text. The headers are fixed; there is no way to add an auth header.
 pub fn build_request(host: &str, path: &str) -> Result<String, HttpError> {
+    build_request_with_key(host, path, None)
+}
+
+/// Like [`build_request`], plus `x-api-key` when `api_key` is set. Only [`https_get`] passes a
+/// key, and only for the Jupiter host.
+fn build_request_with_key(
+    host: &str,
+    path: &str,
+    api_key: Option<&str>,
+) -> Result<String, HttpError> {
     if !valid_host(host) || !valid_path(path) {
         return Err(HttpError::BadTarget);
     }
+    let key_line = match api_key {
+        Some(k) if !k.is_empty() && k.bytes().all(|b| (0x21..=0x7e).contains(&b)) => {
+            format!("x-api-key: {k}\r\n")
+        }
+        Some(_) => return Err(HttpError::BadTarget),
+        None => String::new(),
+    };
     Ok(format!(
         "GET {path} HTTP/1.1\r\nHost: {host}\r\nUser-Agent: {USER_AGENT}\r\n\
-         Accept: application/json\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n"
+         Accept: application/json\r\nCache-Control: no-cache\r\n{key_line}Connection: close\r\n\r\n"
     ))
+}
+
+/// The optional Jupiter key from `JUPITER_API_KEY`. Never logged. Empty counts as unset.
+fn jupiter_key() -> Option<String> {
+    std::env::var("JUPITER_API_KEY")
+        .ok()
+        .map(|k| k.trim().to_owned())
+        .filter(|k| !k.is_empty())
 }
 
 fn find(haystack: &[u8], needle: &[u8], from: usize) -> Option<usize> {
@@ -223,7 +253,13 @@ fn tls_config() -> Result<Arc<ClientConfig>, HttpError> {
 /// GETs `https://{host}{path}` and returns the body of a 200 response. Any other status is
 /// [`HttpError::Status`]. `path` includes the query string.
 pub async fn https_get(host: &str, path: &str) -> Result<Vec<u8>, HttpError> {
-    let request = build_request(host, path)?;
+    allowlist::check_get(host, path).map_err(HttpError::Denied)?;
+    let key = if host.eq_ignore_ascii_case(allowlist::JUPITER_HOST) {
+        jupiter_key()
+    } else {
+        None
+    };
+    let request = build_request_with_key(host, path, key.as_deref())?;
     match tokio::time::timeout(REQUEST_TIMEOUT, exchange(host, &request)).await {
         Ok(result) => {
             let response = parse_response(&result?)?;

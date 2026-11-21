@@ -15,11 +15,16 @@ type Connecting = Extract<SocketEvent, { type: "connecting" }>;
 
 const HELLO_TEXT = JSON.stringify({
   type: "hello",
-  protocol_version: 2,
+  protocol_version: 3,
   data_mode: "replay",
-  venue: null,
+  live_venues: [],
+  venue_status: [],
+  default_venue: "replay",
+  starting_balance: "1000000000000000",
   engine_running: true,
   instruments: [],
+  providers: [],
+  news_enabled: false,
 });
 
 function setup(url = "ws://localhost:8080/ws") {
@@ -46,7 +51,7 @@ function lastConnecting(events: readonly SocketEvent[]): Connecting {
 }
 
 function sub(symbol: string, timeframe: string): unknown {
-  return { type: "subscribe", symbol, timeframe };
+  return { type: "subscribe", venue: "replay", symbol, timeframe };
 }
 
 describe("parseFrame", () => {
@@ -216,7 +221,7 @@ describe("createTerminalSocket: subscriptions", () => {
     expect(net.last.sentMessages()).toEqual([
       sub("BTC-USD", "1m"),
       sub("ETH-USD", "5m"),
-      { type: "unsubscribe", symbol: "BTC-USD", timeframe: "1m" },
+      { type: "unsubscribe", venue: "replay", symbol: "BTC-USD", timeframe: "1m" },
     ]);
 
     net.last.fail();

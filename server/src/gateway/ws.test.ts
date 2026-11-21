@@ -5,7 +5,7 @@ import { INSTRUMENTS } from "../instruments.ts";
 import { type Event, type ServerMessage, ServerMessageSchema } from "../protocol.ts";
 import type { ActionResult, OrderOrigin, RouterRejectReason } from "../router.ts";
 import { FakePublisher, FakeSocket, FakeSupervisor, memoryLogger } from "./testing.ts";
-import { type GatewayRouter, Gateway, MAX_INBOUND_BYTES, NOTICES_TOPIC, PROTOCOL_VERSION, accountTopic, candlesTopic, marketTopic } from "./ws.ts";
+import { type GatewayRouter, DEFAULT_STARTING_BALANCE, Gateway, MAX_INBOUND_BYTES, NOTICES_TOPIC, PROTOCOL_VERSION, accountTopic, candlesTopic, marketTopic } from "./ws.ts";
 
 const ACCOUNT_TOPIC = accountTopic("guest");
 
@@ -38,16 +38,28 @@ function setup(
   return { supervisor, publisher, logger, gateway, connect, send };
 }
 
-const SUB = { type: "subscribe", symbol: "BTC-USD", timeframe: "1m" } as const;
-const UNSUB = { type: "unsubscribe", symbol: "BTC-USD", timeframe: "1m" } as const;
+const SUB = { type: "subscribe", venue: "replay", symbol: "BTC-USD", timeframe: "1m" } as const;
+const UNSUB = { type: "unsubscribe", venue: "replay", symbol: "BTC-USD", timeframe: "1m" } as const;
 
 const SNAPSHOT: Event = {
   type: "candle",
+  venue: "replay",
   symbol: "BTC-USD",
   timeframe: "1m",
   snapshot: true,
   bars: [{ t: 0, open: "100", high: "110", low: "90", close: "105", volume: "7" }],
 };
+
+const TRADE = (symbol: string, price: string, qty: string, side: "buy" | "sell", ts: number): Event => ({
+  type: "trade",
+  venue: "replay",
+  symbol,
+  price,
+  qty,
+  side,
+  synthetic: false,
+  ts,
+});
 
 function errorOf(msg: ServerMessage | undefined): { code: string; message: string } | null {
   if (msg?.type !== "event" || msg.event.type !== "error") return null;
@@ -67,30 +79,110 @@ describe("open", () => {
         type: "hello",
         protocol_version: PROTOCOL_VERSION,
         data_mode: "replay",
-        venue: null,
+        live_venues: [],
+        venue_status: [],
+        default_venue: "replay",
+        starting_balance: DEFAULT_STARTING_BALANCE,
         engine_running: false,
-        instruments: INSTRUMENTS.map((i) => ({ ...i })),
+        instruments: INSTRUMENTS.map((i) => ({ ...i, venues: [...i.venues] })),
+        providers: [],
+        news_enabled: false,
       },
       { type: "session", account_id: "guest", address: null },
     ]);
-    // Both are valid Server_Messages under the v2 schema.
+    // Both are valid Server_Messages under the v3 schema.
     for (const m of ws.messages()) expect(ServerMessageSchema.safeParse(m).success).toBe(true);
   });
 });
 
-describe("hello venue (Req 1.11)", () => {
+describe("hello venues (Req 1.11, 15.1)", () => {
   const helloOf = (ws: FakeSocket) => ws.messages()[0];
 
-  test("live mode names the configured Live_Venue", () => {
+  test("live mode lists the configured Live_Venue and makes it the default", () => {
     for (const liveVenue of ["coinbase", "backpack"] as const) {
       const { connect } = setup({ dataMode: "live", liveVenue });
-      expect(helloOf(connect())).toMatchObject({ type: "hello", data_mode: "live", venue: liveVenue });
+      expect(helloOf(connect())).toMatchObject({
+        type: "hello",
+        data_mode: "live",
+        live_venues: [liveVenue],
+        default_venue: liveVenue,
+      });
     }
   });
 
-  test("replay mode sends a null venue even when LIVE_VENUE is set", () => {
+  test("replay mode lists no live venue and defaults to replay even when LIVE_VENUE is set", () => {
     const { connect } = setup({ dataMode: "replay", liveVenue: "coinbase" });
-    expect(helloOf(connect())).toMatchObject({ type: "hello", data_mode: "replay", venue: null });
+    expect(helloOf(connect())).toMatchObject({
+      type: "hello",
+      data_mode: "replay",
+      live_venues: [],
+      default_venue: "replay",
+    });
+  });
+});
+
+describe("venue handling and v3 stubs", () => {
+  test("a venue that is not available gets an invalid_message Error and no engine command", () => {
+    const { supervisor, connect, send } = setup();
+    const ws = connect();
+    send(ws, { ...SUB, venue: "coinbase" });
+    expect(errorOf(ws.last())?.code).toBe("invalid_message");
+    expect(supervisor.sent).toEqual([]);
+  });
+
+  test("a missing or invalid venue on subscribe fails validation", () => {
+    const { connect, gateway } = setup();
+    const ws = connect();
+    for (const msg of [{ type: "subscribe", symbol: "BTC-USD", timeframe: "1m" }, { ...SUB, venue: "binance" }]) {
+      gateway.message(ws, JSON.stringify(msg));
+      expect(errorOf(ws.last())?.code).toBe("invalid_message");
+    }
+  });
+
+  test("ticker, TWAP, AI, and news requests answer a typed 'not implemented yet' Notice", () => {
+    const { supervisor, connect, send } = setup();
+    const ws = connect();
+    const requests: [unknown, string][] = [
+      [{ type: "subscribe_ticker", symbol: "BTC-USD", venue: "replay" }, "ticker subscriptions"],
+      [{ type: "unsubscribe_ticker", symbol: "BTC-USD", venue: "replay" }, "ticker subscriptions"],
+      [{ type: "cancel_twap", request_id: "r1", twap_id: "t1" }, "TWAP"],
+      [{ type: "set_provider", provider: "ollama" }, "AI Copilot"],
+      [
+        {
+          type: "ai_request",
+          request_id: "r2",
+          action: "analyze",
+          text: "",
+          symbol: "BTC-USD",
+          timeframe: "1h",
+          venue: "replay",
+        },
+        "AI Copilot",
+      ],
+      [{ type: "ai_cancel", request_id: "r2" }, "AI Copilot"],
+      [{ type: "subscribe_news" }, "news"],
+      [{ type: "unsubscribe_news" }, "news"],
+    ];
+    for (const [msg, feature] of requests) {
+      send(ws, msg);
+      expect(ws.last()).toEqual({ type: "notice", kind: "ai_disabled", message: `${feature}: not implemented yet` });
+    }
+    expect(supervisor.sent).toEqual([]);
+  });
+
+  test("an AI prompt over 1,000 characters fails validation", () => {
+    const { connect, send } = setup();
+    const ws = connect();
+    send(ws, {
+      type: "ai_request",
+      request_id: "r",
+      action: "ask",
+      text: "x".repeat(1001),
+      symbol: "BTC-USD",
+      timeframe: "1h",
+      venue: "replay",
+    });
+    expect(errorOf(ws.last())?.code).toBe("invalid_message");
   });
 });
 
@@ -98,7 +190,7 @@ describe("validation (Req 17.3, 17.4)", () => {
   test("invalid messages get an invalid_message Error and the socket stays usable", () => {
     const { gateway, connect, send } = setup();
     const ws = connect();
-    for (const raw of ["not json", "{}", JSON.stringify({ type: "subscribe", symbol: "BTC-USD", timeframe: "2m" })]) {
+    for (const raw of ["not json", "{}", JSON.stringify({ ...SUB, timeframe: "2m" })]) {
       gateway.message(ws, raw);
       expect(errorOf(ws.last())?.code).toBe("invalid_message");
     }
@@ -115,10 +207,10 @@ describe("validation (Req 17.3, 17.4)", () => {
   test("an unknown symbol is refused without touching the engine", () => {
     const { supervisor, connect, send } = setup();
     const ws = connect();
-    send(ws, { type: "subscribe", symbol: "DOGE-USD", timeframe: "1m" });
+    send(ws, { ...SUB, symbol: "NOPE-USD" });
     expect(errorOf(ws.last())?.code).toBe("unknown_symbol");
     expect(supervisor.sent).toEqual([]);
-    expect(ws.topics.has("market:DOGE-USD")).toBe(false);
+    expect(ws.topics.has("market:replay:NOPE-USD")).toBe(false);
   });
 });
 
@@ -128,8 +220,8 @@ describe("subscriptions", () => {
     const a = connect();
     send(a, SUB);
     expect(supervisor.sent).toEqual([SUB]);
-    expect(a.topics.has(candlesTopic("BTC-USD", "1m"))).toBe(true);
-    expect(a.topics.has(marketTopic("BTC-USD"))).toBe(true);
+    expect(a.topics.has(candlesTopic("replay", "BTC-USD", "1m"))).toBe(true);
+    expect(a.topics.has(marketTopic("replay", "BTC-USD"))).toBe(true);
 
     supervisor.emitEvent(SNAPSHOT); // the engine's history answer, published to the topic
     expect(a.last()).toEqual({ type: "event", event: SNAPSHOT });
@@ -138,7 +230,7 @@ describe("subscriptions", () => {
     send(b, SUB);
     expect(supervisor.sent).toEqual([SUB]); // still once
     expect(b.last()).toEqual({ type: "event", event: SNAPSHOT });
-    expect(publisher.published.filter((p) => p.topic === candlesTopic("BTC-USD", "1m"))).toHaveLength(1);
+    expect(publisher.published.filter((p) => p.topic === candlesTopic("replay", "BTC-USD", "1m"))).toHaveLength(1);
 
     send(b, SUB); // duplicate: idempotent, engine not asked again
     expect(supervisor.sent).toEqual([SUB]);
@@ -147,7 +239,7 @@ describe("subscriptions", () => {
   test("the subscription provider reports active keys for the supervisor (Req 15.4)", () => {
     const { supervisor, connect, send } = setup();
     send(connect(), SUB);
-    expect([...supervisor.provider()]).toEqual([{ symbol: "BTC-USD", timeframe: "1m" }]);
+    expect([...supervisor.provider()]).toEqual([{ venue: "replay", symbol: "BTC-USD", timeframe: "1m" }]);
   });
 
   test("the last unsubscribe sends Unsubscribe; market topic stays while another tf remains", () => {
@@ -160,12 +252,12 @@ describe("subscriptions", () => {
 
     send(a, UNSUB);
     expect(supervisor.sent).not.toContainEqual(UNSUB);
-    expect(a.topics.has(candlesTopic("BTC-USD", "1m"))).toBe(false);
-    expect(a.topics.has(marketTopic("BTC-USD"))).toBe(true); // 5m still subscribed
+    expect(a.topics.has(candlesTopic("replay", "BTC-USD", "1m"))).toBe(false);
+    expect(a.topics.has(marketTopic("replay", "BTC-USD"))).toBe(true); // 5m still subscribed
 
     send(a, { ...UNSUB, timeframe: "5m" });
     expect(supervisor.sent).toContainEqual({ ...UNSUB, timeframe: "5m" });
-    expect(a.topics.has(marketTopic("BTC-USD"))).toBe(false);
+    expect(a.topics.has(marketTopic("replay", "BTC-USD"))).toBe(false);
 
     send(b, UNSUB);
     expect(supervisor.sent.filter((c) => JSON.stringify(c) === JSON.stringify(UNSUB))).toHaveLength(1);
@@ -186,19 +278,19 @@ describe("subscriptions", () => {
     const { supervisor, gateway, connect, send } = setup();
     send(connect(), SUB);
     supervisor.emitEvent(SNAPSHOT);
-    supervisor.emitEvent({ type: "trade", symbol: "BTC-USD", price: "1", qty: "1", side: "buy", ts: 1 });
+    supervisor.emitEvent(TRADE("BTC-USD", "1", "1", "buy", 1));
     expect(gateway.market.snapshot("BTC-USD", "1m")).not.toBeNull();
     supervisor.emitClearAccount();
     expect(gateway.market.snapshot("BTC-USD", "1m")).toBeNull();
     expect(gateway.market.quote("BTC-USD")).toBeNull();
-    expect([...supervisor.provider()]).toEqual([{ symbol: "BTC-USD", timeframe: "1m" }]);
+    expect([...supervisor.provider()]).toEqual([{ venue: "replay", symbol: "BTC-USD", timeframe: "1m" }]);
   });
 
   test("engine events feed the market state: trades always, candles only while subscribed", () => {
     const { supervisor, gateway, connect, send } = setup();
     supervisor.emitEvent(SNAPSHOT); // no subscriber yet: not cached
     expect(gateway.market.candles("BTC-USD", "1m")).toBeNull();
-    supervisor.emitEvent({ type: "trade", symbol: "ETH-USD", price: "5", qty: "2", side: "sell", ts: 3 });
+    supervisor.emitEvent(TRADE("ETH-USD", "5", "2", "sell", 3));
     expect(gateway.market.quote("ETH-USD")?.last).toEqual({ price: "5", qty: "2", side: "sell", ts: 3 });
 
     const a = connect();
@@ -272,27 +364,39 @@ describe("authenticate without a token verifier", () => {
 
 describe("engine events → topics (Req 17.6, 17.7)", () => {
   const cases: [Event, string][] = [
-    [SNAPSHOT, "candles:BTC-USD:1m"],
+    [SNAPSHOT, "candles:replay:BTC-USD:1m"],
     [
       {
         type: "indicators",
+        venue: "replay",
         symbol: "BTC-USD",
         timeframe: "1m",
         ts: 1,
         values: { ema: 1.5, sma: null, vwap: null, bb_upper: null, bb_mid: null, bb_lower: null, rsi: 50, atr: null },
       },
-      "candles:BTC-USD:1m",
+      "candles:replay:BTC-USD:1m",
     ],
-    [{ type: "trade", symbol: "ETH-USD", price: "100", qty: "1", side: "buy", ts: 1 }, "market:ETH-USD"],
+    [TRADE("ETH-USD", "100", "1", "buy", 1), "market:replay:ETH-USD"],
     [
-      { type: "book", symbol: "SOL-USD", bids: [], asks: [], spread: null, imbalance_bps: 0, ts: 1 },
-      "market:SOL-USD",
+      {
+        type: "book",
+        venue: "replay",
+        symbol: "SOL-USD",
+        bids: [],
+        asks: [],
+        spread: null,
+        imbalance_bps: 0,
+        synthetic: false,
+        ts: 1,
+      },
+      "market:replay:SOL-USD",
     ],
-    [{ type: "order_ack", account_id: "guest", order_id: "o1", status: "accepted" }, ACCOUNT_TOPIC],
+    [{ type: "order_ack", account_id: "guest", venue: "replay", order_id: "o1", status: "accepted" }, ACCOUNT_TOPIC],
     [
       {
         type: "fill",
         account_id: "guest",
+        venue: "replay",
         order_id: "o1",
         symbol: "BTC-USD",
         side: "buy",
@@ -332,7 +436,7 @@ describe("engine events → topics (Req 17.6, 17.7)", () => {
     const ws = connect();
     supervisor.emitEvent({ type: "heartbeat", ts: 1 });
     supervisor.emitEvent({ type: "pong", id: 1 });
-    supervisor.emitEvent({ type: "error", code: "unknown_symbol", message: "unknown symbol DOGE-USD" });
+    supervisor.emitEvent({ type: "error", code: "unknown_symbol", message: "unknown symbol NOPE-USD" });
     expect(publisher.published).toEqual([]);
     expect(ws.messages().map((m) => m.type)).toEqual(["hello", "session"]);
     expect(logger.lines.some((l) => l.includes("unknown_symbol"))).toBe(true);
@@ -341,7 +445,13 @@ describe("engine events → topics (Req 17.6, 17.7)", () => {
   test("OrderRejected with no known requester goes to the account topic (Req 17.10)", () => {
     const { supervisor, publisher, connect } = setup();
     const ws = connect();
-    const event: Event = { type: "order_rejected", account_id: "guest", order_id: "o1", reason: "unknown order" };
+    const event: Event = {
+      type: "order_rejected",
+      account_id: "guest",
+      venue: "replay",
+      order_id: "o1",
+      reason: "unknown order",
+    };
     supervisor.emitEvent(event);
     expect(publisher.published).toEqual([{ topic: ACCOUNT_TOPIC, message: { type: "event", event } }]);
     expect(ws.last()).toEqual({ type: "event", event });
@@ -360,7 +470,7 @@ describe("engine events → topics (Req 17.6, 17.7)", () => {
     const a = connect();
     const b = connect();
     send(a, SUB);
-    supervisor.emitEvent({ type: "trade", symbol: "BTC-USD", price: "1", qty: "1", side: "sell", ts: 1 });
+    supervisor.emitEvent(TRADE("BTC-USD", "1", "1", "sell", 1));
     expect(a.last()?.type).toBe("event");
     expect(b.messages().map((m) => m.type)).toEqual(["hello", "session"]);
   });
@@ -368,7 +478,7 @@ describe("engine events → topics (Req 17.6, 17.7)", () => {
   test("dispose detaches the supervisor listeners", () => {
     const { supervisor, publisher, gateway } = setup();
     gateway.dispose();
-    supervisor.emitEvent({ type: "order_ack", account_id: "guest", order_id: "o1", status: "accepted" });
+    supervisor.emitEvent({ type: "order_ack", account_id: "guest", venue: "replay", order_id: "o1", status: "accepted" });
     expect(publisher.published).toEqual([]);
   });
 });

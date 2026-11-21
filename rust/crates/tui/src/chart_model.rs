@@ -356,7 +356,7 @@ pub fn format_time(ms: i64, timeframe: Timeframe) -> String {
     let (hour, minute) = (in_day / 3_600, in_day % 3_600 / 60);
     match timeframe {
         Timeframe::M1 | Timeframe::M5 | Timeframe::M15 => format!("{hour:02}:{minute:02}"),
-        Timeframe::H1 | Timeframe::D1 => {
+        Timeframe::H1 | Timeframe::H4 | Timeframe::D1 => {
             let (_, month, day) = civil_from_days(days);
             format!("{month:02}-{day:02} {hour:02}:{minute:02}")
         }

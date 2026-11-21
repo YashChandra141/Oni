@@ -438,6 +438,54 @@ mod tests {
         assert_eq!(bucket_start(TimeMs::MIN, Timeframe::M1), None);
     }
 
+    /// Req 18.1: 4h buckets start at 00, 04, 08, 12, 16, and 20 UTC.
+    #[test]
+    fn h4_buckets_align_to_the_six_utc_hours() {
+        const HOUR: TimeMs = 3_600_000;
+        let day = 1_798_761_600_000; // 2027-01-01T00:00:00Z
+        for h in 0..24 {
+            let ts = day + h * HOUR + 59 * MIN;
+            let expected = day + (h / 4) * 4 * HOUR;
+            assert_eq!(bucket_start(ts, Timeframe::H4), Some(expected), "hour {h}");
+        }
+    }
+
+    /// Req 18.1, 18.2: a 4h bar equals the aggregate of its four 1h bars, and its ring keeps
+    /// at most 500 bars.
+    #[test]
+    fn h4_bar_equals_aggregate_of_its_four_h1_bars() {
+        const HOUR: TimeMs = 3_600_000;
+        let day = 1_798_761_600_000;
+        let mut b = CandleBuilder::default();
+        let prices = [100, 130, 90, 110, 120, 80, 105, 95];
+        for (i, p) in (0..).zip(prices) {
+            trade(&mut b, p, 2, day + i * HOUR + 5 * MIN);
+        }
+        let h1 = b.bars(BTC, Timeframe::H1);
+        let h4 = b.bars(BTC, Timeframe::H4);
+        assert_eq!(h1.len(), 8);
+        assert_eq!(h4.len(), 2);
+        for (i, four) in h1.chunks(4).enumerate() {
+            let (Some(first), Some(last)) = (four.first(), four.last()) else {
+                panic!("empty chunk");
+            };
+            let expected = Bar {
+                t: day + (i as i64) * 4 * HOUR,
+                open: first.open,
+                high: four.iter().map(|x| x.high).max().unwrap(),
+                low: four.iter().map(|x| x.low).min().unwrap(),
+                close: last.close,
+                volume: Qty(four.iter().map(|x| x.volume.0).sum()),
+            };
+            assert_eq!(h4[i], expected, "bar {i}");
+        }
+        // Ring cap.
+        for i in 0..600 {
+            trade(&mut b, 100, 1, day + (10 + i) * 4 * HOUR);
+        }
+        assert_eq!(b.bars(BTC, Timeframe::H4).len(), MAX_BARS);
+    }
+
     #[test]
     fn ohlcv_across_bucket_boundaries() {
         let mut b = CandleBuilder::default();

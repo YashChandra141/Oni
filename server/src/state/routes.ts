@@ -6,11 +6,13 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { instrumentBySymbol } from "../instruments.ts";
-import { TimeframeSchema } from "../protocol.ts";
-import { MAX_SNAPSHOT_BARS, type MarketState } from "./market.ts";
+import { TimeframeSchema, type Venue } from "../protocol.ts";
+import { DEFAULT_MARKET_VENUE, MAX_SNAPSHOT_BARS, type MarketState } from "./market.ts";
 
 export interface MarketRoutesDeps {
   readonly market: Pick<MarketState, "quote" | "candles">;
+  /** Venue the routes read (protocol v3 keys market data by venue). Defaults to `replay`. */
+  readonly venue?: () => Venue;
 }
 
 const CandlesQuerySchema = z.object({
@@ -25,11 +27,12 @@ const CandlesQuerySchema = z.object({
 
 export function marketRoutes(deps: MarketRoutesDeps): Hono {
   const app = new Hono();
+  const venue = deps.venue ?? (() => DEFAULT_MARKET_VENUE);
 
   app.get("/quote/:symbol", (c) => {
     const symbol = c.req.param("symbol");
     if (instrumentBySymbol(symbol) === undefined) return c.json({ error: "unknown_symbol" }, 404);
-    return c.json(deps.market.quote(symbol) ?? { symbol, last: null, book: null });
+    return c.json(deps.market.quote(symbol, venue()) ?? { symbol, last: null, book: null });
   });
 
   app.get("/candles/:symbol", (c) => {
@@ -38,7 +41,7 @@ export function marketRoutes(deps: MarketRoutesDeps): Hono {
     const parsed = CandlesQuerySchema.safeParse({ timeframe: c.req.query("timeframe"), limit: c.req.query("limit") });
     if (!parsed.success) return c.json({ error: "invalid_query" }, 400);
     const { timeframe, limit } = parsed.data;
-    const bars = deps.market.candles(symbol, timeframe, limit ?? MAX_SNAPSHOT_BARS) ?? [];
+    const bars = deps.market.candles(symbol, timeframe, limit ?? MAX_SNAPSHOT_BARS, venue()) ?? [];
     return c.json({ symbol, timeframe, bars });
   });
 

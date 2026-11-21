@@ -270,6 +270,7 @@ pub fn placement_from_action(action: &PreviewAction) -> Option<Placement> {
             side,
             qty,
             kind,
+            ..
         } => {
             let (kind, price) = kind_parts(*kind);
             Some(Placement {
@@ -280,7 +281,8 @@ pub fn placement_from_action(action: &PreviewAction) -> Option<Placement> {
                 qty: *qty,
             })
         }
-        PreviewAction::CancelAll | PreviewAction::FlattenAll => None,
+        // The TUI shows no TWAP plans until task 16.3.
+        PreviewAction::Twap { .. } | PreviewAction::CancelAll | PreviewAction::FlattenAll => None,
     }
 }
 
@@ -360,6 +362,7 @@ impl ConfirmAction {
 pub fn preview_action_label(action: &PreviewAction) -> &'static str {
     match action {
         PreviewAction::Place { .. } => "PLACE PAPER ORDER",
+        PreviewAction::Twap { .. } => "START PAPER TWAP",
         PreviewAction::CancelAll => "CANCEL ALL OPEN ORDERS",
         PreviewAction::FlattenAll => "FLATTEN ALL POSITIONS",
     }
@@ -546,6 +549,7 @@ mod tests {
     fn placements_come_from_place_actions_only() {
         let place = PreviewAction::Place {
             symbol: "BTC-USD".into(),
+            venue: protocol::Venue::Replay,
             side: Side::Sell,
             qty: Qty(5),
             kind: OrderKind::Limit {

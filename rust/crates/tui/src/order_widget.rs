@@ -709,6 +709,7 @@ mod tests {
             apply(
                 &mut app,
                 Event::OrderAck {
+                    venue: protocol::Venue::Replay,
                     account_id: guest(),
                     order_id: OrderId::new(id).unwrap(),
                     status: OrderStatus::Accepted,
@@ -726,6 +727,7 @@ mod tests {
                 text: "BUY BTC-USD 0.1 LMT 64000.00".into(),
                 action: PreviewAction::Place {
                     symbol: "BTC-USD".into(),
+                    venue: protocol::Venue::Replay,
                     side: Side::Buy,
                     qty: Qty(10_000_000),
                     kind: OrderKind::Limit {

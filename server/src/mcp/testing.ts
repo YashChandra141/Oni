@@ -7,11 +7,16 @@ import type { FetchLike, WebSocketLike } from "./client.ts";
 
 export const HELLO: ServerMessage = {
   type: "hello",
-  protocol_version: 2,
+  protocol_version: 3,
   data_mode: "replay",
-  venue: null,
+  live_venues: [],
+  venue_status: [],
+  default_venue: "replay",
+  starting_balance: "1000000000000000",
   engine_running: true,
-  instruments: INSTRUMENTS.map((i) => ({ ...i })),
+  instruments: INSTRUMENTS.map((i) => ({ ...i, venues: [...i.venues] })),
+  providers: [],
+  news_enabled: false,
 };
 
 export function session(accountId = "guest", address: string | null = null): ServerMessage {
@@ -121,7 +126,7 @@ export function previewReply(requestId: string, previewId = "p1"): ServerMessage
     preview: {
       preview_id: previewId,
       text: "BUY BTC-USD 0.01",
-      action: { type: "place", symbol: "BTC-USD", side: "buy", qty: "1000000", kind: { type: "market" } },
+      action: { type: "place", symbol: "BTC-USD", venue: "replay", side: "buy", qty: "1000000", kind: { type: "market" } },
       expires_at: 1_700_000_030_000,
     },
   };

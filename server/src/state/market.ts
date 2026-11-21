@@ -19,7 +19,14 @@
 //
 // Pure: no I/O, no timers, no clock. Every getter returns copies.
 
-import type { Bar, Event, IndicatorPoint, Level, Price, Qty, Side, Timeframe } from "../protocol.ts";
+import type { Bar, Event, IndicatorPoint, Level, Price, Qty, Side, Timeframe, Venue } from "../protocol.ts";
+
+/**
+ * Venue assumed by a getter called without one. Every production caller passes the venue
+ * explicitly (the order's venue, the client's venue, or the configured default); the fallback
+ * exists for the replay fixtures, whose events are tagged `replay` (protocol v3).
+ */
+export const DEFAULT_MARKET_VENUE: Venue = "replay";
 
 /** Most bars kept per (symbol, timeframe) (Req 8.7: up to 500 of the most recent candles). */
 export const MAX_SNAPSHOT_BARS = 500;
@@ -91,6 +98,7 @@ const TIMEFRAME_MS: Record<Timeframe, number> = {
   "5m": 300_000,
   "15m": 900_000,
   "1h": 3_600_000,
+  "4h": 14_400_000,
   "1d": 86_400_000,
 };
 
@@ -108,9 +116,13 @@ function normalizePoints(points: readonly IndicatorPoint[], max: number = MAX_SN
   return sorted.length > max ? sorted.slice(sorted.length - max) : sorted;
 }
 
-function candleKey(symbol: string, timeframe: Timeframe): string {
-  // Timeframes never contain "|", so the key is unambiguous.
-  return `${timeframe}|${symbol}`;
+function candleKey(venue: Venue, symbol: string, timeframe: Timeframe): string {
+  // Venues and timeframes never contain "|", so the key is unambiguous.
+  return `${venue}|${timeframe}|${symbol}`;
+}
+
+function pairKey(venue: Venue, symbol: string): string {
+  return `${venue}|${symbol}`;
 }
 
 export class MarketState {
@@ -125,10 +137,15 @@ export class MarketState {
   apply(event: Event): void {
     switch (event.type) {
       case "trade":
-        this.#trades.set(event.symbol, { price: event.price, qty: event.qty, side: event.side, ts: event.ts });
+        this.#trades.set(pairKey(event.venue, event.symbol), {
+          price: event.price,
+          qty: event.qty,
+          side: event.side,
+          ts: event.ts,
+        });
         return;
       case "book":
-        this.#books.set(event.symbol, {
+        this.#books.set(pairKey(event.venue, event.symbol), {
           bid: bestLevel(event.bids, "bid"),
           ask: bestLevel(event.asks, "ask"),
           spread: event.spread,
@@ -147,13 +164,13 @@ export class MarketState {
     }
   }
 
-  lastTrade(symbol: string): LastTrade | null {
-    const trade = this.#trades.get(symbol);
+  lastTrade(symbol: string, venue: Venue = DEFAULT_MARKET_VENUE): LastTrade | null {
+    const trade = this.#trades.get(pairKey(venue, symbol));
     return trade === undefined ? null : { ...trade };
   }
 
-  topOfBook(symbol: string): TopOfBook | null {
-    const book = this.#books.get(symbol);
+  topOfBook(symbol: string, venue: Venue = DEFAULT_MARKET_VENUE): TopOfBook | null {
+    const book = this.#books.get(pairKey(venue, symbol));
     if (book === undefined) return null;
     return {
       ...book,
@@ -163,9 +180,9 @@ export class MarketState {
   }
 
   /** Last trade and top of book for a symbol (Req 24.2), or null when neither is known yet. */
-  quote(symbol: string): Quote | null {
-    const last = this.lastTrade(symbol);
-    const book = this.topOfBook(symbol);
+  quote(symbol: string, venue: Venue = DEFAULT_MARKET_VENUE): Quote | null {
+    const last = this.lastTrade(symbol, venue);
+    const book = this.topOfBook(symbol, venue);
     if (last === null && book === null) return null;
     return { symbol, last, book };
   }
@@ -175,22 +192,27 @@ export class MarketState {
    * cached for the key. `limit` must be an integer from 1 to 500; callers validate user input
    * with Zod first, so anything else is a programming error and throws RangeError.
    */
-  candles(symbol: string, timeframe: Timeframe, limit: number = MAX_SNAPSHOT_BARS): Bar[] | null {
+  candles(
+    symbol: string,
+    timeframe: Timeframe,
+    limit: number = MAX_SNAPSHOT_BARS,
+    venue: Venue = DEFAULT_MARKET_VENUE,
+  ): Bar[] | null {
     if (!Number.isInteger(limit) || limit < 1 || limit > MAX_SNAPSHOT_BARS) {
       throw new RangeError(`limit must be an integer from 1 to ${MAX_SNAPSHOT_BARS}`);
     }
-    const bars = this.#candles.get(candleKey(symbol, timeframe));
+    const bars = this.#candles.get(candleKey(venue, symbol, timeframe));
     if (bars === undefined) return null;
     return bars.slice(-limit).map((b) => ({ ...b }));
   }
 
   /** The cached bars as a `Candle { snapshot: true }` event for a new subscriber, or null. */
-  snapshot(symbol: string, timeframe: Timeframe): CandleEvent | null {
-    const bars = this.candles(symbol, timeframe);
+  snapshot(symbol: string, timeframe: Timeframe, venue: Venue = DEFAULT_MARKET_VENUE): CandleEvent | null {
+    const bars = this.candles(symbol, timeframe, MAX_SNAPSHOT_BARS, venue);
     if (bars === null) return null;
-    const event: CandleEvent = { type: "candle", symbol, timeframe, snapshot: true, bars };
+    const event: CandleEvent = { type: "candle", venue, symbol, timeframe, snapshot: true, bars };
     // `indicators` is left off when there are no points, so a bars-only snapshot stays bars-only.
-    const points = this.#indicators.get(candleKey(symbol, timeframe));
+    const points = this.#indicators.get(candleKey(venue, symbol, timeframe));
     if (points !== undefined && points.length > 0) {
       event.indicators = points.map((p) => ({ t: p.t, values: { ...p.values } }));
     }
@@ -198,9 +220,9 @@ export class MarketState {
   }
 
   /** Forgets the cached candles of one key (its last subscriber left, so the engine stops updating it). */
-  dropCandles(symbol: string, timeframe: Timeframe): void {
-    this.#candles.delete(candleKey(symbol, timeframe));
-    this.#indicators.delete(candleKey(symbol, timeframe));
+  dropCandles(symbol: string, timeframe: Timeframe, venue: Venue = DEFAULT_MARKET_VENUE): void {
+    this.#candles.delete(candleKey(venue, symbol, timeframe));
+    this.#indicators.delete(candleKey(venue, symbol, timeframe));
   }
 
   /** Forgets everything (engine exit, Req 15.7). */
@@ -213,7 +235,7 @@ export class MarketState {
 
   /** A snapshot replaces the cached bars; a live update is merged into an existing snapshot. */
   #applyCandle(event: CandleEvent): void {
-    const key = candleKey(event.symbol, event.timeframe);
+    const key = candleKey(event.venue, event.symbol, event.timeframe);
     if (event.snapshot) {
       const bars: Bar[] = [];
       mergeBars(bars, event.bars);
@@ -227,7 +249,7 @@ export class MarketState {
 
   /** A live indicators event is merged only into a key that already has a cached snapshot. */
   #applyIndicators(event: Extract<Event, { type: "indicators" }>): void {
-    const points = this.#indicators.get(candleKey(event.symbol, event.timeframe));
+    const points = this.#indicators.get(candleKey(event.venue, event.symbol, event.timeframe));
     if (points === undefined) return;
     const t = floorToTimeframe(event.ts, event.timeframe);
     const next = normalizePoints([...points, { t, values: event.values }]);

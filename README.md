@@ -3,7 +3,7 @@
 A keyboard-and-mouse crypto **paper-trading** terminal with a web UI and a terminal UI, built for the Kiroween 2026 hackathon (Frankenstein category).
 
 - **Rust engine** (sidecar process): market data, order book, candles, indicators, paper matcher, P&L
-- **Bun server**: WebSocket gateway, risk checks, order router, journal, plain-English orders, MCP server
+- **Bun server**: WebSocket gateway, risk checks, order router, plain-English orders, MCP server
 - **Next.js web UI** and **Ratatui TUI** with the same charts and panels, on Windows and macOS
 
 All trading is simulated. No real orders are placed and no real money is used.
@@ -13,7 +13,6 @@ All trading is simulated. No real orders are placed and no real money is used.
 - [Repository layout](#repository-layout)
 - [Deploy on Render](#deploy-on-render)
 - [Free-plan limits](#free-plan-limits)
-- [Neon database setup](#neon-database-setup)
 - [Accounts, wallets, pairing, and data venues](#accounts-wallets-pairing-and-data-venues)
   - [Guest and wallet accounts](#guest-and-wallet-accounts)
   - [Sign in with a wallet (web UI)](#sign-in-with-a-wallet-web-ui)
@@ -50,12 +49,8 @@ The repository contains a Render Blueprint, `render.yaml`, that defines two serv
 
 | Variable | Where it comes from |
 |---|---|
-| `DATABASE_URL` | You set it in the dashboard: the pooled Postgres connection string (see [Neon database setup](#neon-database-setup)). |
-| `DIRECT_URL` | You set it in the dashboard: the direct (non-pooled) connection string. |
 | `OPENAI_API_KEY` | You set it in the dashboard. Optional. Without it, plain-English orders (`?` prefix) are disabled. |
 | `SESSION_SECRET` | Render generates it (`generateValue: true`). Do not set it yourself. |
-
-Placeholders only, never real values: `DATABASE_URL=postgresql://USER:PASSWORD@HOST/DB?sslmode=require`.
 
 The Blueprint sets everything else (`NODE_ENV=production`, `DATA_MODE=replay`, `LIVE_VENUE=backpack`,
 `KILL_SWITCH=false`, `PORT=10000`, `ENGINE_PATH`).
@@ -79,10 +74,8 @@ a URL:
 `NEXT_PUBLIC_*` values are baked in at build time, so redeploy `oni-web` after changing them. The TUI
 defaults to `wss://oni-server.onrender.com/ws`; with other names, pass `--server` (see below).
 
-Database migrations run when the server container starts (`server/scripts/start.ts` runs
-`prisma migrate deploy` over `DIRECT_URL`). There is no separate migration step to run. If the
-database is unreachable at start, the server still starts, reports `db: "down"` on `/health`, and
-retries in the background.
+There is no database service and no migration step. Orders, fills, and rejections live in memory
+for the current engine run only; they reset when the engine restarts.
 
 ## Free-plan limits
 
@@ -92,63 +85,8 @@ The hosted demo runs on Render's free plan:
   **1 minute** to wake it. Open the web UI early, or wait for the connection to come back.
 - When the server sleeps and restarts, the engine restarts too, so **every paper account resets**
   (positions and open orders go back to flat).
-- The **journal persists** in Neon Postgres across server restarts. The history of orders, fills, and
-  rejections is still there after a wake-up. Only the paper accounts reset.
-
-## Neon database setup
-
-The journal (orders, fills, rejections) is stored in Postgres. The hosted demo uses
-[Neon](https://neon.tech) on the Free plan.
-
-1. Create a Neon **Free** project.
-2. In the project's **Connect** dialog, copy two connection strings:
-   - the **pooled** string (the host contains `-pooler`) is `DATABASE_URL`. The server uses it at runtime.
-   - the **direct** string (no `-pooler` in the host) is `DIRECT_URL`. Prisma Migrate uses it.
-3. Keep `sslmode=require` in both strings. Placeholders look like this:
-
-   ```sh
-   DATABASE_URL=postgresql://USER:PASSWORD@ep-xxxx-pooler.REGION.aws.neon.tech/neondb?sslmode=require
-   DIRECT_URL=postgresql://USER:PASSWORD@ep-xxxx.REGION.aws.neon.tech/neondb?sslmode=require
-   ```
-
-4. For local runs, paste both into `server/.env` (copy `server/.env.example`). `.env` is gitignored.
-   For Render, paste both into the dashboard when the Blueprint asks for them. Treat each whole
-   string as a secret, not only the password. Never commit either one.
-
-### Migrations
-
-When the server container starts, `server/scripts/start.ts` applies pending Migrations with
-`prisma migrate deploy` over `DIRECT_URL`, then starts the server. You do not run a migration step
-for a deploy.
-
-`bunx prisma migrate dev`, run in `server/`, creates a new Migration after a schema change. Use it
-only against a development database (for example a Neon dev branch), never against production.
-
-### Local Postgres tests (optional)
-
-Postgres tests run only when `TEST_DATABASE_URL` is set, so `bun run check` needs no database. To run
-them, create a Neon dev branch and set `TEST_DATABASE_URL` to that branch's direct URL. Apply the
-Migrations to the branch first (`prisma migrate deploy` with `DIRECT_URL` set to the branch URL for
-that one command). `TEST_DATABASE_URL` must differ from `DATABASE_URL` and `DIRECT_URL`, or the
-tests refuse to run.
-
-### Adapter choice
-
-The server picks the Prisma driver adapter from the `DATABASE_URL` host: a host ending in
-`.neon.tech` uses `@prisma/adapter-neon`, any other host uses `@prisma/adapter-pg`. Set
-`DB_ADAPTER=pg` to force the plain Postgres adapter, for example for local Docker Postgres or CI.
-
-### Without a database
-
-Outside production, if `DATABASE_URL` is unset, the server keeps the journal in memory and logs a
-warning. The journal is lost on restart. With `NODE_ENV=production`, both `DATABASE_URL` and
-`DIRECT_URL` are required.
-
-### Neon Free plan notes
-
-- Neon scales a database to zero after 5 minutes without activity. The first query after that wakes
-  it, which takes a few hundred milliseconds.
-- The data stays in place while the compute is suspended.
+- Orders, fills, and rejections live in memory for the current engine run only; they reset when the
+  engine restarts.
 
 ## Accounts, wallets, pairing, and data venues
 
@@ -161,7 +99,7 @@ Signing in with a wallet gives you your own paper account, keyed by your address
 Your orders and positions are separate from every other account.
 
 Every account resets when the engine restarts (including a Render wake-up). Positions and open
-orders go back to flat, and nothing is restored from the journal. The journal keeps the history.
+orders go back to flat, and nothing is stored or restored.
 
 ### Sign in with a wallet (web UI)
 
@@ -346,12 +284,9 @@ Prerequisites:
 - Rust 1.94 with `clippy` and `rustfmt` (edition 2024). On Windows the release builds use the MSVC
   toolchain.
 - [Bun](https://bun.sh) 1.4.4.
-- Optional: a Postgres database for the persistent journal. Without `DATABASE_URL` outside
-  production, the server keeps the journal in memory.
 
 ```sh
 bun install                 # JavaScript dependencies for server, web, and shared
-bun run db:generate         # generate the Prisma Client (needs no database)
 cargo build --release --manifest-path rust/Cargo.toml   # builds tui and engine
 bun run check               # fmt, clippy, Rust tests, typecheck, bun tests
 ```

@@ -46,7 +46,13 @@ function setup() {
   return { clock, tokens, supervisor, publisher, logger, gateway, connect, auth };
 }
 
-const ack = (account_id: string): Event => ({ type: "order_ack", account_id, order_id: "o1", status: "accepted" });
+const ack = (account_id: string): Event => ({
+  type: "order_ack",
+  account_id,
+  venue: "replay",
+  order_id: "o1",
+  status: "accepted",
+});
 const sessions = (ws: FakeSocket) => ws.messages().filter((m) => m.type === "session");
 const noticeKinds = (ws: FakeSocket) =>
   ws.messages().flatMap((m: ServerMessage) => (m.type === "notice" ? [m.kind] : []));
@@ -58,7 +64,7 @@ describe("routeAccountEvent (pure)", () => {
   });
 
   test("OrderRejected goes to the requester when known, else the account topic", () => {
-    const e: Event = { type: "order_rejected", account_id: "w_x", order_id: "o1", reason: "r" };
+    const e: Event = { type: "order_rejected", account_id: "w_x", venue: "replay", order_id: "o1", reason: "r" };
     expect(routeAccountEvent(e, { requester: "c1" })).toEqual({ toConnection: "c1" });
     expect(routeAccountEvent(e, {})).toEqual({ topic: "account:w_x" });
     expect(routeAccountEvent(e, { requester: null })).toEqual({ topic: "account:w_x" });
@@ -245,7 +251,13 @@ describe("account routing through the gateway", () => {
     await auth(a, token);
     await auth(b, token);
     gateway.pendingRequests.set("o1", "c1");
-    const e: Event = { type: "order_rejected", account_id: `w_${ADDRESS}`, order_id: "o1", reason: "risk" };
+    const e: Event = {
+      type: "order_rejected",
+      account_id: `w_${ADDRESS}`,
+      venue: "replay",
+      order_id: "o1",
+      reason: "risk",
+    };
     supervisor.emitEvent(e);
     expect(a.last()).toEqual({ type: "event", event: e });
     expect(b.last()).toMatchObject({ type: "session" });
@@ -260,7 +272,13 @@ describe("account routing through the gateway", () => {
     await auth(b, token);
     gateway.pendingRequests.set("o1", "c1");
     gateway.close(a);
-    const e: Event = { type: "order_rejected", account_id: `w_${ADDRESS}`, order_id: "o1", reason: "risk" };
+    const e: Event = {
+      type: "order_rejected",
+      account_id: `w_${ADDRESS}`,
+      venue: "replay",
+      order_id: "o1",
+      reason: "risk",
+    };
     supervisor.emitEvent(e);
     expect(b.last()).toEqual({ type: "event", event: e });
   });

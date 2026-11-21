@@ -72,6 +72,9 @@ pub fn granularity(timeframe: Timeframe) -> &'static str {
         Timeframe::M5 => "FIVE_MINUTE",
         Timeframe::M15 => "FIFTEEN_MINUTE",
         Timeframe::H1 => "ONE_HOUR",
+        // Coinbase has no 4-hour granularity. This name is not accepted by the API, so a
+        // history request for H4 fails with a feed error instead of returning wrong bars.
+        Timeframe::H4 => "FOUR_HOUR",
         Timeframe::D1 => "ONE_DAY",
     }
 }
@@ -734,6 +737,7 @@ mod tests {
                 "FIVE_MINUTE",
                 "FIFTEEN_MINUTE",
                 "ONE_HOUR",
+                "FOUR_HOUR",
                 "ONE_DAY"
             ]
         );

@@ -31,33 +31,38 @@ const bar = { t: 1_733_200_000_000, open: "6400000", high: "6400100", low: "6399
 
 const trade: Extract<Event, { type: "trade" }> = {
   type: "trade",
+  venue: "coinbase",
   symbol: "BTC-USD",
   price: "6400000",
   qty: "10000000",
   side: "buy",
+  synthetic: false,
   ts: 1_733_200_000_000,
 };
 
 const EVENTS: Event[] = [
-  { type: "candle", symbol: "BTC-USD", timeframe: "1m", snapshot: true, bars: [bar] },
-  { type: "candle", symbol: "ETH-USD", timeframe: "1d", snapshot: false, bars: [] },
+  { type: "candle", venue: "coinbase", symbol: "BTC-USD", timeframe: "1m", snapshot: true, bars: [bar] },
+  { type: "candle", venue: "replay", symbol: "ETH-USD", timeframe: "4h", snapshot: false, bars: [] },
   trade,
   {
     type: "book",
+    venue: "backpack",
     symbol: "SOL-USD",
     bids: [{ price: "23000", qty: "500000000" }],
     asks: [{ price: "23001", qty: "100000000" }],
     spread: "1",
     imbalance_bps: -10_000,
+    synthetic: false,
     ts: 1,
   },
-  { type: "book", symbol: "SOL-USD", bids: [], asks: [], spread: null, imbalance_bps: 0, ts: 0 },
-  { type: "indicators", symbol: "BTC-USD", timeframe: "15m", ts: 2, values },
-  { type: "order_ack", account_id: "guest", order_id: "ord-1", status: "accepted" },
-  { type: "order_rejected", account_id: WALLET_ACCOUNT, order_id: "ord_2", reason: "unknown order" },
+  { type: "book", venue: "jupiter", symbol: "SOL-USD", bids: [], asks: [], spread: null, imbalance_bps: 0, synthetic: true, ts: 0 },
+  { type: "indicators", venue: "coinbase", symbol: "BTC-USD", timeframe: "15m", ts: 2, values },
+  { type: "order_ack", account_id: "guest", venue: "replay", order_id: "ord-1", status: "accepted" },
+  { type: "order_rejected", account_id: WALLET_ACCOUNT, venue: "raydium", order_id: "ord_2", reason: "unknown order" },
   {
     type: "fill",
     account_id: "guest",
+    venue: "coinbase",
     order_id: "A1",
     symbol: "BTC-USD",
     side: "sell",
@@ -80,12 +85,40 @@ const EVENTS: Event[] = [
   { type: "heartbeat", ts: 1_733_200_000_000 },
   { type: "pong", id: 7 },
   { type: "error", code: "invalid_json", message: "expected value at line 1 column 1" },
+  {
+    type: "ticker24h",
+    symbol: "BTC-USD",
+    venue: "coinbase",
+    ticker: { open: "1", high: "2", low: "1", last: "2", volume: "5", change_bps: 10_000, partial: true },
+    synthetic: false,
+    ts: 1,
+  },
+  { type: "venue_status", venue: "jupiter", status: "down", ts: 1 },
+  { type: "pair_status", venue: "raydium", symbol: "JUP-USD", health: "stale", ts: 1 },
+  { type: "reference_venue", symbol: "BTC-USD", venue: "coinbase" },
+  { type: "balance", account_id: "guest", paper_balance: "1000", free_balance: "900", equity: "1001", ts: 1 },
 ];
 
 const CLIENT_MESSAGES: ClientMessage[] = [
-  { type: "subscribe", symbol: "BTC-USD", timeframe: "5m" },
-  { type: "unsubscribe", symbol: "BTC-USD", timeframe: "1h" },
-  { type: "command_text", request_id: "r1", text: "BUY BTC 0.1 LMT 64000" },
+  { type: "subscribe", venue: "replay", symbol: "BTC-USD", timeframe: "5m" },
+  { type: "unsubscribe", venue: "coinbase", symbol: "BTC-USD", timeframe: "1h" },
+  { type: "subscribe_ticker", symbol: "BTC-USD", venue: "jupiter" },
+  { type: "unsubscribe_ticker", symbol: "BTC-USD", venue: "jupiter" },
+  { type: "command_text", request_id: "r1", text: "BUY BTC 0.1 LMT 64000", venue: "backpack" },
+  { type: "cancel_twap", request_id: "r7", twap_id: "t1" },
+  { type: "set_provider", provider: "anthropic" },
+  {
+    type: "ai_request",
+    request_id: "r8",
+    action: "analyze",
+    text: "",
+    symbol: "BTC-USD",
+    timeframe: "1h",
+    venue: "coinbase",
+  },
+  { type: "ai_cancel", request_id: "r8" },
+  { type: "subscribe_news" },
+  { type: "unsubscribe_news" },
   { type: "confirm", request_id: "r2", preview_id: "p1" },
   { type: "discard", preview_id: "p1" },
   { type: "cancel", request_id: "r3", order_id: "ord-1" },
@@ -97,12 +130,24 @@ const CLIENT_MESSAGES: ClientMessage[] = [
 ];
 
 const COMMANDS: Command[] = [
-  { type: "subscribe", symbol: "BTC-USD", timeframe: "1m" },
-  { type: "unsubscribe", symbol: "BTC-USD", timeframe: "1m" },
-  { type: "place_order", account_id: "guest", order_id: "o1", symbol: "BTC-USD", side: "buy", qty: "1", kind: { type: "market" } },
+  { type: "subscribe", venue: "replay", symbol: "BTC-USD", timeframe: "1m" },
+  { type: "unsubscribe", venue: "replay", symbol: "BTC-USD", timeframe: "1m" },
+  { type: "subscribe_ticker", symbol: "BTC-USD", venue: "coinbase" },
+  { type: "unsubscribe_ticker", symbol: "BTC-USD", venue: "coinbase" },
+  {
+    type: "place_order",
+    account_id: "guest",
+    venue: "replay",
+    order_id: "o1",
+    symbol: "BTC-USD",
+    side: "buy",
+    qty: "1",
+    kind: { type: "market" },
+  },
   {
     type: "place_order",
     account_id: WALLET_ACCOUNT,
+    venue: "backpack",
     order_id: "o2",
     symbol: "BTC-USD",
     side: "sell",
@@ -112,6 +157,7 @@ const COMMANDS: Command[] = [
   {
     type: "place_order",
     account_id: "guest",
+    venue: "raydium",
     order_id: "o3",
     symbol: "BTC-USD",
     side: "buy",
@@ -128,21 +174,107 @@ const COMMANDS: Command[] = [
 const SERVER_MESSAGES: ServerMessage[] = [
   {
     type: "hello",
-    protocol_version: 2,
+    protocol_version: 3,
     data_mode: "replay",
-    venue: null,
+    live_venues: [],
+    venue_status: [],
+    default_venue: "replay",
+    starting_balance: "1000000000000000",
     engine_running: true,
-    instruments: [{ symbol: "BTC-USD", short: "BTC", price_decimals: 2, qty_decimals: 8 }],
+    instruments: [
+      { symbol: "BTC-USD", short: "BTC", price_decimals: 2, qty_decimals: 8, venues: ["coinbase", "backpack"] },
+    ],
+    providers: [],
+    news_enabled: false,
   },
-  { type: "hello", protocol_version: 2, data_mode: "live", venue: "backpack", engine_running: false, instruments: [] },
+  {
+    type: "hello",
+    protocol_version: 3,
+    data_mode: "live",
+    live_venues: ["backpack"],
+    venue_status: [{ venue: "backpack", status: "connected" }],
+    default_venue: "backpack",
+    starting_balance: "1000000000000000",
+    engine_running: false,
+    instruments: [],
+    providers: [{ id: "openai", model: "gpt", reason: null }],
+    news_enabled: true,
+  },
   { type: "event", event: { type: "heartbeat", ts: 5 } },
+  { type: "event_batch", events: [{ type: "pong", id: 1, emit_us: 5 }] },
+  {
+    type: "providers",
+    available: [{ id: "ollama", model: "m", reason: null }],
+    default: "ollama",
+    selected: null,
+  },
+  {
+    type: "analysis",
+    request_id: "r9",
+    provider: "openai",
+    model: "m",
+    analysis: {
+      symbol: "BTC-USD",
+      summary: "s",
+      bias: "long",
+      confidence_bps: 7500,
+      rationale: ["a"],
+      suggested_order: { side: "buy", qty: "1", kind: { type: "market" } },
+    },
+    preview: null,
+    preview_error: { message: "bad", position: 2 },
+  },
+  {
+    type: "scan_result",
+    request_id: "r9",
+    items: [{ symbol: "ETH-USD", bias: "neutral", confidence_bps: 1, summary: "x" }],
+  },
+  { type: "strategy_draft", request_id: "r9", text: "draft, not executed" },
+  { type: "ai_error", request_id: "r9", reason: "timeout", message: "slow" },
+  { type: "news", available: false, items: [], updated_at: null },
+  {
+    type: "twap",
+    twap_id: "1",
+    symbol: "SOL-USD",
+    side: "sell",
+    venue: "coinbase",
+    slices: 4,
+    sent: 1,
+    status: "active",
+    reason: null,
+  },
+  {
+    type: "preview",
+    request_id: "r5",
+    preview: {
+      preview_id: "p5",
+      text: "TWAP",
+      action: {
+        type: "twap",
+        symbol: "BTC-USD",
+        side: "buy",
+        venue: "backpack",
+        total_qty: "10",
+        slices: 5,
+        interval_s: 60,
+      },
+      expires_at: 1,
+    },
+  },
   {
     type: "preview",
     request_id: "r1",
     preview: {
       preview_id: "p1",
       text: "BUY BTC-USD 0.1 LMT 64000.00",
-      action: { type: "place", symbol: "BTC-USD", side: "buy", qty: "10000000", kind: { type: "limit", price: "6400000" } },
+      action: {
+        type: "place",
+        symbol: "BTC-USD",
+        venue: "replay",
+        side: "buy",
+        qty: "10000000",
+        kind: { type: "limit", price: "6400000" },
+      },
       expires_at: 1_733_200_060_000,
     },
   },
@@ -164,26 +296,26 @@ function withField(msg: object, key: string, value: unknown): string {
 describe("valid messages", () => {
   test("every Event variant parses from its JSON line to an equal value", () => {
     const tags = new Set(EVENTS.map((e) => e.type));
-    expect(tags.size).toBe(11); // Req 1.2: all eleven variants
+    expect(tags.size).toBe(16); // Req 1.2, 15.1, 16.4, 18.1: every v3 variant
     for (const event of EVENTS) {
       expect(parseEventLine(JSON.stringify(event))).toEqual({ ok: true, value: event });
     }
   });
 
   test("every ClientMessage variant parses to an equal value", () => {
-    expect(new Set(CLIENT_MESSAGES.map((m) => m.type)).size).toBe(11); // Req 1.7
+    expect(new Set(CLIENT_MESSAGES.map((m) => m.type)).size).toBe(19); // Req 1.7, 34.1
     for (const msg of CLIENT_MESSAGES) {
       expect(parseClientMessage(JSON.stringify(msg))).toEqual({ ok: true, value: msg });
     }
   });
 
   test("every Command variant and OrderKind parses", () => {
-    expect(new Set(COMMANDS.map((c) => c.type)).size).toBe(8); // Req 1.1
+    expect(new Set(COMMANDS.map((c) => c.type)).size).toBe(10); // Req 1.1, 15.1
     for (const cmd of COMMANDS) expect(CommandSchema.parse(cmd)).toEqual(cmd);
   });
 
   test("every ServerMessage variant and PreviewAction parses", () => {
-    expect(new Set(SERVER_MESSAGES.map((m) => m.type)).size).toBe(7); // Req 1.8
+    expect(new Set(SERVER_MESSAGES.map((m) => m.type)).size).toBe(15); // Req 1.8, 34.1
     for (const msg of SERVER_MESSAGES) expect(ServerMessageSchema.parse(msg)).toEqual(msg);
   });
 
@@ -235,7 +367,7 @@ describe("rejected messages", () => {
 
   test("bad timeframes", () => {
     for (const tf of ["1M", "2m", "1w", "", 1]) {
-      expect(parseClientMessage(JSON.stringify({ type: "subscribe", symbol: "BTC-USD", timeframe: tf })).ok).toBe(false);
+      expect(parseClientMessage(JSON.stringify({ type: "subscribe", venue: "replay", symbol: "BTC-USD", timeframe: tf })).ok).toBe(false);
     }
   });
 
@@ -263,11 +395,16 @@ describe("rejected messages", () => {
 
   test("bad venues and notice kinds", () => {
     const hello = SERVER_MESSAGES[1];
-    for (const venue of ["Backpack", "binance", "", 1]) {
-      expect(ServerMessageSchema.safeParse({ ...hello, venue }).success).toBe(false);
+    for (const venue of ["Backpack", "binance", "bybit", "", 1, null]) {
+      expect(ServerMessageSchema.safeParse({ ...hello, default_venue: venue }).success).toBe(false);
+      expect(CommandSchema.safeParse({ ...COMMANDS[0], venue }).success).toBe(false);
+      expect(EventSchema.safeParse({ ...trade, venue }).success).toBe(false);
     }
-    const { venue: _, ...noVenue } = hello as Extract<ServerMessage, { type: "hello" }>;
+    const { default_venue: _, ...noVenue } = hello as Extract<ServerMessage, { type: "hello" }>;
     expect(ServerMessageSchema.safeParse(noVenue).success).toBe(false);
+    // The venue of a subscription is required; an unknown provider id is rejected.
+    expect(parseClientMessage('{"type":"subscribe","symbol":"BTC-USD","timeframe":"1m"}').ok).toBe(false);
+    expect(parseClientMessage('{"type":"set_provider","provider":"gemini"}').ok).toBe(false);
     expect(ServerMessageSchema.safeParse({ type: "notice", kind: "signed_in", message: "" }).success).toBe(false);
   });
 
@@ -378,33 +515,57 @@ const GOLDEN_COMMAND_LINES = [
   '{"type":"cancel_all","account_id":"guest"}',
   '{"type":"reset_account","account_id":"w_abc"}',
   '{"type":"cancel","account_id":"guest","order_id":"o-1"}',
-  '{"type":"place_order","account_id":"guest","order_id":"o-1","symbol":"ETH-USD","side":"sell","qty":"250","kind":{"type":"limit","price":"310000"}}',
+  '{"type":"place_order","account_id":"guest","venue":"backpack","order_id":"o-1","symbol":"ETH-USD","side":"sell","qty":"250","kind":{"type":"limit","price":"310000"}}',
+  '{"type":"subscribe","venue":"jupiter","symbol":"SOL-USD","timeframe":"4h"}',
+  '{"type":"unsubscribe","venue":"replay","symbol":"SOL-USD","timeframe":"1m"}',
+  '{"type":"subscribe_ticker","symbol":"BTC-USD","venue":"raydium"}',
+  '{"type":"unsubscribe_ticker","symbol":"BTC-USD","venue":"coinbase"}',
   `{"type":"cancel_all","account_id":"${MAX_ACCOUNT_ID}"}`,
   `{"type":"reset_account","account_id":"${WALLET_ACCOUNT}"}`,
 ];
 
 const GOLDEN_EVENT_LINES = [
-  '{"type":"order_ack","account_id":"guest","order_id":"o-1","status":"canceled"}',
-  '{"type":"order_rejected","account_id":"w_abc","order_id":"o-1","reason":"kill_switch"}',
-  '{"type":"fill","account_id":"guest","order_id":"o-1","symbol":"BTC-USD","side":"buy","price":"6400000","qty":"10","fee":"640","remaining":"0","ts":2}',
+  '{"type":"order_ack","account_id":"guest","venue":"replay","order_id":"o-1","status":"canceled"}',
+  '{"type":"order_rejected","account_id":"w_abc","venue":"coinbase","order_id":"o-1","reason":"kill_switch"}',
+  '{"type":"fill","account_id":"guest","venue":"backpack","order_id":"o-1","symbol":"BTC-USD","side":"buy","price":"6400000","qty":"10","fee":"640","remaining":"0","ts":2}',
+  '{"type":"trade","venue":"jupiter","symbol":"SOL-USD","price":"1","qty":"1","side":"buy","synthetic":true,"ts":1}',
+  '{"type":"ticker24h","symbol":"BTC-USD","venue":"coinbase","ticker":{"open":"1","high":"2","low":"1","last":"2","volume":null,"change_bps":-5,"partial":false},"synthetic":false,"ts":1}',
+  '{"type":"venue_status","venue":"raydium","status":"stale","ts":1}',
+  '{"type":"pair_status","venue":"raydium","symbol":"JUP-USD","health":"suspect","ts":1}',
+  '{"type":"reference_venue","symbol":"BTC-USD","venue":null}',
+  '{"type":"balance","account_id":"guest","paper_balance":"1","free_balance":"1","equity":"1","ts":1}',
   '{"type":"position","account_id":"guest","symbol":"BTC-USD","qty":"-10","avg_entry":"6400000","realized":"0","unrealized":"9223372036854775807"}',
   '{"type":"position","account_id":"guest","symbol":"ETH-USD","qty":"0","avg_entry":null,"realized":"0","unrealized":"0"}',
 ];
 
 const GOLDEN_CLIENT_LINES = [
   '{"type":"authenticate","token":"v1.payload.mac"}',
+  '{"type":"command_text","request_id":"r1","text":"FLAT","venue":"backpack"}',
+  '{"type":"cancel_twap","request_id":"r2","twap_id":"7"}',
+  '{"type":"set_provider","provider":"ollama"}',
+  '{"type":"ai_request","request_id":"r5","action":"scan","text":"","symbol":"BTC-USD","timeframe":"1h","venue":"coinbase"}',
+  '{"type":"ai_cancel","request_id":"r5"}',
+  '{"type":"subscribe_news"}',
+  '{"type":"unsubscribe_news"}',
   '{"type":"cancel_all","request_id":"r4"}',
   '{"type":"reset_account","request_id":"r6"}',
   '{"type":"ping","id":3}',
 ];
 
 const GOLDEN_SERVER_LINES = [
-  '{"type":"hello","protocol_version":2,"data_mode":"replay","venue":null,"engine_running":true,"instruments":[{"symbol":"BTC-USD","short":"BTC","price_decimals":2,"qty_decimals":8}]}',
-  '{"type":"hello","protocol_version":2,"data_mode":"live","venue":"backpack","engine_running":false,"instruments":[]}',
-  '{"type":"hello","protocol_version":2,"data_mode":"live","venue":"coinbase","engine_running":true,"instruments":[]}',
+  '{"type":"hello","protocol_version":3,"data_mode":"replay","live_venues":[],"venue_status":[],"default_venue":"replay","starting_balance":"1000000000000000","engine_running":true,"instruments":[{"symbol":"BTC-USD","short":"BTC","price_decimals":2,"qty_decimals":8,"venues":["coinbase","backpack"]}],"providers":[],"news_enabled":false}',
+  '{"type":"hello","protocol_version":3,"data_mode":"live","live_venues":["backpack"],"venue_status":[{"venue":"backpack","status":"connected"}],"default_venue":"backpack","starting_balance":"1000000000000000","engine_running":false,"instruments":[],"providers":[{"id":"openai","model":"gpt","reason":null}],"news_enabled":true}',
+  '{"type":"event_batch","events":[{"type":"pong","id":1,"emit_us":5}]}',
+  '{"type":"providers","available":[{"id":"nvidia","model":"m","reason":"no key"}],"default":"nvidia","selected":null}',
+  '{"type":"ai_error","request_id":"r","reason":"ai_daily_cap","message":"cap"}',
+  '{"type":"news","available":true,"items":[],"updated_at":null}',
+  '{"type":"twap","twap_id":"1","symbol":"SOL-USD","side":"sell","venue":"coinbase","slices":4,"sent":1,"status":"active","reason":null}',
+  '{"type":"preview","request_id":"r1","preview":{"preview_id":"p1","text":"t","action":{"type":"twap","symbol":"BTC-USD","side":"buy","venue":"backpack","total_qty":"10","slices":5,"interval_s":60},"expires_at":1}}',
+  '{"type":"notice","kind":"slow_client","message":"x"}',
+  '{"type":"notice","kind":"provider_changed","message":"x"}',
   '{"type":"session","account_id":"guest","address":null}',
   `{"type":"session","account_id":"${WALLET_ACCOUNT}","address":"${WALLET_ADDRESS}"}`,
-  '{"type":"event","event":{"type":"order_ack","account_id":"guest","order_id":"o-9","status":"filled"}}',
+  '{"type":"event","event":{"type":"order_ack","account_id":"guest","venue":"replay","order_id":"o-9","status":"filled"}}',
   '{"type":"notice","kind":"account_reset","message":"engine restarted"}',
   '{"type":"notice","kind":"auth_failed","message":"invalid token"}',
   '{"type":"notice","kind":"session_expired","message":"session expired"}',
@@ -468,7 +629,7 @@ describe("protocol v2 schemas", () => {
   test("every account Event needs a valid account_id (Req 1.9, 1.10)", () => {
     const withAccount = EVENTS.filter((e): e is Extract<Event, { account_id: string }> => "account_id" in e);
     expect(new Set(withAccount.map((e) => e.type))).toEqual(
-      new Set(["order_ack", "order_rejected", "fill", "position"]),
+      new Set(["order_ack", "order_rejected", "fill", "position", "balance"]),
     );
     for (const event of withAccount) {
       expect(EventSchema.safeParse(event).success).toBe(true);
@@ -550,15 +711,34 @@ describe("protocol v2 schemas", () => {
     expect(ServerMessageSchema.safeParse(noAccount).success).toBe(false);
   });
 
-  test("hello names the venue or null (Req 1.11)", () => {
-    const hello = { type: "hello", protocol_version: 2, data_mode: "live", engine_running: true, instruments: [] };
-    for (const venue of ["coinbase", "backpack", null]) {
-      expect(ServerMessageSchema.safeParse({ ...hello, venue }).success).toBe(true);
+  test("hello needs the v3 fields (Req 1.11, 4.1, 15.1)", () => {
+    const hello = SERVER_MESSAGES[0] as Extract<ServerMessage, { type: "hello" }>;
+    expect(ServerMessageSchema.safeParse(hello).success).toBe(true);
+    for (const key of ["live_venues", "venue_status", "default_venue", "providers", "news_enabled"] as const) {
+      const { [key]: _omitted, ...without } = hello;
+      expect(ServerMessageSchema.safeParse(without).success).toBe(false);
     }
-    expect(ServerMessageSchema.safeParse(hello).success).toBe(false);
-    for (const venue of ["Coinbase", "kraken", "", 0, false, undefined]) {
-      expect(ServerMessageSchema.safeParse({ ...hello, venue }).success).toBe(false);
+  });
+
+  test("command_text accepts an absent or null venue (the server default)", () => {
+    for (const body of [{}, { venue: null }]) {
+      const r = parseClientMessage(JSON.stringify({ type: "command_text", request_id: "r", text: "FLAT", ...body }));
+      expect(r).toEqual({ ok: true, value: { type: "command_text", request_id: "r", text: "FLAT", venue: null } });
     }
+  });
+
+  test("AI prompt, strategy draft, scan, and provider limits", () => {
+    const ai = CLIENT_MESSAGES.find((m) => m.type === "ai_request");
+    expect(ai).toBeDefined();
+    expect(ClientMessageSchema.safeParse({ ...ai, text: "a".repeat(1000) }).success).toBe(true);
+    expect(ClientMessageSchema.safeParse({ ...ai, text: "a".repeat(1001) }).success).toBe(false);
+    const draft = { type: "strategy_draft", request_id: "r" };
+    expect(ServerMessageSchema.safeParse({ ...draft, text: "a".repeat(500) }).success).toBe(true);
+    expect(ServerMessageSchema.safeParse({ ...draft, text: "a".repeat(501) }).success).toBe(false);
+    const item = { symbol: "BTC-USD", bias: "long", confidence_bps: 1, summary: "s" };
+    const scan = (n: number) => ({ type: "scan_result", request_id: "r", items: Array.from({ length: n }, () => item) });
+    expect(ServerMessageSchema.safeParse(scan(10)).success).toBe(true);
+    expect(ServerMessageSchema.safeParse(scan(11)).success).toBe(false);
   });
 
   test("every notice kind is accepted, including the three added in v2", () => {
@@ -566,7 +746,9 @@ describe("protocol v2 schemas", () => {
       "account_reset",
       "engine_down",
       "engine_up",
-      "llm_disabled",
+      "ai_disabled",
+      "slow_client",
+      "provider_changed",
       "auth_failed",
       "session_expired",
       "signed_out",
@@ -582,7 +764,7 @@ describe("protocol v2 schemas", () => {
 });
 
 describe("candle indicators history (chart-and-tape-fix, Req 2.6)", () => {
-  const candle = { type: "candle", symbol: "BTC-USD", timeframe: "1m", snapshot: true, bars: [bar] };
+  const candle = { type: "candle", venue: "replay", symbol: "BTC-USD", timeframe: "1m", snapshot: true, bars: [bar] };
 
   test("a candle snapshot parses with and without indicators", () => {
     expect(EventSchema.safeParse(candle).success).toBe(true);

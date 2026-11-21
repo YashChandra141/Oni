@@ -71,7 +71,16 @@ export function harness(options: HarnessOptions = {}) {
   const logs: string[] = [];
   const accounts = new AccountState();
   const market = new MarketState();
-  const trade = (symbol: string, price: string): Event => ({ type: "trade", symbol, price, qty: "1", side: "buy", ts: 1 });
+  const trade = (symbol: string, price: string): Event => ({
+    type: "trade",
+    venue: "replay",
+    symbol,
+    price,
+    qty: "1",
+    side: "buy",
+    synthetic: false,
+    ts: 1,
+  });
   market.apply(trade("BTC-USD", "6400000"));
   market.apply(trade("ETH-USD", "320000"));
   market.apply(trade("SOL-USD", "15000"));
@@ -96,7 +105,7 @@ export function harness(options: HarnessOptions = {}) {
   const setPosition = (accountId: string, symbol: string, qty: string): void =>
     accounts.apply({ type: "position", account_id: accountId, symbol, qty, avg_entry: "6400000", realized: "0", unrealized: "0" });
   const acceptOrder = (accountId: string, orderId: string): void =>
-    accounts.apply({ type: "order_ack", account_id: accountId, order_id: orderId, status: "accepted" });
+    accounts.apply({ type: "order_ack", account_id: accountId, venue: "replay", order_id: orderId, status: "accepted" });
 
   return { router, clock, state, sent, sender, records, activity, log, pending, expired, rejected, logs, accounts, market, risk, setPosition, acceptOrder };
 }

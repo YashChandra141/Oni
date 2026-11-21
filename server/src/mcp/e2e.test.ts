@@ -80,14 +80,21 @@ beforeAll(async () => {
           reply(ws, previewReply(msg.request_id, msg.text.includes("9") ? "p-reject" : "p-fill"));
         } else if (msg.type === "confirm") {
           if (msg.preview_id === "p-reject") {
-            reply(ws, event({ type: "order_rejected", account_id: "guest", order_id: "o2", reason: "max_order_value" }));
+            reply(ws, event({
+                type: "order_rejected",
+                account_id: "guest",
+                venue: "replay",
+                order_id: "o2",
+                reason: "max_order_value",
+              }));
           } else {
-            reply(ws, event({ type: "order_ack", account_id: "guest", order_id: "o1", status: "accepted" }));
+            reply(ws, event({ type: "order_ack", account_id: "guest", venue: "replay", order_id: "o1", status: "accepted" }));
             reply(
               ws,
               event({
                 type: "fill",
                 account_id: "guest",
+                venue: "replay",
                 order_id: "o1",
                 symbol: "BTC-USD",
                 side: "buy",
@@ -247,7 +254,7 @@ describe(".kiro/settings/mcp.json (Req 24.8)", () => {
       expect(value).not.toMatch(/^[A-Za-z0-9_\-+/=.]{32,}$/);
       expect(value).not.toMatch(/bearer|postgres(ql)?:\/\//i);
     }
-    expect(raw).not.toMatch(/TERMINAL_TOKEN|SESSION_SECRET|OPENAI_API_KEY|DATABASE_URL|DIRECT_URL/);
+    expect(raw).not.toMatch(/TERMINAL_TOKEN|SESSION_SECRET|OPENAI_API_KEY/);
     expect(raw).not.toMatch(/sk-[A-Za-z0-9]{10,}/);
   });
 });

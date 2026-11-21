@@ -35,8 +35,8 @@
 use std::collections::BTreeMap;
 
 use protocol::{
-    AccountId, Event, Money, OrderId, OrderKind, OrderStatus, Price, Qty, Side, TimeMs, instrument,
-    notional,
+    AccountId, Event, Money, OrderId, OrderKind, OrderStatus, Price, Qty, Side, TimeMs, Venue,
+    instrument, notional,
 };
 
 use crate::book::OrderBook;
@@ -116,6 +116,9 @@ pub struct Matcher {
     fee_bps: i64,
     next_seq: u64,
     orders: BTreeMap<u64, Order>,
+    /// The market venue stamped on every OrderAck, OrderRejected, and Fill. The engine has one
+    /// market venue until the per-venue pairs of task 5.
+    venue: Venue,
 }
 
 impl Default for Matcher {
@@ -130,7 +133,14 @@ impl Matcher {
             fee_bps: i64::from(fee_bps),
             next_seq: 0,
             orders: BTreeMap::new(),
+            venue: Venue::Replay,
         }
+    }
+
+    /// The same matcher, stamping `venue` on its events.
+    pub fn with_venue(mut self, venue: Venue) -> Self {
+        self.venue = venue;
+        self
     }
 
     /// Number of open orders, all accounts.
@@ -162,9 +172,11 @@ impl Matcher {
         ts: TimeMs,
     ) -> MatchOutput {
         let mut out = MatchOutput::default();
+        let venue = self.venue;
         let reject = |out: &mut MatchOutput, req: &PlaceRequest, reason: &str| {
             out.events.push(Event::OrderRejected {
                 account_id: req.account_id.clone(),
+                venue,
                 order_id: req.order_id.clone(),
                 reason: reason.to_owned(),
             });
@@ -209,12 +221,23 @@ impl Matcher {
             stop_triggered,
         };
         out.events.push(ack(
+            venue,
             &order.account_id,
             &order.order_id,
             OrderStatus::Accepted,
         ));
         let mut overlay = Overlay::default();
-        let done = match_order(&mut order, book, &mut overlay, self.fee_bps, ts, &mut out);
+        let done = match_order(
+            &mut order,
+            book,
+            &mut overlay,
+            MatchParams {
+                venue,
+                fee_bps: self.fee_bps,
+                ts,
+            },
+            &mut out,
+        );
         if !done {
             self.orders.insert(seq, order);
         }
@@ -247,11 +270,15 @@ impl Matcher {
                 order.stop_triggered = true;
             }
         }
-        let fee_bps = self.fee_bps;
+        let params = MatchParams {
+            venue: self.venue,
+            fee_bps: self.fee_bps,
+            ts,
+        };
         let mut overlay = Overlay::default();
         for seq in seqs {
             let done = match self.orders.get_mut(&seq) {
-                Some(order) => match_order(order, book, &mut overlay, fee_bps, ts, &mut out),
+                Some(order) => match_order(order, book, &mut overlay, params, &mut out),
                 None => continue,
             };
             if done {
@@ -272,12 +299,14 @@ impl Matcher {
             .map(|(seq, _)| *seq);
         match found.and_then(|seq| self.orders.remove(&seq)) {
             Some(order) => vec![ack(
+                self.venue,
                 &order.account_id,
                 &order.order_id,
                 OrderStatus::Canceled,
             )],
             None => vec![Event::OrderRejected {
                 account_id: account_id.clone(),
+                venue: self.venue,
                 order_id: order_id.clone(),
                 reason: "unknown_order".to_owned(),
             }],
@@ -292,16 +321,18 @@ impl Matcher {
             .filter(|(_, o)| &o.account_id == account_id)
             .map(|(seq, _)| *seq)
             .collect();
+        let venue = self.venue;
         seqs.into_iter()
             .filter_map(|seq| self.orders.remove(&seq))
-            .map(|o| ack(&o.account_id, &o.order_id, OrderStatus::Canceled))
+            .map(|o| ack(venue, &o.account_id, &o.order_id, OrderStatus::Canceled))
             .collect()
     }
 }
 
-fn ack(account_id: &AccountId, order_id: &OrderId, status: OrderStatus) -> Event {
+fn ack(venue: Venue, account_id: &AccountId, order_id: &OrderId, status: OrderStatus) -> Event {
     Event::OrderAck {
         account_id: account_id.clone(),
+        venue,
         order_id: order_id.clone(),
         status,
     }
@@ -323,6 +354,14 @@ fn fee_for(value: Money, fee_bps: i64) -> Option<Money> {
     i64::try_from(fee).ok().map(Money)
 }
 
+/// The per-call inputs of [`match_order`] that are not the order, the book, or the overlay.
+#[derive(Debug, Clone, Copy)]
+struct MatchParams {
+    venue: Venue,
+    fee_bps: i64,
+    ts: TimeMs,
+}
+
 /// Matches one order against the book, appending its Fills and, when it completes, the
 /// `filled` ack to `out`. Returns true when the order is complete and must be removed.
 /// An untriggered stop does nothing.
@@ -330,10 +369,10 @@ fn match_order(
     order: &mut Order,
     book: &OrderBook,
     overlay: &mut Overlay,
-    fee_bps: i64,
-    ts: TimeMs,
+    params: MatchParams,
     out: &mut MatchOutput,
 ) -> bool {
+    let MatchParams { venue, fee_bps, ts } = params;
     let limit = match order.kind {
         OrderKind::Market => None,
         OrderKind::Limit { price } => Some(price),
@@ -381,6 +420,7 @@ fn match_order(
         order.remaining_qty -= take;
         out.events.push(Event::Fill {
             account_id: order.account_id.clone(),
+            venue,
             order_id: order.order_id.clone(),
             symbol: order.symbol.clone(),
             side: order.side,
@@ -402,8 +442,12 @@ fn match_order(
         });
     }
     if order.remaining_qty == 0 {
-        out.events
-            .push(ack(&order.account_id, &order.order_id, OrderStatus::Filled));
+        out.events.push(ack(
+            venue,
+            &order.account_id,
+            &order.order_id,
+            OrderStatus::Filled,
+        ));
         return true;
     }
     false
@@ -468,12 +512,13 @@ mod tests {
     }
 
     fn ack_ev(account: &str, id: &str, status: OrderStatus) -> Event {
-        ack(&acct(account), &oid(id), status)
+        ack(Venue::Replay, &acct(account), &oid(id), status)
     }
 
     fn fill_ev(account: &str, id: &str, side: Side, price: i64, qty: i64, remaining: i64) -> Event {
         Event::Fill {
             account_id: acct(account),
+            venue: Venue::Replay,
             order_id: oid(id),
             symbol: BTC.into(),
             side,
@@ -495,6 +540,7 @@ mod tests {
     fn rejected(account: &str, id: &str, reason: &str) -> Event {
         Event::OrderRejected {
             account_id: acct(account),
+            venue: Venue::Replay,
             order_id: oid(id),
             reason: reason.into(),
         }

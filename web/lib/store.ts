@@ -68,7 +68,11 @@ export type ConnectionState =
 export interface HelloInfo {
   readonly protocolVersion: number;
   readonly dataMode: DataMode;
+  /** The live venue shown in the mode label: the default venue in live mode, else null. */
   readonly venue: Venue | null;
+  /** Protocol v3: the venues the market feed connects to (empty in replay mode). */
+  readonly liveVenues: readonly Venue[];
+  readonly defaultVenue: Venue;
   readonly engineRunning: boolean;
 }
 
@@ -802,6 +806,13 @@ export function applyEvent(state: TerminalState, event: Event): TerminalState {
       return applyFillEvent(state, event);
     case "position":
       return applyPositionEvent(state, event);
+    // Protocol v3 events the web UI does not show yet: tickers and venue health (Task 14.2),
+    // reference venue and the paper balance (Task 14.9).
+    case "ticker24h":
+    case "venue_status":
+    case "pair_status":
+    case "reference_venue":
+    case "balance":
     case "heartbeat":
     case "pong":
       return state;
@@ -818,7 +829,9 @@ export function applyServerMessage(state: TerminalState, message: ServerMessage)
         hello: {
           protocolVersion: message.protocol_version,
           dataMode: message.data_mode,
-          venue: message.venue,
+          venue: message.data_mode === "live" ? message.default_venue : null,
+          liveVenues: Array.isArray(message.live_venues) ? message.live_venues : [],
+          defaultVenue: message.default_venue,
           engineRunning: message.engine_running,
         },
         instruments: Object.fromEntries(list.map((info): [string, InstrumentInfo] => [info.symbol, info])),
@@ -836,6 +849,19 @@ export function applyServerMessage(state: TerminalState, message: ServerMessage)
     }
     case "event":
       return applyEvent(state, message.event);
+    case "event_batch":
+      // The server may batch events; they apply in the order the engine emitted them (Req 34.1).
+      return message.events.reduce<TerminalState>((acc, wire) => applyEvent(acc, wire), state);
+    // Protocol v3 messages the web UI ignores until its panels exist: providers, AI results and
+    // errors (Task 14.9), news (Task 14.2), and TWAP progress (Task 14.9).
+    case "providers":
+    case "analysis":
+    case "scan_result":
+    case "strategy_draft":
+    case "ai_error":
+    case "news":
+    case "twap":
+      return state;
     case "notice": {
       // The stored token is cleared on auth_failed, session_expired, and signed_out by the socket
       // layer (socket.ts), not here, so this reducer stays pure.

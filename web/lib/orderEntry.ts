@@ -252,10 +252,13 @@ export function addUnits(a: string, b: string): string {
 // Labels
 
 /** Headline of a preview dialog for the preview's action. */
-export function previewActionLabel(action: { readonly type: "place" | "cancel_all" | "flatten_all" }): string {
+export function previewActionLabel(action: { readonly type: "place" | "twap" | "cancel_all" | "flatten_all" }): string {
   switch (action.type) {
     case "place":
       return "PLACE PAPER ORDER";
+    // The web UI has no TWAP entry yet (Task 14.9 adds it); the label keeps the switch total.
+    case "twap":
+      return "PLACE PAPER TWAP";
     case "cancel_all":
       return "CANCEL ALL OPEN ORDERS";
     case "flatten_all":

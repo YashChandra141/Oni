@@ -147,6 +147,7 @@ describe("engine stdout worst-case Candle snapshot line (Property 4)", () => {
     }));
     const line = JSON.stringify({
       type: "candle",
+      venue: "replay",
       symbol: "BTC-USD",
       timeframe: "1m",
       snapshot: true,

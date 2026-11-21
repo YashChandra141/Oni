@@ -23,6 +23,7 @@ describe("submit: approval", () => {
       {
         type: "place_order",
         account_id: "w_Abc123",
+        venue: "replay",
         order_id: "o_1_abc123",
         symbol: "BTC-USD",
         side: "buy",
@@ -97,7 +98,13 @@ describe("submit: risk reasons (Req 18.2, 19.7)", () => {
     expect(h.rejected).toEqual([
       {
         connectionId: origin.connectionId,
-        event: { type: "order_rejected", account_id: origin.session.accountId, order_id: result.orderId, reason },
+        event: {
+          type: "order_rejected",
+          account_id: origin.session.accountId,
+          venue: "replay",
+          order_id: result.orderId,
+          reason,
+        },
       },
     ]);
     expect(h.records).toMatchObject([
@@ -410,9 +417,20 @@ describe("marketPrices", () => {
     const prices = marketPrices(market);
     expect(prices.lastPrice("BTC-USD")).toBeNull();
     expect(prices.bestBid("BTC-USD")).toBeNull();
-    market.apply({ type: "trade", symbol: "BTC-USD", price: "6400000", qty: "1", side: "buy", ts: 1 });
+    market.apply({
+      type: "trade",
+      venue: "replay",
+      symbol: "BTC-USD",
+      price: "6400000",
+      qty: "1",
+      side: "buy",
+      synthetic: false,
+      ts: 1,
+    });
     market.apply({
       type: "book",
+      venue: "replay",
+      synthetic: false,
       symbol: "BTC-USD",
       bids: [{ price: "6399900", qty: "5" }, { price: "6399800", qty: "5" }],
       asks: [{ price: "6400100", qty: "5" }],

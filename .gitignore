@@ -10,9 +10,6 @@ node_modules/
 web/.next/
 web/out/
 
-# Prisma generated client
-server/src/generated/
-
 # Environment and secrets
 .env
 
