@@ -39,8 +39,51 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Regenerate protocol types
+        run: bun run gen:protocol
+
+      - name: Fail if generated protocol types are stale
+        run: git diff --exit-code shared/protocol
+
       - name: Check (fmt, clippy, tests, typecheck)
         run: bun run check
+
+      - name: Build web
+        run: bun run --cwd web build
+
+  # Req 33.7: fail when a p95 exceeds its target times CI_LATENCY_FACTOR.
+  latency-bench:
+    name: latency bench
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.94.0
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build engine (release)
+        run: cargo build --release -p engine
+        working-directory: rust
+
+      - name: Latency benchmark
+        run: bun run bench:latency -- --check
+        env:
+          CI_LATENCY_FACTOR: "2"
+          DATA_MODE: replay
+          ENGINE_PATH: ${{ github.workspace }}/rust/target/release/engine
 
   # Build the Server_Image, run it, and place a paper order. The smoke script waits for engine: "running".
   docker-smoke:

@@ -189,18 +189,27 @@ describe("Property 6: layout spec (fast-check)", () => {
     expect(page).toMatch(/body === "clip"\s*\?\s*"min-h-0 flex-1 overflow-hidden"/);
   });
 
-  test("<main> and <body> are h-dvh overflow-hidden", () => {
+  // v2: the page renders inside AppShell (top nav + sidebar), so the viewport-height chain is
+  // body h-dvh -> shell h-dvh -> <main> h-full. A <main> with its own h-dvh would be taller than
+  // the space under the top nav and its bottom row (the command bar) would be clipped.
+  test("<body> and the app shell are h-dvh overflow-hidden, and <main> fills the shell without overflow", () => {
     const main = scanTags(page).find((t) => !t.closing && t.name === "main")!;
     const mainClasses = classTokens(classNameOf(main.attrs));
     const body = /<body[^>]*className="([^"]*)"/.exec(layout);
     const bodyClasses = classTokens(body?.[1] ?? "");
+    const shellSrc = stripComments(readFileSync(join(webDir, "components", "shell", "AppShell.tsx"), "utf8"));
+    const shellRoot = /<div\s+className="([^"]*)"/.exec(shellSrc);
+    const shellClasses = classTokens(shellRoot?.[1] ?? "");
     fc.assert(
-      fc.property(fc.constantFrom(mainClasses, bodyClasses), (classes) => {
+      fc.property(fc.constantFrom(bodyClasses, shellClasses), (classes) => {
         expect(classes).toContain("h-dvh");
         expect(classes).toContain("overflow-hidden");
       }),
       { numRuns: 10 },
     );
+    expect(mainClasses).toContain("h-full");
+    expect(mainClasses).toContain("overflow-hidden");
+    expect(mainClasses).toContain("min-h-0");
   });
 
   test("no component source uses row-span-* or col-span-*", () => {

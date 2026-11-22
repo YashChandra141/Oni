@@ -73,18 +73,25 @@ export interface SocketDeps {
 export const TOKEN_CLEARING_NOTICES: readonly string[] = ["auth_failed", "session_expired", "signed_out"];
 
 export interface Subscription {
+  readonly venue: Venue;
   readonly symbol: string;
   readonly timeframe: Timeframe;
 }
 
 export interface TerminalSocket {
   /**
-   * Sends a message. `subscribe` and `unsubscribe` always update the subscription set. Returns
-   * true when the message went out on an open socket, false when it was dropped.
+   * Sends a message. Subscribe, unsubscribe, ticker, and news messages always update the
+   * subscription state that is resent after a reconnect. Returns true when the message went out
+   * on an open socket, false when it was dropped.
    */
   send(message: ClientMessage): boolean;
-  subscribe(symbol: string, timeframe: Timeframe): void;
-  unsubscribe(symbol: string, timeframe: Timeframe): void;
+  /** `venue` defaults to `WEB_VENUE`. */
+  subscribe(symbol: string, timeframe: Timeframe, venue?: Venue): void;
+  unsubscribe(symbol: string, timeframe: Timeframe, venue?: Venue): void;
+  subscribeTicker(symbol: string, venue: Venue): void;
+  unsubscribeTicker(symbol: string, venue: Venue): void;
+  subscribeNews(): void;
+  unsubscribeNews(): void;
   /** Stops reconnecting, cancels timers, and closes the socket. Idempotent; emits no events. */
   close(): void;
   /** True while a socket is open. */
@@ -119,8 +126,8 @@ export function parseFrame(data: unknown): FrameResult {
   return { ok: true, message: value as ServerMessage };
 }
 
-function subscriptionKey(symbol: string, timeframe: Timeframe): string {
-  return `${symbol}|${timeframe}`;
+function subscriptionKey(venue: Venue, symbol: string, timeframe: Timeframe): string {
+  return `${venue}|${symbol}|${timeframe}`;
 }
 
 function describeError(error: unknown): string {
@@ -138,6 +145,8 @@ function closeReason(event: { readonly code?: number; readonly reason?: string }
 /** Starts connecting to `url` at once and keeps the connection up until `close()`. */
 export function createTerminalSocket(url: string, deps: SocketDeps): TerminalSocket {
   const subs = new Map<string, Subscription>();
+  const tickerSubs = new Map<string, { readonly symbol: string; readonly venue: Venue }>();
+  let newsSubscribed = false;
   let ws: WebSocketLike | null = null;
   let opened = false;
   let closed = false;
@@ -224,8 +233,12 @@ export function createTerminalSocket(url: string, deps: SocketDeps): TerminalSoc
       deps.onEvent({ type: "open" });
       // Req 33.3: resubscribe before anything else goes out.
       for (const sub of subs.values()) {
-        transmit({ type: "subscribe", venue: WEB_VENUE, symbol: sub.symbol, timeframe: sub.timeframe });
+        transmit({ type: "subscribe", venue: sub.venue, symbol: sub.symbol, timeframe: sub.timeframe });
       }
+      for (const sub of tickerSubs.values()) {
+        transmit({ type: "subscribe_ticker", symbol: sub.symbol, venue: sub.venue });
+      }
+      if (newsSubscribed) transmit({ type: "subscribe_news" });
       schedulePing();
     };
     socket.onmessage = (event) => {
@@ -262,12 +275,21 @@ export function createTerminalSocket(url: string, deps: SocketDeps): TerminalSoc
   function send(message: ClientMessage): boolean {
     if (closed) return false;
     if (message.type === "subscribe") {
-      subs.set(subscriptionKey(message.symbol, message.timeframe), {
+      subs.set(subscriptionKey(message.venue, message.symbol, message.timeframe), {
+        venue: message.venue,
         symbol: message.symbol,
         timeframe: message.timeframe,
       });
     } else if (message.type === "unsubscribe") {
-      subs.delete(subscriptionKey(message.symbol, message.timeframe));
+      subs.delete(subscriptionKey(message.venue, message.symbol, message.timeframe));
+    } else if (message.type === "subscribe_ticker") {
+      tickerSubs.set(`${message.venue}|${message.symbol}`, { symbol: message.symbol, venue: message.venue });
+    } else if (message.type === "unsubscribe_ticker") {
+      tickerSubs.delete(`${message.venue}|${message.symbol}`);
+    } else if (message.type === "subscribe_news") {
+      newsSubscribed = true;
+    } else if (message.type === "unsubscribe_news") {
+      newsSubscribed = false;
     }
     return transmit(message);
   }
@@ -277,11 +299,23 @@ export function createTerminalSocket(url: string, deps: SocketDeps): TerminalSoc
 
   return {
     send,
-    subscribe(symbol, timeframe) {
-      send({ type: "subscribe", venue: WEB_VENUE, symbol, timeframe });
+    subscribe(symbol, timeframe, venue = WEB_VENUE) {
+      send({ type: "subscribe", venue, symbol, timeframe });
     },
-    unsubscribe(symbol, timeframe) {
-      send({ type: "unsubscribe", venue: WEB_VENUE, symbol, timeframe });
+    unsubscribe(symbol, timeframe, venue = WEB_VENUE) {
+      send({ type: "unsubscribe", venue, symbol, timeframe });
+    },
+    subscribeTicker(symbol, venue) {
+      send({ type: "subscribe_ticker", symbol, venue });
+    },
+    unsubscribeTicker(symbol, venue) {
+      send({ type: "unsubscribe_ticker", symbol, venue });
+    },
+    subscribeNews() {
+      send({ type: "subscribe_news" });
+    },
+    unsubscribeNews() {
+      send({ type: "unsubscribe_news" });
     },
     close() {
       if (closed) return;

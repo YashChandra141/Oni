@@ -48,23 +48,28 @@
 //!   retries, and returns one `feed_disconnected` Error. Each key requests at most once per run
 //!   unless a request failed.
 
-use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, BTreeSet};
 
 use protocol::{
-    AccountId, Bar, Command, DecodeError, ErrorCode, Event, INSTRUMENTS, Money,
-    OrderKind, OrderStatus, Price, Qty, Side, TimeMs, Timeframe, Venue, instrument,
+    AccountId, Bar, Command, DecodeError, ErrorCode, Event, INSTRUMENTS, IndicatorValues, Money,
+    OrderKind, OrderStatus, PairHealth, Price, Qty, Side, TimeMs, Timeframe, Venue, VenueKind,
+    VenueStatusKind, instrument,
 };
 use tracing::debug;
 
 use crate::account::{AccountError, Accounts, DEFAULT_ACCOUNT_CAP, PaperAccount};
 use crate::balance::BalanceConfig;
 use crate::book::OrderBook;
-use crate::candles::CandleBuilder;
+use crate::candles::VenueCandles;
 use crate::feed::MarketMsg;
 use crate::indicators::SymbolIndicators;
-use crate::matcher::{MatchOutput, Matcher, PlaceRequest};
-use crate::ticker::{self, TickerThrottle};
+use crate::matcher::{MatchOutput, Matchers, PlaceRequest};
+use crate::pair::{BackfillState, PairState};
+use crate::synthetic_book::{DexParams, build_synthetic_book};
+use crate::ticker;
+use crate::venues::{
+    CEX_STALE_MS, DEX_MAX_DEVIATION_PCT, DEX_STALE_MS, VenueTable, diverges, lists,
+};
 
 /// Characters of an unknown symbol echoed in an error.
 const MAX_SYMBOL_ECHO: usize = 64;
@@ -72,31 +77,13 @@ const MAX_SYMBOL_ECHO: usize = 64;
 /// Levels per side in a Book event (Req 9.6).
 const BOOK_LEVELS: usize = 20;
 /// Minimum market time between two Book events of one symbol, in ms (Req 9.7).
-const BOOK_INTERVAL_MS: TimeMs = 100;
-
-/// One symbol's book and its throttle state.
-#[derive(Debug, Default)]
-struct BookState {
-    book: OrderBook,
-    /// Market time of the last emitted Book event.
-    last_emit_ts: Option<TimeMs>,
-    /// The book changed since the last emitted Book event.
-    dirty: bool,
-}
+const BOOK_INTERVAL_MS: TimeMs = 50;
 
 /// Characters of a backfill failure reason kept in the Error message.
 const MAX_REASON_CHARS: usize = 200;
 
-/// Backfill progress of one (symbol, timeframe) key. An absent key has no state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BackfillState {
-    /// A request was queued and no result has arrived.
-    InFlight,
-    /// The history was merged; the key never requests again in this run.
-    Done,
-}
-
-/// A request for the runtime to fetch recent public candles of one key.
+/// A request for the runtime to fetch recent public candles of one key of the engine's market
+/// venue (backfill runs for that venue only until the per-venue adapters of task 6).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HistoryRequest {
     pub symbol: String,
@@ -106,36 +93,38 @@ pub struct HistoryRequest {
 /// Engine state.
 #[derive(Debug, Default)]
 pub struct Engine {
-    /// Backfill state per key. `None` outside backfill mode (replay), where no request is built.
-    backfill: Option<BTreeMap<(String, Timeframe), BackfillState>>,
+    /// Backfill mode (live only): the first `subscribe` of a key queues a history request.
+    backfill: bool,
     /// Requests queued by `subscribe`, drained by [`Engine::take_history_requests`].
     history_requests: Vec<HistoryRequest>,
+    /// Synthetic_Book shape of the DEX venues; `None` uses the default.
+    dex_params: Option<DexParams>,
+    /// Largest accepted DEX deviation in percent; `None` uses the default.
+    dex_max_deviation_pct: Option<i64>,
     /// Paper_Accounts, created on the first `PlaceOrder` of each account (Req 14.1, 14.4).
     /// Every matcher fill goes to its account, followed by a `Position` event (Req 13.4), and a
-    /// changed last trade price refreshes the unrealized P&L.
+    /// changed mark price refreshes the unrealized P&L.
     accounts: Accounts,
-    candles: CandleBuilder,
-    /// Indicators per (symbol, timeframe), kept for every key that has traded.
-    indicators: BTreeMap<(String, Timeframe), SymbolIndicators>,
-    books: BTreeMap<String, BookState>,
-    /// Subscribed timeframes per symbol. A symbol with no timeframes left is removed.
-    subscriptions: BTreeMap<String, BTreeSet<Timeframe>>,
-    /// Paper matcher (Req 11, 12). Matching events follow the market events of a message.
-    matcher: Matcher,
-    /// Last trade price per symbol, for stop orders (Req 11.5).
-    last_price: BTreeMap<String, Price>,
+    /// Book, last price, indicators, subscriptions, and backfill state per (venue, symbol)
+    /// (Req 9.1 to 9.4, 9.8). A pair exists once a message or subscription names it.
+    pairs: BTreeMap<(Venue, String), PairState>,
+    /// Candle rings, one builder per venue.
+    candles: VenueCandles,
+    /// Paper matchers, one per order venue (Req 11, 12). Matching events follow the market
+    /// events of a message.
+    matcher: Matchers,
+    /// Latest trade price per symbol over all venues, used to value positions and balances. The
+    /// reference-venue rule of task 6.2 replaces "latest wins".
+    mark_price: BTreeMap<String, Price>,
     /// Market time of the latest market message; the time stamp of fills of a new order.
     now: TimeMs,
     /// Equity in the last `Balance` event of each account, to throttle equity-only updates.
     last_equity: BTreeMap<AccountId, i64>,
-    /// Symbols with an active ticker subscription (Req 18.3).
-    ticker_subs: BTreeSet<String>,
-    /// One Ticker24h per symbol per second of market time (Req 18.4).
-    ticker_throttle: TickerThrottle,
-    /// The venue of the market data this engine runs on, stamped on every event: `Replay` in
-    /// replay mode, the configured live venue in live mode. The per-venue pairs of task 5
-    /// replace it.
+    /// The default venue: the one `Engine::new` runs on (`Replay`) or the configured live venue.
+    /// It stamps errors and rejections that name no venue, and backfill requests use it.
     venue: Venue,
+    /// Venue statuses, Reference_Venue per symbol, and stale pairs (task 6.2).
+    venues: VenueTable,
 }
 
 impl Engine {
@@ -146,24 +135,52 @@ impl Engine {
     /// The same engine with `venue` as its market venue (stamped on every event).
     pub fn with_venue(mut self, venue: Venue) -> Self {
         self.venue = venue;
+        self.venues = VenueTable::with_market_venue(venue);
         self.matcher = std::mem::take(&mut self.matcher).with_venue(venue);
         self
+    }
+
+    /// The pair state of (`venue`, `symbol`), if it exists.
+    #[cfg(test)]
+    fn pair(&self, venue: Venue, symbol: &str) -> Option<&PairState> {
+        self.pairs.get(&(venue, symbol.to_owned()))
+    }
+
+    /// Test shorthand: the `Replay` pair's indicators for a (symbol, timeframe) key.
+    #[cfg(test)]
+    fn indicators_get(&self, key: &(String, Timeframe)) -> Option<&SymbolIndicators> {
+        self.pairs
+            .get(&(Venue::Replay, key.0.clone()))
+            .and_then(|p| p.indicators.get(&key.1))
+    }
+
+    /// The pair state of (`venue`, `symbol`), created empty on first use.
+    fn pair_mut(&mut self, venue: Venue, symbol: &str) -> &mut PairState {
+        self.pairs.entry((venue, symbol.to_owned())).or_default()
     }
 
     /// The same engine with the paper balance settings `config`: new accounts start with its
     /// Starting_Balance and the matcher charges its fee rate (Req 16.1, 16.2).
     pub fn with_balance(mut self, config: BalanceConfig) -> Self {
         self.accounts = Accounts::with_config(DEFAULT_ACCOUNT_CAP, config);
-        self.matcher = Matcher::new(config.fee_bps).with_venue(self.venue);
+        self.matcher = Matchers::new(config.fee_bps, self.venue);
         self
     }
 
     /// An engine for live mode: the first `subscribe` of each key queues a history request.
     pub fn with_backfill() -> Self {
         Self {
-            backfill: Some(BTreeMap::new()),
+            backfill: true,
             ..Self::default()
         }
+    }
+
+    /// Sets the DEX Synthetic_Book shape and the largest accepted deviation in percent.
+    #[must_use]
+    pub fn with_dex(mut self, params: DexParams, max_deviation_pct: u32) -> Self {
+        self.dex_params = Some(params);
+        self.dex_max_deviation_pct = Some(i64::from(max_deviation_pct));
+        self
     }
 
     /// Drains the queued history requests, oldest first.
@@ -177,8 +194,12 @@ impl Engine {
     /// changed, rebuilds the key's indicators from the merged ring. Returns the key's snapshot
     /// events when the ring changed and the key is subscribed, otherwise nothing.
     pub fn on_history(&mut self, symbol: &str, timeframe: Timeframe, bars: &[Bar]) -> Vec<Event> {
-        let key = (symbol.to_owned(), timeframe);
-        let Some(state) = self.backfill.as_mut().and_then(|s| s.get_mut(&key)) else {
+        let venue = self.venue;
+        let Some(state) = self
+            .pairs
+            .get_mut(&(venue, symbol.to_owned()))
+            .and_then(|p| p.backfill.get_mut(&timeframe))
+        else {
             return Vec::new();
         };
         if *state != BackfillState::InFlight {
@@ -189,7 +210,7 @@ impl Engine {
         let market_now = (self.now != 0).then_some(self.now);
         let merge = self
             .candles
-            .merge_history(symbol, timeframe, bars, market_now);
+            .merge_history(venue, symbol, timeframe, bars, market_now);
         debug!(
             symbol,
             %timeframe,
@@ -200,15 +221,12 @@ impl Engine {
         if !merge.changed {
             return Vec::new();
         }
-        let ring = self.candles.bars(symbol, timeframe);
-        self.indicators
-            .insert(key, SymbolIndicators::from_bars(&ring));
-        let subscribed = self
-            .subscriptions
-            .get(symbol)
-            .is_some_and(|tfs| tfs.contains(&timeframe));
-        if subscribed {
-            self.snapshot_events(symbol, timeframe)
+        let ring = self.candles.bars_for(venue, symbol, timeframe);
+        let pair = self.pair_mut(venue, symbol);
+        pair.indicators
+            .insert(timeframe, SymbolIndicators::from_bars(&ring));
+        if pair.subscriptions.contains(&timeframe) {
+            self.snapshot_events(venue, symbol, timeframe)
         } else {
             Vec::new()
         }
@@ -223,11 +241,11 @@ impl Engine {
         timeframe: Timeframe,
         reason: &str,
     ) -> Vec<Event> {
-        if let Some(states) = self.backfill.as_mut() {
-            let key = (symbol.to_owned(), timeframe);
-            if states.get(&key) == Some(&BackfillState::InFlight) {
-                states.remove(&key);
-            }
+        let venue = self.venue;
+        if let Some(pair) = self.pairs.get_mut(&(venue, symbol.to_owned()))
+            && pair.backfill.get(&timeframe) == Some(&BackfillState::InFlight)
+        {
+            pair.backfill.remove(&timeframe);
         }
         let reason: String = reason.chars().take(MAX_REASON_CHARS).collect();
         vec![Event::Error {
@@ -255,38 +273,53 @@ impl Engine {
         match cmd {
             // Req 1.6: answer a ping with a pong that carries the same id.
             Command::Ping { id } => vec![Event::Pong { id }],
-            // The command's `venue` is ignored until the per-venue pairs of task 5: the engine
-            // has one market venue.
-            Command::SubscribeTicker { symbol, .. } => self.subscribe_ticker(symbol),
-            Command::UnsubscribeTicker { symbol, .. } => self.unsubscribe_ticker(&symbol),
+            Command::SubscribeTicker { symbol, venue } => self.subscribe_ticker(venue, symbol),
+            Command::UnsubscribeTicker { symbol, venue } => self.unsubscribe_ticker(venue, &symbol),
             Command::Subscribe {
-                symbol, timeframe, ..
-            } => self.subscribe(symbol, timeframe),
+                venue,
+                symbol,
+                timeframe,
+            } => self.subscribe(venue, symbol, timeframe),
             Command::Unsubscribe {
-                symbol, timeframe, ..
-            } => self.unsubscribe(&symbol, timeframe),
+                venue,
+                symbol,
+                timeframe,
+            } => self.unsubscribe(venue, &symbol, timeframe),
             Command::PlaceOrder {
                 account_id,
+                venue,
                 order_id,
                 symbol,
                 side,
                 qty,
                 kind,
-                ..
             } => {
                 // Req 14.4, 14.5: the account is created flat on its first order; a new account
                 // over the cap gets `account_limit` and no order is placed.
                 if self.accounts.get_or_create(&account_id).is_err() {
                     return vec![Event::OrderRejected {
                         account_id,
-                        venue: self.venue,
+                        venue,
                         order_id,
                         reason: "account_limit".to_owned(),
                     }];
                 }
+                // Req 14.6 to 14.8: market guards, in the order venue_unavailable,
+                // stale_market_data, price_deviation.
+                if let Some(reason) = self.market_guard(venue, &symbol) {
+                    return vec![Event::OrderRejected {
+                        account_id,
+                        venue,
+                        order_id,
+                        reason: reason.to_owned(),
+                    }];
+                }
+                // The order matches against the book of its own venue. (A DEX order is matched
+                // against the venue's Synthetic_Book; task 6.8 refines that path.)
                 let empty = OrderBook::new();
-                let book = self.books.get(&symbol).map_or(&empty, |s| &s.book);
-                let last = self.last_price.get(&symbol).copied();
+                let pair = self.pairs.get(&(venue, symbol.clone()));
+                let book = pair.map_or(&empty, |p| &p.book.book);
+                let last = pair.and_then(|p| p.last_price);
                 // Req 16.4: refuse an order the account cannot pay for, before any state change.
                 let reference = reference_price(book, side, &kind, last);
                 if let (Some(reference), Some(account)) =
@@ -295,7 +328,7 @@ impl Engine {
                 {
                     return vec![Event::OrderRejected {
                         account_id,
-                        venue: self.venue,
+                        venue,
                         order_id,
                         reason: "insufficient_balance".to_owned(),
                     }];
@@ -308,7 +341,7 @@ impl Engine {
                     qty,
                     kind,
                 };
-                let out = self.matcher.place(req, book, last, self.now);
+                let out = self.matcher.place(venue, req, book, last, self.now);
                 let rejected = out
                     .events
                     .iter()
@@ -360,7 +393,7 @@ impl Engine {
         let flat = PaperAccount::default();
         let account = self.accounts.get(account_id).unwrap_or(&flat);
         for inst in INSTRUMENTS {
-            let last = self.last_price.get(inst.symbol).copied();
+            let last = self.mark_price.get(inst.symbol).copied();
             events.push(position_or_error(account, account_id, inst.symbol, last));
         }
         // Req 16.1: the balance is back at the Starting_Balance.
@@ -395,7 +428,7 @@ impl Engine {
         let Some(account) = self.accounts.get(account_id) else {
             return;
         };
-        match balance_event(account, account_id, &self.last_price, self.now) {
+        match balance_event(account, account_id, &self.mark_price, self.now) {
             Ok(event) => {
                 if let Event::Balance { equity, .. } = &event {
                     self.last_equity.insert(account_id.clone(), equity.0);
@@ -431,7 +464,7 @@ impl Engine {
         let mut ordered: Vec<((AccountId, String), usize)> = last_fill.into_iter().collect();
         ordered.sort_by_key(|(_, index)| *index);
         for ((account_id, symbol), _) in ordered {
-            let last = self.last_price.get(&symbol).copied();
+            let last = self.mark_price.get(&symbol).copied();
             if let Some(account) = self.accounts.get(&account_id) {
                 events.push(position_or_error(account, &account_id, &symbol, last));
             }
@@ -444,18 +477,28 @@ impl Engine {
         (events, touched)
     }
 
-    /// Runs a matching pass for `symbol` and appends its events after the market events.
-    /// Returns the accounts that got a `Position` event from the pass.
+    /// Runs a matching pass for (`venue`, `symbol`) and appends its events after the market
+    /// events. Only orders of that venue match, against that venue's book. Returns the
+    /// accounts that got a `Position` event from the pass.
     fn run_matcher(
         &mut self,
+        venue: Venue,
         symbol: &str,
         ts: TimeMs,
         events: &mut Vec<Event>,
     ) -> BTreeSet<AccountId> {
+        // Req 15.x: never fill on a venue that is down or disabled; orders rest untouched.
+        if matches!(
+            self.venues.status(venue),
+            Some(VenueStatusKind::Down | VenueStatusKind::Disabled)
+        ) {
+            return BTreeSet::new();
+        }
         let empty = OrderBook::new();
-        let book = self.books.get(symbol).map_or(&empty, |s| &s.book);
-        let last = self.last_price.get(symbol).copied();
-        let out = self.matcher.on_market(symbol, book, last, ts);
+        let pair = self.pairs.get(&(venue, symbol.to_owned()));
+        let book = pair.map_or(&empty, |p| &p.book.book);
+        let last = pair.and_then(|p| p.last_price);
+        let out = self.matcher.on_market(venue, symbol, book, last, ts);
         let (matched, touched) = self.take_output(out);
         events.extend(matched);
         touched
@@ -470,7 +513,7 @@ impl Engine {
         skip: &BTreeSet<AccountId>,
         events: &mut Vec<Event>,
     ) {
-        let last = self.last_price.get(symbol).copied();
+        let last = self.mark_price.get(symbol).copied();
         let mut moved: Vec<AccountId> = Vec::new();
         for (id, account) in self.accounts.iter() {
             if skip.contains(id) || !account.is_open(symbol) {
@@ -479,7 +522,7 @@ impl Engine {
             events.push(position_or_error(account, id, symbol, last));
             // Req 16.9: Equity moved by at least 0.01 USD since the last `Balance`.
             let equity = account
-                .equity(|s| self.last_price.get(s).copied())
+                .equity(|s| self.mark_price.get(s).copied())
                 .ok()
                 .and_then(|e| i64::try_from(e).ok());
             let due = match (equity, self.last_equity.get(id)) {
@@ -496,72 +539,31 @@ impl Engine {
         }
     }
 
-    /// Handles one market data message from the feed and returns the Events it produces.
-    pub fn on_market(&mut self, msg: MarketMsg) -> Vec<Event> {
+    /// Handles one market data message of a pair and returns the Events it produces.
+    fn on_data(&mut self, msg: MarketMsg) -> Vec<Event> {
         match msg {
             MarketMsg::Trade {
+                venue,
                 symbol,
                 price,
                 qty,
                 side,
                 ts,
             } => {
-                let book_symbol = symbol.clone();
                 self.now = ts;
-                let price_changed = self.last_price.insert(symbol.clone(), price) != Some(price);
-                // Req 8.1–8.3: every trade updates the candles of its symbol.
-                let changed = self.candles.on_trade(&symbol, price, qty, ts);
-                if changed.is_empty() {
-                    let dropped = self.candles.dropped();
-                    debug!(
-                        symbol = %symbol,
-                        ts,
-                        dropped_total = dropped.total(),
-                        ?dropped,
-                        "trade not applied to candles"
-                    );
-                }
-                // Req 8.8: live updates only for subscribed keys, in Timeframe::ALL order.
-                // Req 10.1, 10.2: indicators update for every key; subscribed keys also get an
-                // Indicators event right after their Candle event.
-                let mut updates: Vec<Event> = Vec::new();
-                for (timeframe, bar) in changed {
-                    let values = self
-                        .indicators
-                        .entry((symbol.clone(), timeframe))
-                        .or_default()
-                        .update(&bar);
-                    let is_subscribed = self
-                        .subscriptions
-                        .get(&symbol)
-                        .is_some_and(|tfs| tfs.contains(&timeframe));
-                    if !is_subscribed {
-                        continue;
-                    }
-                    updates.push(Event::Candle {
-                        venue: self.venue,
-                        symbol: symbol.clone(),
-                        timeframe,
-                        snapshot: false,
-                        bars: vec![bar],
-                        indicators: None,
-                    });
-                    if let Some(values) = values {
-                        updates.push(Event::Indicators {
-                            venue: self.venue,
-                            symbol: symbol.clone(),
-                            timeframe,
-                            ts: bar.t,
-                            values,
-                        });
-                    }
-                }
+                // Design D7: only the reference pair moves the Mark_Price.
+                let mark_changed = self.is_mark_source(venue, &symbol)
+                    && self.mark_price.insert(symbol.clone(), price) != Some(price);
+                // Req 8.1–8.3: every trade updates the candles of its pair.
+                let applied = self.apply_price(venue, &symbol, price, qty, ts);
+                // Req 8.8, 10.2: live updates only for subscribed keys, in Timeframe::ALL order.
+                let updates = self.candle_events(venue, &symbol, applied);
                 let mut events = Vec::with_capacity(1 + updates.len());
                 // Req 9.8: every trade is forwarded with symbol, price, qty, aggressor side,
                 // time, before the candle updates it caused.
                 events.push(Event::Trade {
-                    venue: self.venue,
-                    symbol,
+                    venue,
+                    symbol: symbol.clone(),
                     price,
                     qty,
                     side,
@@ -569,46 +571,90 @@ impl Engine {
                     ts,
                 });
                 events.extend(updates);
-                // Req 18.4: a subscribed symbol's ticker follows its trade, at most 1 per second.
-                if self.ticker_subs.contains(&book_symbol)
-                    && let Some(event) = self.ticker_event(&book_symbol)
-                    && self.ticker_throttle.take(&book_symbol, ts)
+                // Req 18.4: a subscribed pair's ticker follows its trade, at most 1 per second.
+                if self
+                    .pairs
+                    .get(&(venue, symbol.clone()))
+                    .is_some_and(|p| p.ticker_sub)
+                    && let Some(event) = self.ticker_event(venue, &symbol)
+                    && self
+                        .pair_mut(venue, &symbol)
+                        .ticker_throttle
+                        .take(&symbol, ts)
                 {
                     events.push(event);
                 }
-                self.book_if_due(&book_symbol, ts, &mut events);
+                self.book_if_due(venue, &symbol, ts, &mut events);
                 // Req 11.5: a trade may trigger stops; matching events come last.
-                let touched = self.run_matcher(&book_symbol, ts, &mut events);
-                // Req 13.3: a changed last price refreshes the unrealized P&L; these Position
+                let touched = self.run_matcher(venue, &symbol, ts, &mut events);
+                // Req 13.3: a changed mark price refreshes the unrealized P&L; these Position
                 // events come after everything else.
-                if price_changed {
-                    self.refresh_unrealized(&book_symbol, &touched, &mut events);
+                if mark_changed {
+                    self.refresh_unrealized(&symbol, &touched, &mut events);
+                    self.check_divergence(&symbol, ts, &mut events);
                 }
                 events
             }
+            MarketMsg::PriceSample {
+                venue,
+                symbol,
+                price,
+                ts,
+            } => {
+                // A DEX sample is a price with no quantity: it moves the last price, feeds the
+                // candles with volume zero, and rebuilds the pair's Synthetic_Book. It is not
+                // a Trade event (Req 12.6, 13.1, 13.2, 13.8).
+                self.now = ts;
+                // Design D7: only the reference pair moves the Mark_Price.
+                let mark_changed = self.is_mark_source(venue, &symbol)
+                    && self.mark_price.insert(symbol.clone(), price) != Some(price);
+                let applied = self.apply_sample(venue, &symbol, price, ts);
+                let mut events = self.candle_events(venue, &symbol, applied);
+                if venue.kind() == VenueKind::Dex
+                    && let Some(inst) = instrument(&symbol)
+                {
+                    let (bids, asks) =
+                        build_synthetic_book(price, self.dex_params.unwrap_or_default(), inst);
+                    let state = &mut self.pair_mut(venue, &symbol).book;
+                    state.book.apply_snapshot(&bids, &asks);
+                    state.dirty = true;
+                    self.book_if_due(venue, &symbol, ts, &mut events);
+                }
+                let touched = self.run_matcher(venue, &symbol, ts, &mut events);
+                if mark_changed {
+                    self.refresh_unrealized(&symbol, &touched, &mut events);
+                }
+                self.check_divergence(&symbol, ts, &mut events);
+                events
+            }
             MarketMsg::BookSnapshot {
+                venue,
                 symbol,
                 bids,
                 asks,
                 ts,
             } => {
-                let state = self.books.entry(symbol.clone()).or_default();
-                state.book.apply_snapshot(&bids, &asks);
-                state.dirty = true;
+                let pair = self.pair_mut(venue, &symbol);
+                pair.book.book.apply_snapshot(&bids, &asks);
+                pair.book.dirty = true;
+                pair.last_ts = Some(ts);
                 self.now = ts;
                 let mut events = Vec::new();
-                self.book_if_due(&symbol, ts, &mut events);
-                self.run_matcher(&symbol, ts, &mut events);
+                self.book_if_due(venue, &symbol, ts, &mut events);
+                self.run_matcher(venue, &symbol, ts, &mut events);
                 events
             }
             MarketMsg::BookDelta {
+                venue,
                 symbol,
                 side,
                 price,
                 qty,
                 ts,
             } => {
-                let state = self.books.entry(symbol.clone()).or_default();
+                let pair = self.pairs.entry((venue, symbol.clone())).or_default();
+                pair.last_ts = Some(ts);
+                let state = &mut pair.book;
                 let mut events = Vec::new();
                 self.now = ts;
                 let mut applied = false;
@@ -626,20 +672,324 @@ impl Engine {
                         ),
                     }),
                 }
-                self.book_if_due(&symbol, ts, &mut events);
+                self.book_if_due(venue, &symbol, ts, &mut events);
                 if applied {
-                    self.run_matcher(&symbol, ts, &mut events);
+                    self.run_matcher(venue, &symbol, ts, &mut events);
                 }
                 events
+            }
+            // Handled by `on_market`; never reaches here.
+            MarketMsg::Status { .. } | MarketMsg::Clock { .. } => Vec::new(),
+        }
+    }
+
+    /// The rejection reason of the market guards for an order on (`venue`, `symbol`), if any.
+    fn market_guard(&self, venue: Venue, symbol: &str) -> Option<&'static str> {
+        let down = matches!(
+            self.venues.status(venue),
+            Some(VenueStatusKind::Down | VenueStatusKind::Disabled)
+        );
+        if down || !lists(venue, symbol) {
+            Some("venue_unavailable")
+        } else if self.venues.is_stale(venue, symbol) {
+            Some("stale_market_data")
+        } else if self.venues.is_suspect(venue, symbol) {
+            Some("price_deviation")
+        } else {
+            None
+        }
+    }
+
+    /// Compares every DEX pair of `symbol` with the CEX Reference_Venue price and emits a
+    /// `PairStatus` when its suspect mark changes (Req 14.6). With no connected CEX reference
+    /// that has a price, a pair is `ok`.
+    fn check_divergence(&mut self, symbol: &str, ts: TimeMs, events: &mut Vec<Event>) {
+        let cex = self
+            .venues
+            .reference(symbol)
+            .filter(|v| v.kind() == VenueKind::Cex)
+            .and_then(|v| self.pairs.get(&(v, symbol.to_owned())))
+            .and_then(|p| p.last_price);
+        for venue in Venue::LIVE {
+            if venue.kind() != VenueKind::Dex {
+                continue;
+            }
+            let Some(dex) = self
+                .pairs
+                .get(&(venue, symbol.to_owned()))
+                .and_then(|p| p.last_price)
+            else {
+                continue;
+            };
+            let suspect = cex.is_some_and(|c| {
+                diverges(
+                    dex.0,
+                    c.0,
+                    self.dex_max_deviation_pct.unwrap_or(DEX_MAX_DEVIATION_PCT),
+                )
+            });
+            if self.venues.set_suspect(venue, symbol, suspect) {
+                let health = if suspect {
+                    PairHealth::Suspect
+                } else if self.venues.is_stale(venue, symbol) {
+                    PairHealth::Stale
+                } else {
+                    PairHealth::Ok
+                };
+                events.push(Event::PairStatus {
+                    venue,
+                    symbol: symbol.to_owned(),
+                    health,
+                    ts,
+                });
             }
         }
     }
 
-    /// Emits the symbol's book when it is dirty and its 100 ms market-time window has passed
-    /// (Req 9.7). Runs after every market message of the symbol, so a book that missed its
+    /// True when a price of (`venue`, `symbol`) may move the Mark_Price: the venue is the
+    /// symbol's Reference_Venue, no venue is, or the reference pair has no price yet.
+    fn is_mark_source(&self, venue: Venue, symbol: &str) -> bool {
+        match self.venues.reference(symbol) {
+            None => true,
+            Some(reference) if reference == venue => true,
+            Some(reference) => self
+                .pairs
+                .get(&(reference, symbol.to_owned()))
+                .and_then(|p| p.last_price)
+                .is_none(),
+        }
+    }
+
+    /// Handles one market data, status, or clock message and returns the Events it produces.
+    /// A message from a venue that was not `connected` first reconnects it, and a message on a
+    /// stale pair clears the stale mark; those events come before the message's own events.
+    pub fn on_market(&mut self, msg: MarketMsg) -> Vec<Event> {
+        match &msg {
+            MarketMsg::Status { venue, status, ts } => return self.on_status(*venue, *status, *ts),
+            MarketMsg::Clock { ts } => return self.on_clock(*ts),
+            _ => {}
+        }
+        let (venue, ts) = (msg.venue(), msg.ts());
+        let mut events = self.on_activity(venue, msg.symbol(), ts);
+        events.extend(self.on_data(msg));
+        events
+    }
+
+    /// A venue status message: emits `VenueStatus` on change, then any `ReferenceVenue` change.
+    fn on_status(&mut self, venue: Venue, status: VenueStatusKind, ts: TimeMs) -> Vec<Event> {
+        let mut events = Vec::new();
+        self.set_venue_status(venue, status, ts, &mut events);
+        events
+    }
+
+    fn set_venue_status(
+        &mut self,
+        venue: Venue,
+        status: VenueStatusKind,
+        ts: TimeMs,
+        events: &mut Vec<Event>,
+    ) {
+        if self.venues.set_status(venue, status) {
+            events.push(Event::VenueStatus { venue, status, ts });
+            self.reference_events(ts, events);
+        }
+    }
+
+    /// Recomputes every Reference_Venue, emits `ReferenceVenue` for each change, and moves the
+    /// Mark_Price of a changed symbol to the new reference pair's last price (Req 15.7).
+    fn reference_events(&mut self, ts: TimeMs, events: &mut Vec<Event>) {
+        for (symbol, reference) in self.venues.refresh_references() {
+            events.push(Event::ReferenceVenue {
+                symbol: symbol.to_owned(),
+                venue: reference,
+            });
+            let new_mark = reference
+                .and_then(|v| self.pairs.get(&(v, symbol.to_owned())))
+                .and_then(|p| p.last_price);
+            if let Some(price) = new_mark
+                && self.mark_price.insert(symbol.to_owned(), price) != Some(price)
+            {
+                self.now = self.now.max(ts);
+                self.refresh_unrealized(symbol, &BTreeSet::new(), events);
+            }
+        }
+    }
+
+    /// Message arrival on (`venue`, `symbol`): a stale pair becomes `ok` again and a venue that
+    /// was `connecting`, `stale`, or `down` becomes `connected`.
+    fn on_activity(&mut self, venue: Venue, symbol: &str, ts: TimeMs) -> Vec<Event> {
+        let mut events = Vec::new();
+        if self.venues.clear_stale(venue, symbol) {
+            events.push(Event::PairStatus {
+                venue,
+                symbol: symbol.to_owned(),
+                health: if self.venues.is_suspect(venue, symbol) {
+                    PairHealth::Suspect
+                } else {
+                    PairHealth::Ok
+                },
+                ts,
+            });
+        }
+        if matches!(
+            self.venues.status(venue),
+            Some(VenueStatusKind::Connecting | VenueStatusKind::Stale | VenueStatusKind::Down)
+        ) {
+            self.set_venue_status(venue, VenueStatusKind::Connected, ts, &mut events);
+        }
+        events
+    }
+
+    /// The runtime's wall-clock tick (design D6). A live pair silent for more than 15 s (CEX)
+    /// or 20 s (DEX) becomes `stale`; a `connected` venue whose pairs are all stale becomes
+    /// `stale`. The `replay` venue is exempt.
+    fn on_clock(&mut self, ts: TimeMs) -> Vec<Event> {
+        let mut events = Vec::new();
+        let silent: Vec<(Venue, String)> = self
+            .pairs
+            .iter()
+            .filter(|((venue, _), _)| *venue != Venue::Replay)
+            .filter_map(|((venue, symbol), pair)| {
+                let limit = match venue.kind() {
+                    VenueKind::Cex => CEX_STALE_MS,
+                    VenueKind::Dex => DEX_STALE_MS,
+                };
+                let last = pair.last_ts?;
+                (ts.saturating_sub(last) > limit).then(|| (*venue, symbol.clone()))
+            })
+            .collect();
+        for (venue, symbol) in silent {
+            if self.venues.mark_stale(venue, &symbol) {
+                events.push(Event::PairStatus {
+                    venue,
+                    symbol,
+                    health: PairHealth::Stale,
+                    ts,
+                });
+            }
+        }
+        for venue in Venue::LIVE {
+            if self.venues.status(venue) != Some(VenueStatusKind::Connected) {
+                continue;
+            }
+            let mut seen = false;
+            let mut all_stale = true;
+            for ((v, symbol), pair) in &self.pairs {
+                if *v == venue && pair.last_ts.is_some() {
+                    seen = true;
+                    all_stale &= self.venues.is_stale(venue, symbol);
+                }
+            }
+            if seen && all_stale {
+                self.set_venue_status(venue, VenueStatusKind::Stale, ts, &mut events);
+            }
+        }
+        events
+    }
+
+    /// Applies one price observation to the pair: its last price, the venue's candles, and the
+    /// pair's indicators for every timeframe whose bar changed (Req 8.1 to 8.3, 10.1). Returns
+    /// each changed bar with its indicator values, in [`Timeframe::ALL`] order.
+    fn apply_price(
+        &mut self,
+        venue: Venue,
+        symbol: &str,
+        price: Price,
+        qty: Qty,
+        ts: TimeMs,
+    ) -> Vec<(Timeframe, Bar, Option<IndicatorValues>)> {
+        let changed = self.candles.on_trade(venue, symbol, price, qty, ts);
+        if changed.is_empty() {
+            let dropped = self.candles.dropped_for(venue);
+            debug!(
+                %venue,
+                symbol,
+                ts,
+                dropped_total = dropped.total(),
+                ?dropped,
+                "trade not applied to candles"
+            );
+        }
+        let pair = self.pair_mut(venue, symbol);
+        pair.last_price = Some(price);
+        pair.last_ts = Some(ts);
+        changed
+            .into_iter()
+            .map(|(timeframe, bar)| {
+                let values = pair.indicators.entry(timeframe).or_default().update(&bar);
+                (timeframe, bar, values)
+            })
+            .collect()
+    }
+
+    /// [`Self::apply_price`] for a DEX price sample: the bars take the price with volume zero.
+    fn apply_sample(
+        &mut self,
+        venue: Venue,
+        symbol: &str,
+        price: Price,
+        ts: TimeMs,
+    ) -> Vec<(Timeframe, Bar, Option<IndicatorValues>)> {
+        let changed = self.candles.on_sample(venue, symbol, price, ts);
+        let pair = self.pair_mut(venue, symbol);
+        pair.last_price = Some(price);
+        pair.last_ts = Some(ts);
+        changed
+            .into_iter()
+            .map(|(timeframe, bar)| {
+                let values = pair.indicators.entry(timeframe).or_default().update(&bar);
+                (timeframe, bar, values)
+            })
+            .collect()
+    }
+
+    /// The live Candle (and Indicators) events for the changed bars of `apply_price`, for the
+    /// subscribed timeframes of the pair only. An Indicators event follows its Candle event
+    /// (Req 8.8, 10.2).
+    fn candle_events(
+        &self,
+        venue: Venue,
+        symbol: &str,
+        applied: Vec<(Timeframe, Bar, Option<IndicatorValues>)>,
+    ) -> Vec<Event> {
+        let Some(pair) = self.pairs.get(&(venue, symbol.to_owned())) else {
+            return Vec::new();
+        };
+        let mut updates = Vec::new();
+        for (timeframe, bar, values) in applied {
+            if !pair.subscriptions.contains(&timeframe) {
+                continue;
+            }
+            updates.push(Event::Candle {
+                venue,
+                symbol: symbol.to_owned(),
+                timeframe,
+                snapshot: false,
+                bars: vec![bar],
+                indicators: None,
+            });
+            if let Some(values) = values {
+                updates.push(Event::Indicators {
+                    venue,
+                    symbol: symbol.to_owned(),
+                    timeframe,
+                    ts: bar.t,
+                    values,
+                });
+            }
+        }
+        updates
+    }
+
+    /// Emits the pair's book when it is dirty and its 100 ms market-time window has passed
+    /// (Req 9.7). Runs after every market message of the pair, so a book that missed its
     /// window goes out with the next message after the window, of any kind.
-    fn book_if_due(&mut self, symbol: &str, ts: TimeMs, events: &mut Vec<Event>) {
-        let Some(state) = self.books.get_mut(symbol) else {
+    fn book_if_due(&mut self, venue: Venue, symbol: &str, ts: TimeMs, events: &mut Vec<Event>) {
+        let Some(state) = self
+            .pairs
+            .get_mut(&(venue, symbol.to_owned()))
+            .map(|p| &mut p.book)
+        else {
             return;
         };
         if !state.dirty {
@@ -653,13 +1003,13 @@ impl Engine {
         }
         let (bids, asks) = state.book.top(BOOK_LEVELS);
         events.push(Event::Book {
-            venue: self.venue,
+            venue,
             symbol: symbol.to_owned(),
             bids,
             asks,
             spread: state.book.spread(),
             imbalance_bps: state.book.imbalance_bps(BOOK_LEVELS),
-            synthetic: false,
+            synthetic: venue.kind() == VenueKind::Dex,
             ts,
         });
         state.last_emit_ts = Some(ts);
@@ -667,41 +1017,39 @@ impl Engine {
     }
 
     /// Adds the key and returns its snapshot (Req 8.7).
-    fn subscribe(&mut self, symbol: String, timeframe: Timeframe) -> Vec<Event> {
+    fn subscribe(&mut self, venue: Venue, symbol: String, timeframe: Timeframe) -> Vec<Event> {
         // The codec already refuses unknown symbols; checked again so the core never relies
         // on its caller (Req 4.2).
         if instrument(&symbol).is_none() {
             return vec![unknown_symbol(&symbol)];
         }
-        self.subscriptions
-            .entry(symbol.clone())
-            .or_default()
-            .insert(timeframe);
-        // Backfill mode only: one request per key until it succeeds or fails.
-        if let Some(states) = self.backfill.as_mut()
-            && let Entry::Vacant(slot) = states.entry((symbol.clone(), timeframe))
-        {
-            slot.insert(BackfillState::InFlight);
+        let backfill = self.backfill && venue == self.venue;
+        let pair = self.pair_mut(venue, &symbol);
+        pair.subscriptions.insert(timeframe);
+        // Backfill mode only (and only for the engine's market venue): one request per key
+        // until it succeeds or fails.
+        let request = backfill && !pair.backfill.contains_key(&timeframe);
+        if request {
+            pair.backfill.insert(timeframe, BackfillState::InFlight);
             self.history_requests.push(HistoryRequest {
                 symbol: symbol.clone(),
                 timeframe,
             });
         }
-        self.snapshot_events(&symbol, timeframe)
+        self.snapshot_events(venue, &symbol, timeframe)
     }
 
     /// The answer for one key: `Candle { snapshot: true }` with up to 500 bars, then one
     /// `Indicators` event for the newest bar when the key has any (Req 8.7, 10.2). Shared by
     /// `subscribe` and `warm_up`.
-    fn snapshot_events(&self, symbol: &str, timeframe: Timeframe) -> Vec<Event> {
-        let bars = self.candles.bars(symbol, timeframe);
-        let current = self
-            .indicators
-            .get(&(symbol.to_owned(), timeframe))
-            .and_then(SymbolIndicators::current);
-        let indicators = self
-            .indicators
-            .get(&(symbol.to_owned(), timeframe))
+    fn snapshot_events(&self, venue: Venue, symbol: &str, timeframe: Timeframe) -> Vec<Event> {
+        let bars = self.candles.bars_for(venue, symbol, timeframe);
+        let state = self
+            .pairs
+            .get(&(venue, symbol.to_owned()))
+            .and_then(|p| p.indicators.get(&timeframe));
+        let current = state.and_then(SymbolIndicators::current);
+        let indicators = state
             .map(|state| {
                 // Merge-join: both sides are ascending by `t`.
                 let mut points = Vec::with_capacity(bars.len());
@@ -716,7 +1064,7 @@ impl Engine {
             })
             .unwrap_or_default();
         let mut events = vec![Event::Candle {
-            venue: self.venue,
+            venue,
             symbol: symbol.to_owned(),
             timeframe,
             snapshot: true,
@@ -725,7 +1073,7 @@ impl Engine {
         }];
         if let Some((ts, values)) = current {
             events.push(Event::Indicators {
-                venue: self.venue,
+                venue,
                 symbol: symbol.to_owned(),
                 timeframe,
                 ts,
@@ -750,11 +1098,12 @@ impl Engine {
         if msgs.is_empty() {
             return Vec::new();
         }
-        let before = self.last_price.clone();
+        let before = self.mark_price.clone();
         let mut invalid_deltas: u64 = 0;
         for msg in msgs {
             match msg {
                 MarketMsg::Trade {
+                    venue,
                     symbol,
                     price,
                     qty,
@@ -762,26 +1111,37 @@ impl Engine {
                     ..
                 } => {
                     self.now = ts;
-                    self.last_price.insert(symbol.clone(), price);
-                    for (timeframe, bar) in self.candles.on_trade(&symbol, price, qty, ts) {
-                        self.indicators
-                            .entry((symbol.clone(), timeframe))
-                            .or_default()
-                            .update(&bar);
+                    if self.is_mark_source(venue, &symbol) {
+                        self.mark_price.insert(symbol.clone(), price);
                     }
+                    let _ = self.apply_price(venue, &symbol, price, qty, ts);
+                }
+                MarketMsg::PriceSample {
+                    venue,
+                    symbol,
+                    price,
+                    ts,
+                } => {
+                    self.now = ts;
+                    if self.is_mark_source(venue, &symbol) {
+                        self.mark_price.insert(symbol.clone(), price);
+                    }
+                    let _ = self.apply_price(venue, &symbol, price, Qty(1), ts);
                 }
                 MarketMsg::BookSnapshot {
+                    venue,
                     symbol,
                     bids,
                     asks,
                     ts,
                 } => {
                     self.now = ts;
-                    let state = self.books.entry(symbol).or_default();
+                    let state = &mut self.pair_mut(venue, &symbol).book;
                     state.book.apply_snapshot(&bids, &asks);
                     state.dirty = true;
                 }
                 MarketMsg::BookDelta {
+                    venue,
                     symbol,
                     side,
                     price,
@@ -789,26 +1149,28 @@ impl Engine {
                     ts,
                 } => {
                     self.now = ts;
-                    let state = self.books.entry(symbol).or_default();
+                    let state = &mut self.pair_mut(venue, &symbol).book;
                     if state.book.apply_delta(side, price, qty).is_ok() {
                         state.dirty = true;
                     } else {
                         invalid_deltas = invalid_deltas.saturating_add(1);
                     }
                 }
+                // Status and clock messages are live-only; warm-up never carries them.
+                MarketMsg::Status { .. } | MarketMsg::Clock { .. } => {}
             }
         }
         if invalid_deltas > 0 {
             debug!(invalid_deltas, "warm-up discarded invalid book deltas");
         }
         let mut events = Vec::new();
-        for (symbol, timeframes) in &self.subscriptions {
-            for &timeframe in timeframes {
-                events.extend(self.snapshot_events(symbol, timeframe));
+        for ((venue, symbol), pair) in &self.pairs {
+            for &timeframe in &pair.subscriptions {
+                events.extend(self.snapshot_events(*venue, symbol, timeframe));
             }
         }
         let changed: Vec<String> = self
-            .last_price
+            .mark_price
             .iter()
             .filter(|(symbol, price)| before.get(*symbol) != Some(*price))
             .map(|(symbol, _)| symbol.clone())
@@ -820,13 +1182,13 @@ impl Engine {
         events
     }
 
-    /// The symbol's Ticker24h from its 1h series, stamped with the latest market time.
-    fn ticker_event(&self, symbol: &str) -> Option<Event> {
-        let bars = self.candles.bars(symbol, Timeframe::H1);
+    /// The pair's Ticker24h from its 1h series, stamped with the latest market time.
+    fn ticker_event(&self, venue: Venue, symbol: &str) -> Option<Event> {
+        let bars = self.candles.bars_for(venue, symbol, Timeframe::H1);
         let stats = ticker::compute(&bars)?;
         Some(Event::Ticker24h {
             symbol: symbol.to_owned(),
-            venue: self.venue,
+            venue,
             ticker: stats.ticker,
             synthetic: false,
             ts: self.now,
@@ -835,39 +1197,40 @@ impl Engine {
 
     /// Adds the ticker subscription and answers at once if the symbol has hourly bars
     /// (Req 18.3). A repeat subscribe answers again.
-    fn subscribe_ticker(&mut self, symbol: String) -> Vec<Event> {
+    fn subscribe_ticker(&mut self, venue: Venue, symbol: String) -> Vec<Event> {
         if instrument(&symbol).is_none() {
             return vec![unknown_symbol(&symbol)];
         }
-        let event = self.ticker_event(&symbol);
-        self.ticker_throttle.reset(&symbol);
+        let event = self.ticker_event(venue, &symbol);
+        let now = self.now;
+        let pair = self.pair_mut(venue, &symbol);
+        pair.ticker_throttle.reset(&symbol);
         if event.is_some() {
-            self.ticker_throttle.take(&symbol, self.now);
+            pair.ticker_throttle.take(&symbol, now);
         }
-        self.ticker_subs.insert(symbol);
+        pair.ticker_sub = true;
         event.into_iter().collect()
     }
 
     /// Stops the ticker stream and resets its throttle. Emits nothing.
-    fn unsubscribe_ticker(&mut self, symbol: &str) -> Vec<Event> {
+    fn unsubscribe_ticker(&mut self, venue: Venue, symbol: &str) -> Vec<Event> {
         if instrument(symbol).is_none() {
             return vec![unknown_symbol(symbol)];
         }
-        self.ticker_subs.remove(symbol);
-        self.ticker_throttle.reset(symbol);
+        if let Some(pair) = self.pairs.get_mut(&(venue, symbol.to_owned())) {
+            pair.ticker_sub = false;
+            pair.ticker_throttle.reset(symbol);
+        }
         Vec::new()
     }
 
     /// Removes the key. Emits nothing, also for a key that was not subscribed.
-    fn unsubscribe(&mut self, symbol: &str, timeframe: Timeframe) -> Vec<Event> {
+    fn unsubscribe(&mut self, venue: Venue, symbol: &str, timeframe: Timeframe) -> Vec<Event> {
         if instrument(symbol).is_none() {
             return vec![unknown_symbol(symbol)];
         }
-        if let Some(tfs) = self.subscriptions.get_mut(symbol) {
-            tfs.remove(&timeframe);
-            if tfs.is_empty() {
-                self.subscriptions.remove(symbol);
-            }
+        if let Some(pair) = self.pairs.get_mut(&(venue, symbol.to_owned())) {
+            pair.subscriptions.remove(&timeframe);
         }
         Vec::new()
     }
@@ -1011,6 +1374,7 @@ mod tests {
 
     fn trade_msg(symbol: &str, price: i64, qty: i64, ts: TimeMs) -> MarketMsg {
         MarketMsg::Trade {
+            venue: protocol::Venue::Replay,
             symbol: symbol.into(),
             price: Price(price),
             qty: Qty(qty),
@@ -1141,7 +1505,7 @@ mod tests {
         );
         // A book snapshot fills it: Book event first, then Fill and the filled ack.
         let events = engine.on_market(snap("ETH-USD", &[(9, 1)], &[(11, 8)], 50));
-        assert_eq!(events.len(), 4);
+        assert_eq!(events.len(), 5);
         assert!(is_book(&events[0]));
         assert!(matches!(
             &events[1],
@@ -1163,6 +1527,8 @@ mod tests {
                 ..
             }
         ));
+        // Req 16.9: one Balance for the account closes the fill's events.
+        assert!(matches!(&events[4], Event::Balance { account_id, .. } if account_id == &guest));
         // Nothing left to cancel.
         assert_eq!(
             engine.on_command(Command::CancelAll {
@@ -1172,8 +1538,10 @@ mod tests {
         );
         // ResetAccount flattens the account: one flat Position per instrument (Req 14.3).
         let reset = engine.on_command(Command::ResetAccount { account_id: guest });
-        assert_eq!(reset.len(), INSTRUMENTS.len());
-        assert!(reset.iter().all(|e| matches!(
+        // ... followed by the account's Balance back at the Starting_Balance (Req 16.1).
+        assert_eq!(reset.len(), INSTRUMENTS.len() + 1);
+        assert!(matches!(reset.last(), Some(Event::Balance { .. })));
+        assert!(reset[..INSTRUMENTS.len()].iter().all(|e| matches!(
             e,
             Event::Position {
                 qty: Qty(0),
@@ -1200,10 +1568,20 @@ mod tests {
                 stop_price: Price(105),
             },
         });
-        assert_eq!(events.len(), 1);
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            &events[0],
+            Event::OrderAck {
+                status: OrderStatus::Accepted,
+                ..
+            }
+        ));
+        assert!(matches!(&events[1], Event::Balance { .. }));
         let events = engine.on_market(trade_msg(BTC, 105, 1, 200));
         assert_eq!(events[0], trade_event(BTC, 105, 1, 200));
-        let tail = &events[events.len() - 3..];
+        // Fill, filled ack, Position, then the account's Balance (Req 16.9).
+        assert!(matches!(events.last(), Some(Event::Balance { .. })));
+        let tail = &events[events.len() - 4..events.len() - 1];
         assert!(matches!(
             &tail[0],
             Event::Fill {
@@ -1227,6 +1605,7 @@ mod tests {
     fn market_trade_becomes_a_trade_event() {
         let mut engine = Engine::new();
         let msg = MarketMsg::Trade {
+            venue: protocol::Venue::Replay,
             symbol: "SOL-USD".into(),
             price: Price(15_000),
             qty: Qty(7),
@@ -1254,6 +1633,7 @@ mod tests {
 
     fn snap(symbol: &str, bids: &[(i64, i64)], asks: &[(i64, i64)], ts: TimeMs) -> MarketMsg {
         MarketMsg::BookSnapshot {
+            venue: protocol::Venue::Replay,
             symbol: symbol.into(),
             bids: bids.iter().map(|&(p, q)| lv(p, q)).collect(),
             asks: asks.iter().map(|&(p, q)| lv(p, q)).collect(),
@@ -1263,6 +1643,7 @@ mod tests {
 
     fn delta(symbol: &str, side: Side, price: i64, qty: i64, ts: TimeMs) -> MarketMsg {
         MarketMsg::BookDelta {
+            venue: protocol::Venue::Replay,
             symbol: symbol.into(),
             side,
             price: Price(price),
@@ -1309,7 +1690,7 @@ mod tests {
     }
 
     #[test]
-    fn second_book_message_within_100ms_is_withheld() {
+    fn second_book_message_within_50ms_is_withheld() {
         let mut engine = Engine::new();
         assert_eq!(
             engine
@@ -1317,28 +1698,28 @@ mod tests {
                 .len(),
             1
         );
-        assert_eq!(engine.on_market(delta(BTC, Side::Buy, 98, 2, 1_099)), []);
+        assert_eq!(engine.on_market(delta(BTC, Side::Buy, 98, 2, 1_049)), []);
     }
 
     #[test]
     fn pending_book_is_emitted_by_a_later_trade_after_the_window() {
         let mut engine = Engine::new();
         engine.on_market(snap(BTC, &[(99, 1)], &[(101, 1)], 1_000));
-        assert_eq!(engine.on_market(delta(BTC, Side::Buy, 98, 2, 1_050)), []);
+        assert_eq!(engine.on_market(delta(BTC, Side::Buy, 98, 2, 1_020)), []);
         // A trade inside the window emits only the trade.
         assert_eq!(
-            engine.on_market(trade_msg(BTC, 100, 1, 1_099)),
-            [trade_event(BTC, 100, 1, 1_099)]
+            engine.on_market(trade_msg(BTC, 100, 1, 1_049)),
+            [trade_event(BTC, 100, 1, 1_049)]
         );
         // A trade after the window: Trade first, then the pending Book.
-        let events = engine.on_market(trade_msg(BTC, 100, 1, 1_100));
+        let events = engine.on_market(trade_msg(BTC, 100, 1, 1_050));
         assert_eq!(events.len(), 2);
-        assert_eq!(events[0], trade_event(BTC, 100, 1, 1_100));
+        assert_eq!(events[0], trade_event(BTC, 100, 1, 1_050));
         let Event::Book { bids, ts, .. } = &events[1] else {
             panic!("expected book, got {:?}", events[1]);
         };
         assert_eq!(bids, &vec![lv(99, 1), lv(98, 2)]);
-        assert_eq!(*ts, 1_100);
+        assert_eq!(*ts, 1_050);
         // Clean now: nothing more is emitted.
         assert!(
             !engine
@@ -1400,7 +1781,12 @@ mod tests {
                 .iter()
                 .any(is_book)
         );
-        assert_eq!(engine.books[BTC].book.bids.get(&Price(99)), Some(&Qty(1)));
+        assert_eq!(
+            engine
+                .pair(Venue::Replay, BTC)
+                .and_then(|p| p.book.book.bids.get(&Price(99))),
+            Some(&Qty(1))
+        );
     }
 
     #[test]
@@ -1435,7 +1821,7 @@ mod tests {
         assert_eq!(run(), run());
     }
 
-    /// Sanity run on generated data: at most one Book per symbol per 100 ms of market time,
+    /// Sanity run on generated data: at most one Book per symbol per `BOOK_INTERVAL_MS` of market time,
     /// and no crossed book.
     #[test]
     fn synth_books_are_throttled_and_never_crossed() {
@@ -1460,7 +1846,7 @@ mod tests {
                 {
                     books += 1;
                     if let Some(prev) = last.insert(symbol.clone(), ts) {
-                        assert!(ts - prev >= 100, "{symbol}: {prev} -> {ts}");
+                        assert!(ts - prev >= BOOK_INTERVAL_MS, "{symbol}: {prev} -> {ts}");
                     }
                     if let (Some(b), Some(a)) = (bids.first(), asks.first()) {
                         assert!(b.price < a.price, "{symbol}: {b:?} vs {a:?}");
@@ -1618,7 +2004,7 @@ mod tests {
         engine.on_command(subscribe(BTC, Timeframe::M1));
         engine.on_market(trade_msg(BTC, 100, 1, 0));
         assert_eq!(engine.on_command(unsubscribe(BTC, Timeframe::M1)), []);
-        assert_eq!(engine.subscriptions, BTreeMap::new());
+        assert!(engine.pairs.values().all(|p| p.subscriptions.is_empty()));
 
         // Still built while nobody listens.
         assert_eq!(
@@ -1759,18 +2145,18 @@ mod tests {
     fn unknown_symbols_are_refused() {
         let mut engine = Engine::new();
         for cmd in [
-            subscribe("DOGE-USD", Timeframe::M1),
-            unsubscribe("DOGE-USD", Timeframe::M1),
+            subscribe("NOPE-USD", Timeframe::M1),
+            unsubscribe("NOPE-USD", Timeframe::M1),
         ] {
             match engine.on_command(cmd).as_slice() {
                 [Event::Error { code, message }] => {
                     assert_eq!(*code, ErrorCode::UnknownSymbol);
-                    assert!(message.contains("DOGE-USD"), "{message}");
+                    assert!(message.contains("NOPE-USD"), "{message}");
                 }
                 other => panic!("expected one error, got {other:?}"),
             }
         }
-        assert!(engine.subscriptions.is_empty());
+        assert!(engine.pairs.values().all(|p| p.subscriptions.is_empty()));
     }
 
     /// Sanity run on generated data: 10 minutes of all three symbols through the engine.
@@ -1911,7 +2297,7 @@ mod tests {
         ));
         let expected = SymbolIndicators::from_bars(&merged);
         let key = (BTC.to_owned(), Timeframe::M1);
-        let actual = engine.indicators.get(&key).map(SymbolIndicators::history);
+        let actual = engine.indicators_get(&key).map(SymbolIndicators::history);
         assert_eq!(actual, Some(expected.history()));
 
         // A second result for the same key is ignored.
@@ -1999,6 +2385,7 @@ mod paper_tests {
             qty: Qty(qty),
         };
         MarketMsg::BookSnapshot {
+            venue: protocol::Venue::Replay,
             symbol: BTC.into(),
             bids: vec![lv(99, 50)],
             asks: vec![lv(101, 50)],
@@ -2008,6 +2395,7 @@ mod paper_tests {
 
     fn trade(price: i64, ts: TimeMs) -> MarketMsg {
         MarketMsg::Trade {
+            venue: protocol::Venue::Replay,
             symbol: BTC.into(),
             price: Price(price),
             qty: Qty(1),
@@ -2036,7 +2424,11 @@ mod paper_tests {
         let mut engine = Engine::new();
         engine.on_market(snap(0));
         let events = engine.on_command(market("guest", "o-1", Side::Buy, 3));
-        assert_eq!(events.len(), 4);
+        // Ack, fill, filled ack, Position, then the account's Balance (Req 16.9).
+        assert_eq!(events.len(), 5);
+        assert!(
+            matches!(&events[4], Event::Balance { account_id, .. } if account_id == &acct("guest"))
+        );
         assert!(matches!(
             &events[0],
             Event::OrderAck {
@@ -2118,8 +2510,10 @@ mod paper_tests {
                 ..
             }
         ));
-        // One Position for the fill, with unrealized at the new last price: (105 − 101) × 2.
-        assert_eq!(events.len(), 4);
+        // One Position for the fill, with unrealized at the new last price: (105 − 101) × 2,
+        // then the account's Balance.
+        assert_eq!(events.len(), 5);
+        assert!(matches!(events[4], Event::Balance { .. }));
         assert_eq!(positions(&events), [("guest", 2, 8)]);
     }
 
@@ -2161,8 +2555,15 @@ mod paper_tests {
                 OrderKind::Limit { price: Price(50) },
             )
         };
-        assert_eq!(engine.on_command(rest("a", "o-1")).len(), 1);
-        assert_eq!(engine.on_command(rest("b", "o-2")).len(), 1);
+        // Accepted ack, then the Balance that reflects the reserved funds.
+        let acks = |events: Vec<Event>| {
+            events
+                .into_iter()
+                .filter(|e| !matches!(e, Event::Balance { .. }))
+                .count()
+        };
+        assert_eq!(acks(engine.on_command(rest("a", "o-1"))), 1);
+        assert_eq!(acks(engine.on_command(rest("b", "o-2"))), 1);
         assert_eq!(
             engine.on_command(rest("c", "o-3")),
             [Event::OrderRejected {
@@ -2232,7 +2633,12 @@ mod paper_tests {
         let events = engine.on_command(Command::ResetAccount {
             account_id: acct("guest"),
         });
-        assert_eq!(events.len(), 1 + INSTRUMENTS.len());
+        // Cancel ack, one flat Position per symbol, then the Balance (Req 16.1).
+        assert_eq!(events.len(), 2 + INSTRUMENTS.len());
+        assert!(matches!(
+            events.last(),
+            Some(Event::Balance { account_id, .. }) if account_id == &acct("guest")
+        ));
         assert_eq!(
             events[0],
             Event::OrderAck {
@@ -2292,6 +2698,7 @@ mod ticker_tests {
 
     fn trade(price: i64, ts: TimeMs) -> MarketMsg {
         MarketMsg::Trade {
+            venue: protocol::Venue::Replay,
             symbol: "BTC-USD".into(),
             price: Price(price),
             qty: Qty(1),
@@ -2329,14 +2736,21 @@ mod ticker_tests {
 
     #[test]
     fn subscribe_with_data_answers_at_once_and_marks_partial() {
-        let mut engine = Engine::new().with_venue(Venue::Coinbase);
+        // The ticker carries the venue of the subscription (v2), here the replay venue that
+        // `sub()` and `trade()` use.
+        let mut engine = Engine::new();
         engine.on_market(trade(100, HOUR));
         engine.on_market(trade(110, 2 * HOUR));
         let events = engine.on_command(sub());
-        let [Event::Ticker24h { venue, ticker, ts, .. }] = events.as_slice() else {
+        let [
+            Event::Ticker24h {
+                venue, ticker, ts, ..
+            },
+        ] = events.as_slice()
+        else {
             panic!("expected one ticker, got {events:?}");
         };
-        assert_eq!(*venue, Venue::Coinbase);
+        assert_eq!(*venue, Venue::Replay);
         assert_eq!(*ts, 2 * HOUR);
         assert!(ticker.partial);
         assert_eq!(ticker.change_bps, 1_000);
@@ -2348,7 +2762,10 @@ mod ticker_tests {
         engine.on_market(trade(100, HOUR));
         engine.on_command(sub());
         assert!(tickers(&engine.on_market(trade(101, HOUR + 500))).is_empty());
-        assert_eq!(tickers(&engine.on_market(trade(102, HOUR + 1_000))).len(), 1);
+        assert_eq!(
+            tickers(&engine.on_market(trade(102, HOUR + 1_000))).len(),
+            1
+        );
         assert!(tickers(&engine.on_market(trade(103, HOUR + 1_500))).is_empty());
     }
 

@@ -45,14 +45,7 @@ pub enum Timeframe {
 
 impl Timeframe {
     /// Every timeframe, shortest first.
-    pub const ALL: [Timeframe; 6] = [
-        Self::M1,
-        Self::M5,
-        Self::M15,
-        Self::H1,
-        Self::H4,
-        Self::D1,
-    ];
+    pub const ALL: [Timeframe; 6] = [Self::M1, Self::M5, Self::M15, Self::H1, Self::H4, Self::D1];
 
     /// Length of one interval in milliseconds.
     pub const fn millis(self) -> i64 {
@@ -207,7 +200,9 @@ impl<'de> Deserialize<'de> for AccountId {
 /// (Req 15.1, 15.2, design "Types").
 ///
 /// On the wire: `"coinbase"`, `"backpack"`, `"jupiter"`, `"raydium"`, `"replay"`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, TS)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, TS,
+)]
 #[serde(rename_all = "snake_case")]
 #[ts(export, export_to = crate::TS_EXPORT_DIR)]
 pub enum Venue {

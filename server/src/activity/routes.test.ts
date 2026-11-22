@@ -69,9 +69,14 @@ describe("activityRoutes", () => {
     const app = setup();
     const journal = (await (await get(app, "/journal?session=all", "good")).json()) as Record<string, unknown>[];
     expect(journal.map((r) => r.type)).toEqual(["rejection", "order"]);
-    const pos = (await (await get(app, "/positions", "good")).json()) as Record<string, unknown>[];
-    expect(pos[0]).toMatchObject({ symbol: "BTC-USD", qty: "3" });
-    expect(await (await get(app, "/positions")).json()).toEqual([]);
+    // v2: `/positions` is `{ positions, balance }`; balance is null when the account view has none.
+    const pos = (await (await get(app, "/positions", "good")).json()) as {
+      positions: Record<string, unknown>[];
+      balance: unknown;
+    };
+    expect(pos.positions[0]).toMatchObject({ symbol: "BTC-USD", qty: "3" });
+    expect(pos.balance).toBeNull();
+    expect(await (await get(app, "/positions")).json()).toEqual({ positions: [], balance: null });
   });
 
   test("bad token gives 401", async () => {

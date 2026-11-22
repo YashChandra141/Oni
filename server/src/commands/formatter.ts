@@ -2,6 +2,7 @@
 //
 // Canonical form (ONE per command, so `parse(format(c))` returns `c`, Req 21.9):
 //   BUY|SELL <FULL-SYMBOL> <qty> [LMT <price> | STP <price>]
+//   BUY|SELL <FULL-SYMBOL> <qty> TWAP <slices> <seconds>
 //   CANCEL ALL
 //   FLAT
 // - Keywords are upper case. The symbol is the full symbol (`BTC-USD`), never the short name.
@@ -45,6 +46,11 @@ export function formatCommand(command: ParsedCommand): string {
       return "CANCEL ALL";
     case "flatten_all":
       return "FLAT";
+    case "twap": {
+      const instrument = instrumentBySymbol(command.symbol);
+      if (instrument === undefined) throw new RangeError("unknown symbol");
+      return `${command.side === "buy" ? "BUY" : "SELL"} ${command.symbol} ${unitsToTrimmed(command.totalQty, instrument.qty_decimals)} TWAP ${command.slices} ${command.intervalS}`;
+    }
     case "place": {
       const instrument = instrumentBySymbol(command.symbol);
       if (instrument === undefined) throw new RangeError("unknown symbol");

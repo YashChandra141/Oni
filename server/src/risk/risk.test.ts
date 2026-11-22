@@ -73,7 +73,7 @@ describe("notionalMoney", () => {
   });
 
   test("throws RangeError for an unknown symbol", () => {
-    expect(() => notionalMoney("DOGE-USD", 1n, 1n)).toThrow(RangeError);
+    expect(() => notionalMoney("NOPE-USD", 1n, 1n)).toThrow(RangeError);
   });
 });
 
@@ -84,6 +84,13 @@ describe("limits", () => {
     expect(l.maxPositionLots["BTC-USD"]).toBe(5n * 10n ** 8n);
     expect(l.maxPositionLots["ETH-USD"]).toBe(100n * 10n ** 8n);
     expect(l.maxPositionLots["SOL-USD"]).toBe(2_000n * 10n ** 8n);
+    expect(l.maxPositionLots["BNB-USD"]).toBe(1_000n * 10n ** 8n);
+    expect(l.maxPositionLots["XRP-USD"]).toBe(500_000n * 10n ** 6n);
+    expect(l.maxPositionLots["DOGE-USD"]).toBe(2_000_000n * 10n ** 4n);
+    expect(l.maxPositionLots["JUP-USD"]).toBe(1_000_000n * 10n ** 4n);
+    expect(l.maxPositionLots["WIF-USD"]).toBe(500_000n * 10n ** 4n);
+    expect(l.maxPositionLots["BONK-USD"]).toBe(100_000_000_000n);
+    expect(l.maxPositionLots["PEPE-USD"]).toBe(100_000_000_000n);
     expect(l.maxOpenOrders).toBe(50);
     expect(l.priceBandBps).toBe(1000);
     expect(l.rateLimitPerSecond).toBe(10);
@@ -324,7 +331,7 @@ describe("rule order: the first failure wins", () => {
 
 describe("invalid input throws instead of approving", () => {
   test("unknown symbol, non-positive qty or price", () => {
-    expect(() => checkOrder(order({ symbol: "DOGE-USD" }), ctx())).toThrow(RangeError);
+    expect(() => checkOrder(order({ symbol: "NOPE-USD" }), ctx())).toThrow(RangeError);
     expect(() => checkOrder(order({ qty: 0n }), ctx())).toThrow(RangeError);
     expect(() => checkOrder(order({ qty: -1n }), ctx())).toThrow(RangeError);
     expect(() => checkOrder(order({ kind: { type: "limit", price: 0n } }), ctx())).toThrow(

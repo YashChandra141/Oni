@@ -71,6 +71,8 @@ export interface AccountView {
   openOrderCount(accountId: AccountId): number;
   /** Non-flat positions of the account. */
   positions(accountId: AccountId): PositionRow[];
+  /** Latest engine Balance of the account, or undefined before the first Balance event. */
+  balance?(accountId: AccountId): BalanceRow | undefined;
 }
 
 export function createEmptyAccountView(): AccountView {

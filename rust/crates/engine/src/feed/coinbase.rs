@@ -378,8 +378,8 @@ mod tests {
     #[tokio::test]
     async fn unknown_symbol_fails_before_any_request() {
         let mut stats = DropStats::new();
-        let result = fetch_candles("DOGE-USD", Timeframe::M1, 1_000, &mut stats).await;
-        assert_eq!(result, Err(FetchError::UnknownSymbol("DOGE-USD".into())));
+        let result = fetch_candles("NOPE-USD", Timeframe::M1, 1_000, &mut stats).await;
+        assert_eq!(result, Err(FetchError::UnknownSymbol("NOPE-USD".into())));
     }
 
     fn sample(wrapped: &str) -> String {
@@ -459,6 +459,7 @@ mod tests {
             assert_eq!(
                 first,
                 MarketMsg::BookSnapshot {
+                    venue: protocol::Venue::Replay,
                     symbol: "BTC-USD".into(),
                     bids: vec![level(189_925, 350_000_000), level(189_920, 1_225_000_000)],
                     asks: vec![level(189_926, 175_000_000), level(189_930, 800_000_000)],

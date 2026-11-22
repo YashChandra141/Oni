@@ -278,6 +278,7 @@ impl SnapshotFetcher for Fetcher {
 
 fn trade(symbol: &str, price: i64, qty: i64, side: Side, ts: i64) -> MarketMsg {
     MarketMsg::Trade {
+        venue: protocol::Venue::Replay,
         symbol: symbol.into(),
         price: Price(price),
         qty: Qty(qty),
@@ -291,7 +292,7 @@ fn coinbase_trade_variants_table() {
     let multi = r#"{"channel":"market_trades","timestamp":"2026-11-14T04:53:10.274Z","events":[
         {"type":"update","trades":[
             {"product_id":"ETH-USD","price":"1899.25","size":"0.5","side":"BUY","time":"2026-11-14T04:53:09.100Z"},
-            {"product_id":"DOGE-USD","price":"1","size":"1","side":"BUY","time":"2026-11-14T04:53:09.100Z"},
+            {"product_id":"NOPE-USD","price":"1","size":"1","side":"BUY","time":"2026-11-14T04:53:09.100Z"},
             {"product_id":"ETH-USD","price":"1899.26","size":"0.25","side":"SELL","time":"2026-11-14T04:53:09.200Z"}
         ]}]}"#;
     let cases: Vec<(&str, String, Vec<MarketMsg>)> = vec![
@@ -497,6 +498,7 @@ fn backpack_rest_snapshot_then_ws_update_pipeline() {
         qty: Qty(qty),
     };
     let delta = |side, price, qty| MarketMsg::BookDelta {
+        venue: protocol::Venue::Replay,
         symbol: "SOL-USD".into(),
         side,
         price: Price(price),
@@ -507,6 +509,7 @@ fn backpack_rest_snapshot_then_ws_update_pipeline() {
         out.msgs,
         vec![
             MarketMsg::BookSnapshot {
+                venue: protocol::Venue::Replay,
                 symbol: "SOL-USD".into(),
                 bids: vec![
                     lvl(7_546, 30_472_000_000),
@@ -1005,6 +1008,16 @@ fn guard_detects_forbidden_words_in_code_but_not_in_comments_or_tests() {
     assert!(forbidden_hits("let x = 1;\n#[cfg(test)]\nmod t { \"Bearer\" }").is_empty());
 }
 
+/// The exact (trimmed) code lines of `http.rs` that handle the optional `JUPITER_API_KEY` and its
+/// `x-api-key` header. `https_get` attaches it for the Jupiter host only; it authorizes no
+/// trading (trading-safety rule 1). Any other flagged line in `http.rs` still fails the guard.
+const JUPITER_KEY_LINES_IN_HTTP: [&str; 4] = [
+    "api_key: Option<&str>,",
+    "let key_line = match api_key {",
+    "format!(\"x-api-key: {k}\\r\\n\")",
+    "std::env::var(\"JUPITER_API_KEY\")",
+];
+
 #[test]
 fn public_adapter_sources_contain_no_auth_strings() {
     let sources = [
@@ -1015,7 +1028,11 @@ fn public_adapter_sources_contain_no_auth_strings() {
         ("backpack_parse.rs", include_str!("backpack_parse.rs")),
     ];
     for (name, source) in sources {
-        let hits = forbidden_hits(source);
+        let mut hits = forbidden_hits(source);
+        if name == "http.rs" {
+            // The one allowed credential (trading-safety rule 1): the optional Jupiter key.
+            hits.retain(|(line, _)| !JUPITER_KEY_LINES_IN_HTTP.contains(&line.as_str()));
+        }
         assert!(
             hits.is_empty(),
             "{name} contains auth-like strings: {hits:?}"

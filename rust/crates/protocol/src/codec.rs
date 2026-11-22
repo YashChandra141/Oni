@@ -514,14 +514,14 @@ mod tests {
     #[test]
     fn unknown_symbols_are_named() {
         for line in [
-            subscription("subscribe", "DOGE-USD"),
-            subscription("unsubscribe", "DOGE-USD"),
-            place_order("DOGE-USD", "10", r#"{"type":"market"}"#),
+            subscription("subscribe", "NOPE-USD"),
+            subscription("unsubscribe", "NOPE-USD"),
+            place_order("NOPE-USD", "10", r#"{"type":"market"}"#),
         ] {
             let e = err(&line);
-            assert_eq!(e, DecodeError::UnknownSymbol("DOGE-USD".into()));
+            assert_eq!(e, DecodeError::UnknownSymbol("NOPE-USD".into()));
             assert_eq!(e.code(), ErrorCode::UnknownSymbol);
-            assert_eq!(e.to_string(), r#"unknown symbol "DOGE-USD""#);
+            assert_eq!(e.to_string(), r#"unknown symbol "NOPE-USD""#);
         }
         // Short symbols are resolved by the command parser, not accepted by the engine.
         let short = subscription("subscribe", "BTC");

@@ -231,9 +231,10 @@ describe("EngineSupervisor stdout and stderr", () => {
     engine.out(`{"bad":"${SECRETS.openaiApiKey}${"x".repeat(1_000)}"}\n`);
     await tick();
 
+    // The wire parser keeps `emit_us`, which is null for a line the engine did not stamp (Req 33.2).
     expect(h.events).toEqual([
-      { type: "heartbeat", ts: 1 },
-      { type: "pong", id: 3 },
+      { type: "heartbeat", ts: 1, emit_us: null },
+      { type: "pong", id: 3, emit_us: null },
     ]);
     const dropped = h.logs.filter((l) => l.line.includes("dropped an invalid stdout line"));
     expect(dropped).toHaveLength(3);
@@ -252,7 +253,7 @@ describe("EngineSupervisor stdout and stderr", () => {
     // Just over the engine-stdout limit (512 KiB, fix task 5.1; the stdin limit stays 64 KiB).
     h.latest().out(`${"y".repeat(MAX_EVENT_LINE_BYTES + 1)}\n{"type":"heartbeat","ts":2}\n`);
     await tick();
-    expect(h.events).toEqual([{ type: "heartbeat", ts: 2 }]);
+    expect(h.events).toEqual([{ type: "heartbeat", ts: 2, emit_us: null }]);
     expect(h.logs.some((l) => l.level === "warn" && l.line.includes("oversized stdout line"))).toBe(true);
   });
 
@@ -435,8 +436,8 @@ describe("EngineSupervisor lifecycle", () => {
     h.latest().out('{"type":"heartbeat","ts":9}\n');
     await tick();
     expect(h.events).toEqual([
-      { type: "heartbeat", ts: 8 },
-      { type: "heartbeat", ts: 9 },
+      { type: "heartbeat", ts: 8, emit_us: null },
+      { type: "heartbeat", ts: 9, emit_us: null },
     ]);
   });
 

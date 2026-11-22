@@ -743,7 +743,13 @@ mod tests {
             .into_iter()
             .map(|i| i.symbol)
             .collect();
-        assert_eq!(symbols, ["BTC-USD", "ETH-USD", "SOL-USD"]);
+        assert_eq!(
+            symbols,
+            [
+                "BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD", "XRP-USD", "DOGE-USD", "JUP-USD",
+                "WIF-USD", "BONK-USD", "PEPE-USD"
+            ]
+        );
     }
 
     #[test]

@@ -3,7 +3,8 @@
 
 import { z } from "zod";
 
-import { instrumentBySymbol } from "../instruments.ts";
+import { INSTRUMENTS, instrumentBySymbol } from "../instruments.ts";
+import type { InstrumentInfo } from "../protocol.ts";
 
 /** Decimal places in a Money value; mirrors `MONEY_DECIMALS` in rust/crates/protocol/src/num.rs. */
 export const MONEY_DECIMALS = 10;
@@ -21,16 +22,34 @@ export interface RiskLimits {
   readonly rateLimitPerSecond: number;
 }
 
-const LOTS_PER_UNIT = 10n ** 8n;
+/** Default maximum absolute position per symbol, in whole units of the base asset (design, Risk order table). */
+const MAX_POSITION_UNITS: Readonly<Record<string, bigint>> = {
+  "BTC-USD": 5n,
+  "ETH-USD": 100n,
+  "SOL-USD": 2_000n,
+  "BNB-USD": 1_000n,
+  "XRP-USD": 500_000n,
+  "DOGE-USD": 2_000_000n,
+  "JUP-USD": 1_000_000n,
+  "WIF-USD": 500_000n,
+  "BONK-USD": 100_000_000_000n,
+  "PEPE-USD": 100_000_000_000n,
+};
+
+/** Units from the table times 10^qty_decimals, capped at I64_MAX. A symbol missing from the table gets 1 lot. */
+function defaultMaxPositionLots(info: InstrumentInfo): bigint {
+  const units = MAX_POSITION_UNITS[info.symbol];
+  if (units === undefined) return 1n;
+  const lots = units * 10n ** BigInt(info.qty_decimals);
+  return lots > I64_MAX ? I64_MAX : lots;
+}
 
 export function defaultLimits(): RiskLimits {
+  const maxPositionLots: Record<string, bigint> = {};
+  for (const info of INSTRUMENTS) maxPositionLots[info.symbol] = defaultMaxPositionLots(info);
   return {
     maxOrderValue: 250_000n * 10n ** 10n,
-    maxPositionLots: {
-      "BTC-USD": 5n * LOTS_PER_UNIT,
-      "ETH-USD": 100n * LOTS_PER_UNIT,
-      "SOL-USD": 2_000n * LOTS_PER_UNIT,
-    },
+    maxPositionLots,
     maxOpenOrders: 50,
     priceBandBps: 1000,
     rateLimitPerSecond: 10,

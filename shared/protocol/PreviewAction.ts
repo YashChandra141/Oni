@@ -2,8 +2,9 @@
 import type { OrderKind } from "./OrderKind";
 import type { Qty } from "./Qty";
 import type { Side } from "./Side";
+import type { Venue } from "./Venue";
 
 /**
  * What an [`OrderPreview`] does when confirmed.
  */
-export type PreviewAction = { "type": "place", symbol: string, side: Side, qty: Qty, kind: OrderKind, } | { "type": "cancel_all" } | { "type": "flatten_all" };
+export type PreviewAction = { "type": "place", symbol: string, venue: Venue, side: Side, qty: Qty, kind: OrderKind, } | { "type": "twap", symbol: string, side: Side, venue: Venue, total_qty: Qty, slices: number, interval_s: number, } | { "type": "cancel_all" } | { "type": "flatten_all" };

@@ -56,7 +56,7 @@ export function createOrderActions(
     submitCommand(text) {
       if (text.trim().length === 0) return false;
       const requestId = nextRequestId();
-      if (!send(commandTextMessage(requestId, text))) return false;
+      if (!send(commandTextMessage(requestId, text, store.getState().selection.venue))) return false;
       store.getState().commandSent(requestId, text);
       return true;
     },
@@ -77,7 +77,7 @@ export function createOrderActions(
         return false;
       }
       const requestId = nextRequestId();
-      if (!send(commandTextMessage(requestId, result.text))) {
+      if (!send(commandTextMessage(requestId, result.text, state.selection.venue))) {
         state.addRejection("not connected");
         return false;
       }

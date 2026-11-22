@@ -413,8 +413,7 @@ mod tests {
 
     #[test]
     fn candle_json_without_indicators_parses_to_none() {
-        let line =
-            r#"{"type":"candle","venue":"replay","symbol":"SOL-USD","timeframe":"1m","snapshot":false,"bars":[]}"#;
+        let line = r#"{"type":"candle","venue":"replay","symbol":"SOL-USD","timeframe":"1m","snapshot":false,"bars":[]}"#;
         let parsed: Event = serde_json::from_str(line).unwrap();
         assert!(matches!(
             parsed,

@@ -89,6 +89,7 @@ fn command_account(cmd: &Command) -> Option<&AccountId> {
 /// A deep book: five bid levels below 100,000 ticks and five ask levels above, `BIG` lots each.
 fn deep_snapshot(symbol: &str, ts: TimeMs) -> MarketMsg {
     MarketMsg::BookSnapshot {
+        venue: protocol::Venue::Replay,
         symbol: symbol.into(),
         bids: (0..5).map(|i| lv(99_000 - i * 1_000, BIG)).collect(),
         asks: (0..5).map(|i| lv(101_000 + i * 1_000, BIG)).collect(),
@@ -221,6 +222,7 @@ fn resolve(steps: &[Step], n: usize) -> Vec<Input> {
             } => {
                 ts += gap;
                 inputs.push(Input::Market(MarketMsg::Trade {
+                    venue: protocol::Venue::Replay,
                     symbol: SYMBOLS[symbol % 2].into(),
                     price: Price(*price),
                     qty: Qty(*qty),
@@ -247,6 +249,7 @@ fn resolve(steps: &[Step], n: usize) -> Vec<Input> {
                     Side::Sell
                 };
                 inputs.push(Input::Market(MarketMsg::BookDelta {
+                    venue: protocol::Venue::Replay,
                     symbol: SYMBOLS[symbol % 2].into(),
                     side,
                     price: Price(*price),
@@ -504,6 +507,15 @@ fn rest(engine: &mut Engine, account: &str, id: &str) -> Vec<Event> {
     )
 }
 
+/// `events` without the `Balance` events (task 5.2): these tests are about order, fill, and
+/// position isolation between accounts.
+fn no_balance(events: Vec<Event>) -> Vec<Event> {
+    events
+        .into_iter()
+        .filter(|e| !matches!(e, Event::Balance { .. }))
+        .collect()
+}
+
 fn market_buy(engine: &mut Engine, account: &str, id: &str, qty: i64) -> Vec<Event> {
     place(engine, account, id, Side::Buy, qty, OrderKind::Market)
 }
@@ -567,11 +579,11 @@ fn account_limit_refuses_the_third_new_account() {
     assert_eq!(e.accounts.len(), 0);
 
     assert_eq!(
-        rest(&mut e, "w_a", "a-1"),
+        no_balance(rest(&mut e, "w_a", "a-1")),
         [ack("w_a", "a-1", OrderStatus::Accepted)]
     );
     assert_eq!(
-        rest(&mut e, "w_b", "b-1"),
+        no_balance(rest(&mut e, "w_b", "b-1")),
         [ack("w_b", "b-1", OrderStatus::Accepted)]
     );
     assert_eq!(e.accounts.len(), 2);
@@ -587,7 +599,7 @@ fn account_limit_refuses_the_third_new_account() {
 
     // Existing accounts keep trading.
     assert_eq!(
-        rest(&mut e, "w_a", "a-2"),
+        no_balance(rest(&mut e, "w_a", "a-2")),
         [ack("w_a", "a-2", OrderStatus::Accepted)]
     );
     assert_eq!(e.matcher.open_count(), 3);
@@ -623,6 +635,11 @@ fn reset_of_one_account_leaves_the_other_unchanged() {
     let events = e.on_command(Command::ResetAccount {
         account_id: acct("w_a"),
     });
+    // The reset ends with A's one Balance (Req 16.1), and no Balance for B.
+    assert!(
+        matches!(events.last(), Some(Event::Balance { account_id, .. }) if account_id == &acct("w_a"))
+    );
+    let events = no_balance(events);
 
     // Only A's cancel ack and one flat Position per symbol, all for A.
     assert_eq!(events.len(), 1 + INSTRUMENTS.len());
@@ -672,9 +689,9 @@ fn cancel_all_removes_only_the_requesters_orders() {
     rest(&mut e, "w_a", "a-1");
     rest(&mut e, "w_b", "b-1");
     rest(&mut e, "w_a", "a-2");
-    let events = e.on_command(Command::CancelAll {
+    let events = no_balance(e.on_command(Command::CancelAll {
         account_id: acct("w_a"),
-    });
+    }));
     assert_eq!(
         events,
         [
@@ -686,7 +703,7 @@ fn cancel_all_removes_only_the_requesters_orders() {
     assert_eq!(e.matcher.open_orders_for(&acct("w_b")).count(), 1);
     // B's order is still cancelable by B.
     assert_eq!(
-        e.on_command(cancel("w_b", "b-1")),
+        no_balance(e.on_command(cancel("w_b", "b-1"))),
         [ack("w_b", "b-1", OrderStatus::Canceled)]
     );
 }
@@ -696,14 +713,22 @@ fn cancel_all_removes_only_the_requesters_orders() {
 fn fills_never_change_the_market_book() {
     let mut e = Engine::new();
     e.on_market(deep_snapshot(BTC, 1_000));
-    let before = e.books.get(BTC).unwrap().book.clone();
+    let before = e
+        .pair(protocol::Venue::Replay, BTC)
+        .unwrap()
+        .book
+        .book
+        .clone();
 
     // Immediate fills from two accounts.
     let a = market_buy(&mut e, "w_a", "a-1", 500_000);
     let b = place(&mut e, "w_b", "b-1", Side::Sell, 700_000, OrderKind::Market);
     assert!(!fills_of(&a, "w_a").is_empty());
     assert!(!fills_of(&b, "w_b").is_empty());
-    assert_eq!(e.books.get(BTC).unwrap().book, before);
+    assert_eq!(
+        e.pair(protocol::Venue::Replay, BTC).unwrap().book.book,
+        before
+    );
 
     // A resting order that fills in a market-driven pass.
     place(
@@ -717,6 +742,7 @@ fn fills_never_change_the_market_book() {
         },
     );
     let events = e.on_market(MarketMsg::Trade {
+        venue: protocol::Venue::Replay,
         symbol: BTC.into(),
         price: Price(100_000),
         qty: Qty(1),
@@ -724,7 +750,10 @@ fn fills_never_change_the_market_book() {
         ts: 2_000,
     });
     assert!(events.iter().all(|ev| !matches!(ev, Event::Fill { .. })));
-    assert_eq!(e.books.get(BTC).unwrap().book, before);
+    assert_eq!(
+        e.pair(protocol::Venue::Replay, BTC).unwrap().book.book,
+        before
+    );
 }
 
 /// The boundary of Req 14.9 (see the module comment). Two accounts have market buys resting
@@ -736,12 +765,14 @@ fn fills_never_change_the_market_book() {
 #[test]
 fn contested_liquidity_is_the_documented_boundary() {
     let empty_asks = || MarketMsg::BookSnapshot {
+        venue: protocol::Venue::Replay,
         symbol: BTC.into(),
         bids: vec![lv(99_000, 10)],
         asks: Vec::new(),
         ts: 1_000,
     };
     let thin_asks = || MarketMsg::BookSnapshot {
+        venue: protocol::Venue::Replay,
         symbol: BTC.into(),
         bids: vec![lv(99_000, 10)],
         asks: vec![lv(100_000, 5)],
@@ -866,6 +897,7 @@ mod warmup_isolation {
                 for (price, qty, side) in trades {
                     *serial += 1;
                     msgs.push(MarketMsg::Trade {
+                        venue: protocol::Venue::Replay,
                         symbol: symbol.into(),
                         price: Price(*price),
                         qty: Qty(*qty),
@@ -977,7 +1009,7 @@ mod warmup_isolation {
         assert_eq!(e.take_history_requests().len(), 1);
 
         // A resting buy limit below the ask, and a sell stop below the market.
-        let buy = place(
+        let buy = no_balance(place(
             &mut e,
             "w_a",
             "a-1",
@@ -986,9 +1018,9 @@ mod warmup_isolation {
             OrderKind::Limit {
                 price: Price(100_500),
             },
-        );
+        ));
         assert_eq!(buy, [ack("w_a", "a-1", OrderStatus::Accepted)]);
-        let stop = place(
+        let stop = no_balance(place(
             &mut e,
             "w_b",
             "b-1",
@@ -997,19 +1029,21 @@ mod warmup_isolation {
             OrderKind::Stop {
                 stop_price: Price(98_000),
             },
-        );
+        ));
         assert_eq!(stop, [ack("w_b", "b-1", OrderStatus::Accepted)]);
         assert_eq!(e.matcher.open_count(), 2);
 
         // Warm-up: asks cross the buy limit and trades cross both prices.
         let events = e.warm_up(vec![
             MarketMsg::BookSnapshot {
+                venue: protocol::Venue::Replay,
                 symbol: BTC.into(),
                 bids: vec![lv(99_000, 100)],
                 asks: vec![lv(100_000, 100)],
                 ts: 2_000,
             },
             MarketMsg::Trade {
+                venue: protocol::Venue::Replay,
                 symbol: BTC.into(),
                 price: Price(100_000),
                 qty: Qty(5),
@@ -1017,6 +1051,7 @@ mod warmup_isolation {
                 ts: 2_001,
             },
             MarketMsg::Trade {
+                venue: protocol::Venue::Replay,
                 symbol: BTC.into(),
                 price: Price(97_000),
                 qty: Qty(5),

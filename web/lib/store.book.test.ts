@@ -4,6 +4,7 @@ import type { Event } from "../../shared/protocol/index";
 import {
   applyEvent,
   initialState,
+  pairKey,
   prefillTicketFromBook,
   withBookCursorMoved,
   withSymbol,
@@ -28,13 +29,13 @@ describe("book events", () => {
     let state = applyEvent(initialState(), bookEvent("BTC-USD", ["101", "102"], ["100"]));
     state = applyEvent(state, bookEvent("ETH-USD", ["5"], ["4"]));
     state = applyEvent(state, bookEvent("BTC-USD", ["201"], ["200", "199"], 2));
-    const btc = state.book["BTC-USD"];
+    const btc = state.book[pairKey("replay", "BTC-USD")];
     expect(btc?.asks.map((l) => l.price)).toEqual(["201"]);
     expect(btc?.bids.map((l) => l.price)).toEqual(["200", "199"]);
     expect(btc?.spread).toBe("100");
     expect(btc?.imbalanceBps).toBe(250);
     expect(btc?.ts).toBe(2);
-    expect(state.book["ETH-USD"]?.asks[0]?.price).toBe("5");
+    expect(state.book[pairKey("replay", "ETH-USD")]?.asks[0]?.price).toBe("5");
   });
 });
 

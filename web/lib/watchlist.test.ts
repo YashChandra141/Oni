@@ -54,12 +54,20 @@ describe("symbolForKey", () => {
 });
 
 describe("displayVenue", () => {
-  const base = { protocolVersion: 2, engineRunning: true } as const;
+  const base = { protocolVersion: 3, engineRunning: true } as const;
   test("labels", () => {
-    expect(displayVenue({ ...base, dataMode: "replay", venue: null })).toBe("REPLAY");
-    expect(displayVenue({ ...base, dataMode: "live", venue: "backpack" })).toBe("LIVE · Backpack (USDC)");
-    expect(displayVenue({ ...base, dataMode: "live", venue: "coinbase" })).toBe("LIVE · Coinbase");
-    expect(displayVenue({ ...base, dataMode: "live", venue: null })).toBe("LIVE");
+    expect(displayVenue({ ...base, dataMode: "replay", venue: null, liveVenues: [], defaultVenue: "replay" })).toBe(
+      "REPLAY",
+    );
+    expect(
+      displayVenue({ ...base, dataMode: "live", venue: "backpack", liveVenues: ["backpack"], defaultVenue: "backpack" }),
+    ).toBe("LIVE · Backpack (USDC)");
+    expect(
+      displayVenue({ ...base, dataMode: "live", venue: "coinbase", liveVenues: ["coinbase"], defaultVenue: "coinbase" }),
+    ).toBe("LIVE · Coinbase");
+    expect(displayVenue({ ...base, dataMode: "live", venue: null, liveVenues: [], defaultVenue: "coinbase" })).toBe(
+      "LIVE",
+    );
   });
 });
 

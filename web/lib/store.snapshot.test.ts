@@ -111,7 +111,7 @@ describe("Property 4: snapshots replace stored indicator points in the web store
           prior.forEach((step, i) => {
             state = applyStep(state, step, tf, i + 1);
           });
-          const key = candleKey(SYMBOL, tf);
+          const key = candleKey("replay", SYMBOL, tf);
           const before = state;
           const raw: RawPoint[] = finalTimes.map((t, i) => ({ t, values: values(-1 - i) }));
           const message = withIndicators

@@ -25,6 +25,19 @@ export const CONFIG_VARS = [
   "ENGINE_PATH",
   "DATA_MODE",
   "LIVE_VENUE",
+  "LIVE_VENUES",
+  "STARTING_BALANCE",
+  "BALANCE_SLIPPAGE_BPS",
+  "DEX_LEVELS",
+  "DEX_SPREAD_BPS",
+  "DEX_STEP_BPS",
+  "DEX_LEVEL_NOTIONAL",
+  "DEX_MAX_DEVIATION_PCT",
+  "JUPITER_POLL_MS",
+  "RAYDIUM_POLL_MS",
+  "JUPITER_API_KEY",
+  "AI_RATE_PER_MIN",
+  "AI_DAILY_CAP",
   "REPLAY_FIXTURE",
   "REPLAY_SPEED",
   "ALLOWED_ORIGINS",
@@ -104,6 +117,19 @@ const EXPECTED: Record<ConfigVar, string> = {
   ENGINE_PATH: "a non-empty path",
   DATA_MODE: '"replay" or "live"',
   LIVE_VENUE: '"coinbase" or "backpack"',
+  LIVE_VENUES: "a comma-separated list of coinbase, backpack, jupiter, raydium",
+  STARTING_BALANCE: "an integer from 1000 to 100000000",
+  BALANCE_SLIPPAGE_BPS: "an integer from 0 to 10000",
+  DEX_LEVELS: "an integer from 1 to 50",
+  DEX_SPREAD_BPS: "an integer from 1 to 10000",
+  DEX_STEP_BPS: "an integer from 1 to 1000",
+  DEX_LEVEL_NOTIONAL: "an integer from 1 to 1000000000",
+  DEX_MAX_DEVIATION_PCT: "an integer from 1 to 100",
+  JUPITER_POLL_MS: "an integer from 500 to 60000",
+  RAYDIUM_POLL_MS: "an integer from 1000 to 60000",
+  JUPITER_API_KEY: "a non-empty string",
+  AI_RATE_PER_MIN: "an integer from 1 to 1000",
+  AI_DAILY_CAP: "an integer from 1 to 1000000",
   REPLAY_FIXTURE: "a fixture file name matching ^[a-z0-9-]+\\.jsonl$",
   REPLAY_SPEED: "an integer from 1 to 50",
   ALLOWED_ORIGINS: "a comma-separated list of http(s) origins such as http://localhost:3000",
@@ -167,6 +193,21 @@ const baseUrl = z
   .refine((v) => normalizeBaseUrl(v) !== null)
   .transform((v) => normalizeBaseUrl(v) ?? "");
 
+export const LIVE_VENUE_NAMES = ["coinbase", "backpack", "jupiter", "raydium"] as const;
+export type LiveVenueName = (typeof LIVE_VENUE_NAMES)[number];
+
+/** Parses a LIVE_VENUES list: known names only, deduplicated, at least one. Null when invalid. */
+export function parseLiveVenues(value: string): LiveVenueName[] | null {
+  const out: LiveVenueName[] = [];
+  for (const part of value.split(",").map((p) => p.trim().toLowerCase())) {
+    if (part === "") continue;
+    const name = LIVE_VENUE_NAMES.find((n) => n === part);
+    if (name === undefined) return null;
+    if (!out.includes(name)) out.push(name);
+  }
+  return out.length === 0 ? null : out;
+}
+
 const DEFAULT_ENGINE_PATH = "rust/target/release/engine";
 const FIXTURE_NAME = /^[a-z0-9-]+\.jsonl$/;
 /** Replay speed bounds (Req 6.3, 6.4; `MIN_REPLAY_SPEED`/`MAX_REPLAY_SPEED` in the protocol crate). */
@@ -219,6 +260,15 @@ function generateSessionSecret(): string {
 
 const nonEmpty = z.string().min(1);
 
+/** Decimal integer string within [min, max]. */
+function intRange(min: number, max: number, digits: number) {
+  return z
+    .string()
+    .regex(new RegExp(`^[0-9]{1,${digits}}$`))
+    .transform(Number)
+    .refine((n) => n >= min && n <= max);
+}
+
 const EnvSchema = z.object({
   PORT: z
     .string()
@@ -229,7 +279,25 @@ const EnvSchema = z.object({
   ENGINE_PATH: nonEmpty.optional(),
   DATA_MODE: z.enum(["replay", "live"]).default("replay"),
   // Req 44.1: picks the live adapter; ignored in replay mode. Passed to the engine in Task 7.2.
-  LIVE_VENUE: z.enum(["coinbase", "backpack"]).default("backpack"),
+  // Alias of a one-venue LIVE_VENUES. LIVE_VENUES wins when both are set.
+  LIVE_VENUE: z.enum(["coinbase", "backpack"]).optional(),
+  LIVE_VENUES: z
+    .string()
+    .refine((v) => parseLiveVenues(v) !== null)
+    .transform((v) => parseLiveVenues(v) ?? [])
+    .optional(),
+  STARTING_BALANCE: intRange(1_000, 100_000_000, 8).default(100_000),
+  BALANCE_SLIPPAGE_BPS: intRange(0, 10_000, 5).default(100),
+  DEX_LEVELS: intRange(1, 50, 2).default(10),
+  DEX_SPREAD_BPS: intRange(1, 10_000, 5).default(10),
+  DEX_STEP_BPS: intRange(1, 1_000, 4).default(5),
+  DEX_LEVEL_NOTIONAL: intRange(1, 1_000_000_000, 10).default(25_000),
+  DEX_MAX_DEVIATION_PCT: intRange(1, 100, 3).default(5),
+  JUPITER_POLL_MS: intRange(500, 60_000, 5).optional(),
+  RAYDIUM_POLL_MS: intRange(1_000, 60_000, 5).optional(),
+  JUPITER_API_KEY: nonEmpty.optional(),
+  AI_RATE_PER_MIN: intRange(1, 1_000, 4).default(6),
+  AI_DAILY_CAP: intRange(1, 1_000_000, 7).default(500),
   REPLAY_FIXTURE: z.string().regex(FIXTURE_NAME).default("demo.jsonl"),
   REPLAY_SPEED: z
     .string()
@@ -294,6 +362,7 @@ interface Secrets {
   readonly nvidiaBaseUrl: string;
   readonly ollamaBaseUrl: string;
   readonly openaiApiKey: string | undefined;
+  readonly jupiterApiKey: string | undefined;
   readonly sessionSecret: string;
 }
 
@@ -314,6 +383,19 @@ export class Config {
   readonly dataMode: "replay" | "live";
   /** Venue used in live mode (Req 44.1). */
   readonly liveVenue: "coinbase" | "backpack";
+  /** Live venues from LIVE_VENUES (or the LIVE_VENUE alias); all four by default. */
+  readonly liveVenues: readonly LiveVenueName[];
+  readonly startingBalance: number;
+  readonly balanceSlippageBps: number;
+  readonly dexLevels: number;
+  readonly dexSpreadBps: number;
+  readonly dexStepBps: number;
+  readonly dexLevelNotional: number;
+  readonly dexMaxDeviationPct: number;
+  readonly jupiterPollMs: number | undefined;
+  readonly raydiumPollMs: number | undefined;
+  readonly aiRatePerMin: number;
+  readonly aiDailyCap: number;
   readonly replayFixture: string;
   /** Speed sent with `StartReplay` (1–50). */
   readonly replaySpeed: number;
@@ -341,7 +423,22 @@ export class Config {
     this.port = parsed.PORT;
     this.enginePath = resolved.enginePath;
     this.dataMode = parsed.DATA_MODE;
-    this.liveVenue = parsed.LIVE_VENUE;
+    this.liveVenues = Object.freeze(
+      parsed.LIVE_VENUES ?? (parsed.LIVE_VENUE !== undefined ? [parsed.LIVE_VENUE] : [...LIVE_VENUE_NAMES]),
+    );
+    const firstCex = this.liveVenues.find((v) => v === "coinbase" || v === "backpack");
+    this.liveVenue = firstCex === "coinbase" || firstCex === "backpack" ? firstCex : "backpack";
+    this.startingBalance = parsed.STARTING_BALANCE;
+    this.balanceSlippageBps = parsed.BALANCE_SLIPPAGE_BPS;
+    this.dexLevels = parsed.DEX_LEVELS;
+    this.dexSpreadBps = parsed.DEX_SPREAD_BPS;
+    this.dexStepBps = parsed.DEX_STEP_BPS;
+    this.dexLevelNotional = parsed.DEX_LEVEL_NOTIONAL;
+    this.dexMaxDeviationPct = parsed.DEX_MAX_DEVIATION_PCT;
+    this.jupiterPollMs = parsed.JUPITER_POLL_MS;
+    this.raydiumPollMs = parsed.RAYDIUM_POLL_MS;
+    this.aiRatePerMin = parsed.AI_RATE_PER_MIN;
+    this.aiDailyCap = parsed.AI_DAILY_CAP;
     this.replayFixture = parsed.REPLAY_FIXTURE;
     this.replaySpeed = parsed.REPLAY_SPEED;
     this.allowedOrigins = Object.freeze([...parsed.ALLOWED_ORIGINS]);
@@ -364,6 +461,7 @@ export class Config {
       nvidiaBaseUrl: parsed.NVIDIA_BASE_URL,
       ollamaBaseUrl: parsed.OLLAMA_BASE_URL,
       openaiApiKey: parsed.OPENAI_API_KEY,
+      jupiterApiKey: parsed.JUPITER_API_KEY,
       sessionSecret: resolved.sessionSecret,
     });
     Object.freeze(this);
@@ -376,6 +474,11 @@ export class Config {
 
   get openaiApiKey(): string | undefined {
     return this.#secrets.openaiApiKey;
+  }
+
+  /** Reaches the engine only through its child environment. */
+  get jupiterApiKey(): string | undefined {
+    return this.#secrets.jupiterApiKey;
   }
 
   get anthropicApiKey(): string | undefined {
@@ -423,6 +526,18 @@ export class Config {
       enginePath: this.enginePath,
       dataMode: this.dataMode,
       liveVenue: this.liveVenue,
+      liveVenues: [...this.liveVenues],
+      startingBalance: this.startingBalance,
+      balanceSlippageBps: this.balanceSlippageBps,
+      dexLevels: this.dexLevels,
+      dexSpreadBps: this.dexSpreadBps,
+      dexStepBps: this.dexStepBps,
+      dexLevelNotional: this.dexLevelNotional,
+      dexMaxDeviationPct: this.dexMaxDeviationPct,
+      jupiterPollMs: this.jupiterPollMs ?? null,
+      raydiumPollMs: this.raydiumPollMs ?? null,
+      aiRatePerMin: this.aiRatePerMin,
+      aiDailyCap: this.aiDailyCap,
       replayFixture: this.replayFixture,
       replaySpeed: this.replaySpeed,
       allowedOrigins: [...this.allowedOrigins],
@@ -444,6 +559,7 @@ export class Config {
       nvidiaBaseUrl: REDACTED,
       ollamaBaseUrl: REDACTED,
       openaiApiKey: mask(this.openaiApiKey),
+      jupiterApiKey: mask(this.jupiterApiKey),
       sessionSecret: mask(this.sessionSecret),
     };
   }
@@ -588,6 +704,7 @@ export function loadConfigOrExit(
 export type SecretSource = Pick<Config, "openaiApiKey"> & {
   readonly newsApiKey?: string | undefined;
   readonly cryptopanicApiKey?: string | undefined;
+  readonly jupiterApiKey?: string | undefined;
   readonly sessionSecret?: string | undefined;
   readonly anthropicApiKey?: string | undefined;
   readonly nvidiaApiKey?: string | undefined;
@@ -608,6 +725,7 @@ export function redactSecrets(text: string, config: SecretSource): string {
     config.nvidiaApiKey,
     config.newsApiKey,
     config.cryptopanicApiKey,
+    config.jupiterApiKey,
     config.nvidiaBaseUrl,
     config.ollamaBaseUrl,
   ]) {

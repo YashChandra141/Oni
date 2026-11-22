@@ -230,6 +230,7 @@ fn parse_trade(data: Value, symbol: &str, stats: &mut DropStats) -> ParsedBackpa
         Side::Buy
     };
     ParsedBackpack::Trade(MarketMsg::Trade {
+        venue: protocol::Venue::Replay,
         symbol: symbol.to_owned(),
         price,
         qty,
@@ -498,6 +499,7 @@ fn deltas_of(update: &DepthUpdate) -> Vec<MarketMsg> {
         .map(|&(price, qty)| (Side::Sell, price, qty));
     bids.chain(asks)
         .map(|(side, price, qty)| MarketMsg::BookDelta {
+            venue: protocol::Venue::Replay,
             symbol: update.symbol.clone(),
             side,
             price,
@@ -573,6 +575,7 @@ impl DepthSync {
             _ => Vec::new(),
         };
         let mut msgs = vec![MarketMsg::BookSnapshot {
+            venue: protocol::Venue::Replay,
             symbol: snapshot.symbol.clone(),
             bids: levels_of(&snapshot.bids),
             asks: levels_of(&snapshot.asks),
@@ -667,6 +670,7 @@ mod tests {
         assert_eq!(
             parsed,
             ParsedBackpack::Trade(MarketMsg::Trade {
+                venue: protocol::Venue::Replay,
                 symbol: "SOL-USD".into(),
                 price: Price(7_541),
                 qty: Qty(2_000_000),
@@ -763,7 +767,7 @@ mod tests {
     #[test]
     fn unknown_streams_symbols_and_acks_are_ignored() {
         let mut stats = DropStats::new();
-        let text = trade_sample().replace("SOL_USDC", "DOGE_USDC");
+        let text = trade_sample().replace("SOL_USDC", "NOPE_USDC");
         assert_eq!(parse_message(&text, &mut stats), ParsedBackpack::Ignored);
         let text = depth_sample().replace("depth.SOL_USDC", "depth.200ms.SOL_USDC");
         assert_eq!(parse_message(&text, &mut stats), ParsedBackpack::Ignored);
@@ -974,6 +978,7 @@ mod tests {
         sync.on_snapshot(snap(SYM, 10));
         let out = sync.on_update(upd(11, 11));
         assert!(out.msgs.contains(&MarketMsg::BookDelta {
+            venue: protocol::Venue::Replay,
             symbol: SYM.into(),
             side: Side::Sell,
             price: Price(101),

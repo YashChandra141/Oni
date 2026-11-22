@@ -6,7 +6,9 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import { instrumentBySymbol } from "../instruments.ts";
-import { TimeframeSchema, type Venue } from "../protocol.ts";
+import { TimeframeSchema, type Venue, VenueSchema } from "../protocol.ts";
+
+const VenueQuerySchema = VenueSchema.optional();
 import { DEFAULT_MARKET_VENUE, MAX_SNAPSHOT_BARS, type MarketState } from "./market.ts";
 
 export interface MarketRoutesDeps {
@@ -32,7 +34,9 @@ export function marketRoutes(deps: MarketRoutesDeps): Hono {
   app.get("/quote/:symbol", (c) => {
     const symbol = c.req.param("symbol");
     if (instrumentBySymbol(symbol) === undefined) return c.json({ error: "unknown_symbol" }, 404);
-    return c.json(deps.market.quote(symbol, venue()) ?? { symbol, last: null, book: null });
+    const v = VenueQuerySchema.safeParse(c.req.query("venue"));
+    if (!v.success) return c.json({ error: "invalid_query" }, 400);
+    return c.json(deps.market.quote(symbol, v.data ?? venue()) ?? { symbol, last: null, book: null });
   });
 
   app.get("/candles/:symbol", (c) => {
@@ -40,8 +44,10 @@ export function marketRoutes(deps: MarketRoutesDeps): Hono {
     if (instrumentBySymbol(symbol) === undefined) return c.json({ error: "unknown_symbol" }, 404);
     const parsed = CandlesQuerySchema.safeParse({ timeframe: c.req.query("timeframe"), limit: c.req.query("limit") });
     if (!parsed.success) return c.json({ error: "invalid_query" }, 400);
+    const v = VenueQuerySchema.safeParse(c.req.query("venue"));
+    if (!v.success) return c.json({ error: "invalid_query" }, 400);
     const { timeframe, limit } = parsed.data;
-    const bars = deps.market.candles(symbol, timeframe, limit ?? MAX_SNAPSHOT_BARS, venue()) ?? [];
+    const bars = deps.market.candles(symbol, timeframe, limit ?? MAX_SNAPSHOT_BARS, v.data ?? venue()) ?? [];
     return c.json({ symbol, timeframe, bars });
   });
 

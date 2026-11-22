@@ -197,7 +197,7 @@ describe("preview_order", () => {
   test("plain English while the LLM is disabled is an error result", async () => {
     const { get } = setup(undefined, (ws, msg) => {
       if (msg.type === "command_text") {
-        ws.receive({ type: "notice", kind: "llm_disabled", message: "Plain-English orders are disabled." });
+        ws.receive({ type: "notice", kind: "ai_disabled", message: "Plain-English orders are disabled." });
       }
     });
     const result = await get("preview_order").run({ command: "? buy some sol" });

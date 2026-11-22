@@ -113,7 +113,7 @@ export const INVALID_FIXTURES: readonly InvalidFixture[] = [
   { name: "output is a string", input: "buy 1 btc", output: "BUY BTC 1" },
   { name: "output is null", input: "buy 1 btc", output: null },
   { name: "output is an array", input: "buy 1 btc", output: [PLACE] },
-  { name: "unknown symbol", input: "buy 1 doge", output: { ...PLACE, symbol: "DOGE-USD" } },
+  { name: "unknown symbol", input: "buy 1 nope", output: { ...PLACE, symbol: "NOPE-USD" } },
   { name: "unclear intent", input: "what do you think about the market?", output: { action: "unclear", ...NULLS } },
   { name: "place with no amount", input: "buy some btc", output: { ...PLACE, amount: null } },
   { name: "limit order without a price", input: "buy 1 btc limit", output: { ...PLACE, order_type: "limit" } },

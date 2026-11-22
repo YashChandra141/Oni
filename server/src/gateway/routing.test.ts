@@ -5,7 +5,7 @@ import { encodeBase58 } from "../../../shared/base58.ts";
 import { TokenService } from "../auth/token.ts";
 import { type Event, parseClientMessage } from "../protocol.ts";
 import { PendingRequests } from "./routing.ts";
-import { FakePublisher, FakeSocket, FakeSupervisor, memoryLogger, settle } from "./testing.ts";
+import { FakePublisher, FakeSocket, FakeSupervisor, eventsOf, immediateTimer, memoryLogger, settle } from "./testing.ts";
 import { Gateway } from "./ws.ts";
 
 const A = encodeBase58(new Uint8Array(32).fill(7));
@@ -29,6 +29,7 @@ function setup() {
     randomUUID: () => `c${++n}`,
     tokens,
     now: () => clock.ms,
+    batcherTimer: immediateTimer,
   });
   gateway.setPublisher(publisher);
   const connect = (): FakeSocket => {
@@ -58,7 +59,6 @@ const rejected = (account_id: string, order_id = "o1"): Event => ({
   order_id,
   reason: "risk",
 });
-const eventsOf = (ws: FakeSocket) => ws.messages().filter((m) => m.type === "event");
 const sessionsOf = (ws: FakeSocket) => ws.messages().filter((m) => m.type === "session");
 
 describe("switching accounts", () => {

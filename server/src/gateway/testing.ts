@@ -10,6 +10,7 @@ import type {
 } from "../engine/supervisor.ts";
 import { isControlCommand } from "../engine/supervisor.ts";
 import type { Event, ServerMessage } from "../protocol.ts";
+import type { BatcherTimer } from "./batcher.ts";
 import type { ClientData, GatewaySocket, GatewaySupervisor, Publisher } from "./ws.ts";
 
 export class FakeSupervisor implements GatewaySupervisor {
@@ -123,6 +124,30 @@ export class FakePublisher implements Publisher {
     for (const ws of this.sockets) if (ws.topics.has(topic)) ws.send(data);
     return data.length;
   }
+}
+
+/**
+ * A batcher timer with no delay: every push flushes at once, so a synchronous test sees one
+ * `event_batch` per engine event. The real window and coalescing are tested in batcher tests.
+ */
+export const immediateTimer: BatcherTimer = {
+  // Returning null leaves the batcher without a pending handle, as after a fired timer.
+  setTimeout: (fn) => {
+    fn();
+    return null;
+  },
+  clearTimeout: () => {},
+  defer: (fn) => fn(),
+};
+
+/** The Events a socket received, unwrapping `event_batch` and `event` messages, in order. */
+export function eventsOf(ws: FakeSocket): Event[] {
+  const out: Event[] = [];
+  for (const m of ws.messages()) {
+    if (m.type === "event_batch") out.push(...m.events);
+    else if (m.type === "event") out.push(m.event);
+  }
+  return out;
 }
 
 /** A logger that keeps its lines in memory instead of printing them. */

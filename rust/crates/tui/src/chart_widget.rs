@@ -14,7 +14,7 @@ use ratatui::widgets::Widget;
 use crate::chart_model::{
     CandleCell, ChartView, Crosshair, PriceScale, bar_col, candle_cell, col_to_bar,
     crosshair_target, format_price, format_qty, format_time, is_bullish, max_volume, price_at_row,
-    visible_bars, volume_cell_eighths, volume_eighths, volume_glyph,
+    price_to_row, visible_bars, volume_cell_eighths, volume_eighths, volume_glyph,
 };
 
 /// Width of the price axis column at the right edge, in cells.
@@ -49,6 +49,7 @@ pub struct CandleChart<'a> {
     view: ChartView,
     crosshair: Option<Crosshair>,
     overlay: Option<&'a OverlayFn<'a>>,
+    line: bool,
 }
 
 impl<'a> CandleChart<'a> {
@@ -59,7 +60,14 @@ impl<'a> CandleChart<'a> {
             view,
             crosshair: None,
             overlay: None,
+            line: false,
         }
+    }
+
+    /// Draws the close prices as a line instead of candles (Task 16.9).
+    pub fn line(mut self, line: bool) -> Self {
+        self.line = line;
+        self
     }
 
     /// The crosshair, in cells relative to the plot (price plot plus volume strip).
@@ -132,8 +140,30 @@ impl Widget for CandleChart<'_> {
         let price_h = usize::from(l.plot.height);
         let volume_h = usize::from(l.volume.height);
 
+        // Line mode: one mark per column at the close row, joined to the previous close by a
+        // vertical run so the line has no gaps.
+        if self.line && price_h > 0 {
+            let mut prev: Option<usize> = None;
+            for (i, bar) in shown.iter().enumerate() {
+                let x = l.plot.x + to_u16(bar_col(i, count, width));
+                let row = price_to_row(bar.close, &scale, price_h);
+                let (from, to) = match prev {
+                    Some(p) if p < row => (p + 1, row),
+                    Some(p) if p > row => (row, p - 1),
+                    _ => (row, row),
+                };
+                for r in from..=to {
+                    let ch = if r == row { '●' } else { '│' };
+                    let cell = &mut buf[(x, l.plot.y + to_u16(r))];
+                    cell.set_char(ch);
+                    cell.set_fg(UP_COLOR);
+                }
+                prev = Some(row);
+            }
+        }
+
         // Candles.
-        for (i, bar) in shown.iter().enumerate() {
+        for (i, bar) in shown.iter().enumerate().filter(|_| !self.line) {
             let x = l.plot.x + to_u16(bar_col(i, count, width));
             let color = if is_bullish(bar) {
                 UP_COLOR

@@ -11,18 +11,31 @@
 import { create } from "zustand";
 import type {
   AccountId,
+  AiErrorReason,
+  AnalysisResult,
   Bar,
+  ClientMessage,
+  CopilotAction,
   DataMode,
   Event,
   InstrumentInfo,
   Level,
+  NewsItem,
   NoticeKind,
   OrderPreview,
+  PairHealth,
   PreviewAction,
+  PreviewError,
+  ProviderId,
+  ProviderInfo,
+  ScanItem,
   ServerMessage,
   Side,
+  Ticker,
   Timeframe,
+  TwapStatus,
   Venue,
+  VenueStatusKind,
 } from "../../shared/protocol/index";
 import { BOOK_LEVELS, moveBookCursor, type CursorDirection } from "./bookView";
 import { bucketStartMs } from "./chartData";
@@ -33,6 +46,7 @@ import {
   type IndicatorPoint,
   type IndicatorToggles,
 } from "./indicatorData";
+import { recordPong } from "./latency";
 import { addUnits, pushHistory } from "./orderEntry";
 import type { SocketEvent } from "./socket";
 
@@ -51,6 +65,10 @@ export const MAX_CANDLES = 500;
 export const MAX_TAPE = 200;
 /** Most notices kept, oldest first. */
 export const MAX_NOTICES = 20;
+/** Most news items kept (the server sends one list). */
+export const MAX_NEWS = 50;
+/** Most AI results and errors kept, by request id. */
+export const MAX_AI_RESULTS = 20;
 export const DEFAULT_SYMBOL = "BTC-USD";
 export const DEFAULT_TIMEFRAME: Timeframe = "1m";
 
@@ -83,14 +101,89 @@ export interface SessionInfo {
 }
 
 export interface Selection {
+  readonly venue: Venue;
   readonly symbol: string;
   readonly timeframe: Timeframe;
+}
+
+/** The latest 24-hour ticker of one (venue, symbol) pair. */
+export interface TickerState {
+  readonly ticker: Ticker;
+  readonly synthetic: boolean;
+  readonly ts: number;
+}
+
+/** The paper balances of one account (Money strings). */
+export interface BalanceState {
+  readonly paperBalance: string;
+  readonly freeBalance: string;
+  readonly equity: string;
+  readonly ts: number;
+}
+
+export interface ProvidersState {
+  readonly available: readonly ProviderInfo[];
+  readonly default: ProviderId | null;
+  readonly selected: ProviderId | null;
+}
+
+export interface NewsState {
+  /** False while no news provider answers. */
+  readonly available: boolean;
+  /** Newest first as sent, at most `MAX_NEWS`. */
+  readonly items: readonly NewsItem[];
+  readonly updatedAt: number | null;
+}
+
+export interface TwapState {
+  readonly twapId: string;
+  readonly symbol: string;
+  readonly side: Side;
+  readonly venue: Venue;
+  readonly slices: number;
+  readonly sent: number;
+  readonly status: TwapStatus;
+  readonly reason: string | null;
+}
+
+export interface AnalysisState {
+  readonly requestId: string;
+  readonly provider: ProviderId;
+  readonly model: string;
+  readonly analysis: AnalysisResult;
+  readonly preview: OrderPreview | null;
+  readonly previewError: PreviewError | null;
+}
+
+export interface ScanState {
+  readonly requestId: string;
+  readonly items: readonly ScanItem[];
+}
+
+export interface StrategyState {
+  readonly requestId: string;
+  readonly text: string;
+}
+
+export interface AiErrorState {
+  readonly requestId: string;
+  readonly reason: AiErrorReason;
+  readonly message: string;
+}
+
+/** Results of AI requests by request id, oldest first, at most `MAX_AI_RESULTS` each. */
+export interface AiState {
+  readonly analyses: Readonly<Record<string, AnalysisState>>;
+  readonly scans: Readonly<Record<string, ScanState>>;
+  readonly strategies: Readonly<Record<string, StrategyState>>;
+  readonly errors: Readonly<Record<string, AiErrorState>>;
 }
 
 /** One trade as shown in the tape and the last-trade readout. */
 export interface TapeEntry {
   /** Stable unique id from `nextTapeId`; use as the React row key. */
   readonly id: number;
+  readonly venue: Venue;
   readonly symbol: string;
   readonly price: string;
   readonly qty: string;
@@ -219,14 +312,32 @@ export interface TerminalState {
   readonly seriesVersion: Readonly<Record<string, { readonly snapshot: number; readonly rewrite: number }>>;
   /** Which indicators the chart shows (Req 26.3). */
   readonly indicatorToggles: IndicatorToggles;
-  /** The most recent trade per symbol. */
+  /** The most recent trade per `pairKey(venue, symbol)`. */
   readonly lastTrade: Readonly<Record<string, TapeEntry>>;
-  /** Recent trades, newest first, at most `MAX_TAPE`. */
-  readonly tape: readonly TapeEntry[];
+  /** Recent trades per `pairKey(venue, symbol)`, newest first, at most `MAX_TAPE` each. */
+  readonly tape: Readonly<Record<string, readonly TapeEntry[]>>;
   /** Id given to the next tape entry; starts at 1 and never repeats (stable row keys). */
   readonly nextTapeId: number;
-  /** Latest order book per symbol. */
+  /** Latest order book per `pairKey(venue, symbol)`. */
   readonly book: Readonly<Record<string, BookState>>;
+  /** Latest 24-hour ticker per `pairKey(venue, symbol)`. */
+  readonly tickers: Readonly<Record<string, TickerState>>;
+  /** Connection status per venue, from `hello` and `venue_status`. */
+  readonly venueStatus: Readonly<Partial<Record<Venue, VenueStatusKind>>>;
+  /** Health per `pairKey(venue, symbol)`. */
+  readonly pairHealth: Readonly<Record<string, PairHealth>>;
+  /** Reference venue per symbol; null when none qualifies. */
+  readonly referenceVenue: Readonly<Record<string, Venue | null>>;
+  /** Paper balances per account id. */
+  readonly balances: Readonly<Record<string, BalanceState>>;
+  /** Paper starting balance (Money) from `hello`. */
+  readonly startingBalance: string | null;
+  readonly providers: ProvidersState;
+  readonly news: NewsState;
+  readonly newsEnabled: boolean;
+  /** TWAP plans by id. */
+  readonly twaps: Readonly<Record<string, TwapState>>;
+  readonly ai: AiState;
   readonly ticket: TicketState;
   /** Keyboard cursor on the selected symbol's book; null when none. */
   readonly bookCursor: BookCursor | null;
@@ -260,6 +371,16 @@ export interface TerminalState {
 export interface TerminalActions {
   handleSocketEvent(event: SocketEvent): void;
   selectSymbol(symbol: string): void;
+  /** Picks the venue the panels show; the socket hook resubscribes with it. */
+  selectVenue(venue: Venue): void;
+  /** Selects the LLM provider for this connection (sends `set_provider`). */
+  setProvider(provider: ProviderId): boolean;
+  /** Sends a Copilot request for the selected venue, symbol, and timeframe; returns its request id. */
+  sendAiRequest(action: CopilotAction, text: string): string | null;
+  /** Cancels the remaining child orders of a TWAP plan. */
+  cancelTwap(twapId: string): boolean;
+  /** Starts receiving news. */
+  subscribeNews(): boolean;
   selectTimeframe(timeframe: Timeframe): void;
   /** Prefills the limit ticket with a book price (ticks as received). */
   prefillLimit(symbol: string, priceTicks: string): void;
@@ -288,10 +409,36 @@ export interface TerminalActions {
 
 export type TerminalStore = TerminalState & TerminalActions;
 
-/** Key of the `candles` record for one symbol and timeframe. */
-export function candleKey(symbol: string, timeframe: Timeframe): string {
-  return `${symbol}|${timeframe}`;
+/** Key of the per-pair records (book, tape, ticker, health) for one venue and symbol. */
+export function pairKey(venue: Venue, symbol: string): string {
+  return `${venue}|${symbol}`;
 }
+
+/** Key of the `candles` record for one venue, symbol, and timeframe. */
+export function candleKey(venue: Venue, symbol: string, timeframe: Timeframe): string {
+  return `${venue}|${symbol}|${timeframe}`;
+}
+
+const EMPTY_PROVIDERS: ProvidersState = { available: [], default: null, selected: null };
+const EMPTY_AI: AiState = { analyses: {}, scans: {}, strategies: {}, errors: {} };
+
+/** Adds `value` under `key`, dropping the oldest entries beyond `MAX_AI_RESULTS`. */
+function addCapped<T>(record: Readonly<Record<string, T>>, key: string, value: T): Readonly<Record<string, T>> {
+  const { [key]: _old, ...rest } = record;
+  const entries = Object.entries(rest);
+  const kept = entries.length >= MAX_AI_RESULTS ? entries.slice(entries.length - MAX_AI_RESULTS + 1) : entries;
+  return { ...Object.fromEntries(kept), [key]: value };
+}
+
+/** Sends one client message; registered by `useTerminalSocket`. */
+let sender: ((message: ClientMessage) => boolean) | null = null;
+export function setStoreSender(fn: ((message: ClientMessage) => boolean) | null): void {
+  sender = fn;
+}
+function sendMessage(message: ClientMessage): boolean {
+  return sender?.(message) ?? false;
+}
+let aiRequestCounter = 0;
 
 export function initialState(): TerminalState {
   return {
@@ -299,15 +446,26 @@ export function initialState(): TerminalState {
     hello: null,
     session: null,
     instruments: {},
-    selection: { symbol: DEFAULT_SYMBOL, timeframe: DEFAULT_TIMEFRAME },
+    selection: { venue: "replay", symbol: DEFAULT_SYMBOL, timeframe: DEFAULT_TIMEFRAME },
     candles: {},
     indicators: {},
     seriesVersion: {},
     indicatorToggles: DEFAULT_INDICATOR_TOGGLES,
     lastTrade: {},
-    tape: [],
+    tape: {},
     nextTapeId: 1,
     book: {},
+    tickers: {},
+    venueStatus: {},
+    pairHealth: {},
+    referenceVenue: {},
+    balances: {},
+    startingBalance: null,
+    providers: EMPTY_PROVIDERS,
+    news: { available: false, items: [], updatedAt: null },
+    newsEnabled: false,
+    twaps: {},
+    ai: EMPTY_AI,
     ticket: { symbol: DEFAULT_SYMBOL, side: null, price: null, qty: null },
     bookCursor: null,
     notices: [],
@@ -346,6 +504,7 @@ export function clearAccountData(state: TerminalState): TerminalState {
     openOrders: {},
     fills: [],
     pendingPlacements: [],
+    balances: {},
     preview: null,
     parseError: null,
     confirmAction: null,
@@ -566,6 +725,12 @@ export function withSymbol(state: TerminalState, symbol: string): TerminalState 
   return { ...state, selection: { ...state.selection, symbol }, bookCursor: null, ticket };
 }
 
+/** Picks the venue the panels show. The book cursor belongs to the old book, so it resets. */
+export function withVenue(state: TerminalState, venue: Venue): TerminalState {
+  if (state.selection.venue === venue) return state;
+  return { ...state, selection: { ...state.selection, venue }, bookCursor: null };
+}
+
 // ---------------------------------------------------------------------------------------------
 // Order book and ticket
 
@@ -583,7 +748,7 @@ export function withBookCursorMoved(
   state: TerminalState,
   direction: CursorDirection,
 ): TerminalState {
-  const book = state.book[state.selection.symbol];
+  const book = state.book[pairKey(state.selection.venue, state.selection.symbol)];
   const next = moveBookCursor(
     state.bookCursor,
     Math.min(book?.asks.length ?? 0, BOOK_LEVELS),
@@ -666,7 +831,7 @@ export function applyCandleEvent(
   event: Extract<Event, { type: "candle" }>,
 ): TerminalState {
   const incoming = Array.isArray(event.bars) ? event.bars : [];
-  const key = candleKey(event.symbol, event.timeframe);
+  const key = candleKey(event.venue, event.symbol, event.timeframe);
   const version = state.seriesVersion[key] ?? { snapshot: 0, rewrite: 0 };
   if (event.snapshot) {
     return {
@@ -734,7 +899,7 @@ export function applyIndicatorsEvent(
   event: Extract<Event, { type: "indicators" }>,
 ): TerminalState {
   if (typeof event.ts !== "number" || !Number.isFinite(event.ts) || event.ts < 0) return state;
-  const key = candleKey(event.symbol, event.timeframe);
+  const key = candleKey(event.venue, event.symbol, event.timeframe);
   // One point per candle bucket, keyed by the candle open time; the latest values win.
   const points = mergeIndicatorPoint(state.indicators[key] ?? [], {
     t: bucketStartMs(event.ts, event.timeframe),
@@ -762,17 +927,19 @@ export function applyEvent(state: TerminalState, event: Event): TerminalState {
     case "trade": {
       const entry: TapeEntry = {
         id: state.nextTapeId,
+        venue: event.venue,
         symbol: event.symbol,
         price: event.price,
         qty: event.qty,
         side: event.side,
         ts: event.ts,
       };
+      const key = pairKey(event.venue, event.symbol);
       return {
         ...state,
         nextTapeId: state.nextTapeId + 1,
-        lastTrade: { ...state.lastTrade, [event.symbol]: entry },
-        tape: [entry, ...state.tape].slice(0, MAX_TAPE),
+        lastTrade: { ...state.lastTrade, [key]: entry },
+        tape: { ...state.tape, [key]: [entry, ...(state.tape[key] ?? [])].slice(0, MAX_TAPE) },
       };
     }
     case "error": {
@@ -787,7 +954,7 @@ export function applyEvent(state: TerminalState, event: Event): TerminalState {
         ...state,
         book: {
           ...state.book,
-          [event.symbol]: {
+          [pairKey(event.venue, event.symbol)]: {
             bids: Array.isArray(event.bids) ? event.bids : [],
             asks: Array.isArray(event.asks) ? event.asks : [],
             spread: event.spread,
@@ -806,15 +973,43 @@ export function applyEvent(state: TerminalState, event: Event): TerminalState {
       return applyFillEvent(state, event);
     case "position":
       return applyPositionEvent(state, event);
-    // Protocol v3 events the web UI does not show yet: tickers and venue health (Task 14.2),
-    // reference venue and the paper balance (Task 14.9).
     case "ticker24h":
+      return {
+        ...state,
+        tickers: {
+          ...state.tickers,
+          [pairKey(event.venue, event.symbol)]: { ticker: event.ticker, synthetic: event.synthetic, ts: event.ts },
+        },
+      };
     case "venue_status":
+      return state.venueStatus[event.venue] === event.status
+        ? state
+        : { ...state, venueStatus: { ...state.venueStatus, [event.venue]: event.status } };
     case "pair_status":
+      return {
+        ...state,
+        pairHealth: { ...state.pairHealth, [pairKey(event.venue, event.symbol)]: event.health },
+      };
     case "reference_venue":
+      return { ...state, referenceVenue: { ...state.referenceVenue, [event.symbol]: event.venue } };
     case "balance":
+      if (!isOwnAccount(state, event.account_id)) return state;
+      return {
+        ...state,
+        balances: {
+          ...state.balances,
+          [event.account_id]: {
+            paperBalance: event.paper_balance,
+            freeBalance: event.free_balance,
+            equity: event.equity,
+            ts: event.ts,
+          },
+        },
+      };
     case "heartbeat":
+      return state;
     case "pong":
+      recordPong(event.id);
       return state;
   }
 }
@@ -824,8 +1019,24 @@ export function applyServerMessage(state: TerminalState, message: ServerMessage)
   switch (message.type) {
     case "hello": {
       const list = Array.isArray(message.instruments) ? message.instruments : [];
+      const liveVenues = Array.isArray(message.live_venues) ? message.live_venues : [];
+      const statuses = Array.isArray(message.venue_status) ? message.venue_status : [];
+      const available: readonly Venue[] = liveVenues.length > 0 ? liveVenues : [message.default_venue];
+      // Keep the user's venue across a reconnect while the server still offers it.
+      const venue = available.includes(state.selection.venue) ? state.selection.venue : message.default_venue;
+      const providers = Array.isArray(message.providers) ? message.providers : [];
       return {
         ...state,
+        selection: venue === state.selection.venue ? state.selection : { ...state.selection, venue },
+        bookCursor: venue === state.selection.venue ? state.bookCursor : null,
+        venueStatus: Object.fromEntries(statuses.map((entry): [Venue, VenueStatusKind] => [entry.venue, entry.status])),
+        startingBalance: message.starting_balance,
+        newsEnabled: message.news_enabled === true,
+        providers: {
+          available: providers,
+          default: state.providers.default,
+          selected: state.providers.selected,
+        },
         hello: {
           protocolVersion: message.protocol_version,
           dataMode: message.data_mode,
@@ -851,17 +1062,87 @@ export function applyServerMessage(state: TerminalState, message: ServerMessage)
       return applyEvent(state, message.event);
     case "event_batch":
       // The server may batch events; they apply in the order the engine emitted them (Req 34.1).
-      return message.events.reduce<TerminalState>((acc, wire) => applyEvent(acc, wire), state);
-    // Protocol v3 messages the web UI ignores until its panels exist: providers, AI results and
-    // errors (Task 14.9), news (Task 14.2), and TWAP progress (Task 14.9).
+      // The reducer is pure, so the caller commits the whole batch with one `set`.
+      return Array.isArray(message.events)
+        ? message.events.reduce<TerminalState>((acc, wire) => applyEvent(acc, wire), state)
+        : state;
     case "providers":
+      return {
+        ...state,
+        providers: { available: message.available, default: message.default, selected: message.selected },
+      };
     case "analysis":
+      return {
+        ...state,
+        ai: {
+          ...state.ai,
+          analyses: addCapped(state.ai.analyses, message.request_id, {
+            requestId: message.request_id,
+            provider: message.provider,
+            model: message.model,
+            analysis: message.analysis,
+            preview: message.preview,
+            previewError: message.preview_error,
+          }),
+        },
+      };
     case "scan_result":
+      return {
+        ...state,
+        ai: {
+          ...state.ai,
+          scans: addCapped(state.ai.scans, message.request_id, { requestId: message.request_id, items: message.items }),
+        },
+      };
     case "strategy_draft":
+      return {
+        ...state,
+        ai: {
+          ...state.ai,
+          strategies: addCapped(state.ai.strategies, message.request_id, {
+            requestId: message.request_id,
+            text: message.text,
+          }),
+        },
+      };
     case "ai_error":
+      return {
+        ...state,
+        ai: {
+          ...state.ai,
+          errors: addCapped(state.ai.errors, message.request_id, {
+            requestId: message.request_id,
+            reason: message.reason,
+            message: message.message,
+          }),
+        },
+      };
     case "news":
+      return {
+        ...state,
+        news: {
+          available: message.available,
+          items: Array.isArray(message.items) ? message.items.slice(0, MAX_NEWS) : [],
+          updatedAt: message.updated_at,
+        },
+      };
     case "twap":
-      return state;
+      return {
+        ...state,
+        twaps: {
+          ...state.twaps,
+          [message.twap_id]: {
+            twapId: message.twap_id,
+            symbol: message.symbol,
+            side: message.side,
+            venue: message.venue,
+            slices: message.slices,
+            sent: message.sent,
+            status: message.status,
+            reason: message.reason,
+          },
+        },
+      };
     case "notice": {
       // The stored token is cleared on auth_failed, session_expired, and signed_out by the socket
       // layer (socket.ts), not here, so this reducer stays pure.
@@ -889,6 +1170,7 @@ export function applyServerMessage(state: TerminalState, message: ServerMessage)
         },
       };
     case "pong":
+      recordPong(message.id);
       return state;
   }
 }
@@ -944,6 +1226,17 @@ export const useTerminalStore = create<TerminalStore>()((set) => ({
   ...initialState(),
   handleSocketEvent: (event) => set((state) => applySocketEvent(state, event)),
   selectSymbol: (symbol) => set((state) => withSymbol(state, symbol)),
+  selectVenue: (venue) => set((state) => withVenue(state, venue)),
+  setProvider: (provider) => sendMessage({ type: "set_provider", provider }),
+  sendAiRequest: (action, text) => {
+    const { venue, symbol, timeframe } = useTerminalStore.getState().selection;
+    aiRequestCounter += 1;
+    const requestId = `ai-${Date.now().toString(36)}-${aiRequestCounter}`;
+    const sent = sendMessage({ type: "ai_request", request_id: requestId, action, text, symbol, timeframe, venue });
+    return sent ? requestId : null;
+  },
+  cancelTwap: (twapId) => sendMessage({ type: "cancel_twap", request_id: `twap-${twapId}`, twap_id: twapId }),
+  subscribeNews: () => sendMessage({ type: "subscribe_news" }),
   selectTimeframe: (timeframe) => set((state) => withTimeframe(state, timeframe)),
   prefillLimit: (symbol, priceTicks) =>
     set((state) => prefillTicketFromBook(state, symbol, priceTicks)),

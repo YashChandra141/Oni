@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import type { ReactNode } from "react";
+import { AppShell } from "../components/shell/AppShell";
 import "./globals.css";
 import "../styles/oni-theme.css";
 
@@ -17,7 +18,9 @@ export const viewport: Viewport = {
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" data-theme="oni">
-      <body className="crt-screen h-dvh overflow-hidden antialiased">{children}</body>
+      <body className="crt-screen h-dvh overflow-hidden antialiased">
+        <AppShell>{children}</AppShell>
+      </body>
     </html>
   );
 }

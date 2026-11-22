@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc c531897398bb594691ff7ab08316e4eab9144eb60a5be0b72d06d454175f99e0 # shrinks to venue = Coinbase, i = 6, j = 0

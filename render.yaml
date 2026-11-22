@@ -32,8 +32,11 @@ services:
         value: /app/bin/engine
       - key: DATA_MODE
         value: replay
-      - key: LIVE_VENUE
-        value: backpack
+      # LIVE_VENUES is ignored in replay mode (design section 7).
+      - key: LIVE_VENUES
+        value: backpack,coinbase,jupiter,raydium
+      - key: STARTING_BALANCE
+        value: "100000"
       - key: KILL_SWITCH
         value: "false"
       - key: ALLOWED_ORIGINS
@@ -42,7 +45,42 @@ services:
         value: https://oni-web.onrender.com
       - key: SESSION_SECRET
         generateValue: true
+      # LLM providers. Keys are set in the Render dashboard, never in this file.
+      # LLM_PROVIDER is left unset: the server picks the first available provider.
       - key: OPENAI_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: NVIDIA_API_KEY
+        sync: false
+      - key: NVIDIA_BASE_URL
+        value: https://integrate.api.nvidia.com/v1
+      # Not reachable from Render unless Ollama is self-hosted at a public URL.
+      - key: OLLAMA_BASE_URL
+        value: http://localhost:11434
+      # Model overrides (optional): set OPENAI_MODEL, ANTHROPIC_MODEL, NVIDIA_MODEL, OLLAMA_MODEL
+      # in the dashboard. Server defaults apply when unset.
+      - key: OPENAI_MODEL
+        sync: false
+      - key: ANTHROPIC_MODEL
+        sync: false
+      - key: NVIDIA_MODEL
+        sync: false
+      - key: OLLAMA_MODEL
+        sync: false
+      - key: AI_RATE_PER_MIN
+        value: "6"
+      - key: AI_DAILY_CAP
+        value: "500"
+      # News. NewsAPI is development-only (its plan forbids production use); hosted uses CryptoPanic.
+      - key: NEWS_PROVIDER
+        value: cryptopanic
+      - key: CRYPTOPANIC_API_KEY
+        sync: false
+      - key: NEWS_API_KEY
+        sync: false
+      # Optional: raises the Jupiter Price API data rate limit. Authorizes no trading.
+      - key: JUPITER_API_KEY
         sync: false
 
   - type: web

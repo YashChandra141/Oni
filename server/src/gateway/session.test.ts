@@ -5,7 +5,7 @@ import { encodeBase58 } from "../../../shared/base58.ts";
 import { TOKEN_TTL_SEC, TokenService } from "../auth/token.ts";
 import type { Event, ServerMessage } from "../protocol.ts";
 import { PendingRequests, accountTopic, routeAccountEvent } from "./routing.ts";
-import { FakePublisher, FakeSocket, FakeSupervisor, memoryLogger, settle } from "./testing.ts";
+import { FakePublisher, FakeSocket, FakeSupervisor, immediateTimer, memoryLogger, settle } from "./testing.ts";
 import { Gateway, NOTICES_TOPIC } from "./ws.ts";
 
 const ADDRESS = encodeBase58(new Uint8Array(32).fill(7));
@@ -31,6 +31,7 @@ function setup() {
     randomUUID: () => `c${++n}`,
     tokens,
     now: () => clock.ms,
+    batcherTimer: immediateTimer,
   });
   gateway.setPublisher(publisher);
   const connect = (): FakeSocket => {
@@ -259,7 +260,7 @@ describe("account routing through the gateway", () => {
       reason: "risk",
     };
     supervisor.emitEvent(e);
-    expect(a.last()).toEqual({ type: "event", event: e });
+    expect(a.last()).toEqual({ type: "event_batch", events: [e] });
     expect(b.last()).toMatchObject({ type: "session" });
   });
 
@@ -280,7 +281,7 @@ describe("account routing through the gateway", () => {
       reason: "risk",
     };
     supervisor.emitEvent(e);
-    expect(b.last()).toEqual({ type: "event", event: e });
+    expect(b.last()).toEqual({ type: "event_batch", events: [e] });
   });
 
   test("notices reach guest and wallet connections (Req 17.9)", async () => {

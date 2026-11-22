@@ -49,14 +49,21 @@ describe("startServer", () => {
     expect(supervisor.started).toBe(1);
     const res = await fetch(`http://${base}/health`);
     expect(res.status).toBe(200);
-    // oni-terminal-v2 Req 1.9: no db field; one venue entry (replay) and null latency for now.
-    expect(await res.json()).toEqual({
+    // oni-terminal-v2 Req 1.9: no db field; one venue entry (replay) and a summary per latency stage.
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({
       ok: true,
       engine: "running",
       session_id: "session-1",
       venues: [{ venue: "replay", status: "connected" }],
-      latency: { p50_ms: null, p95_ms: null },
     });
+    expect("db" in body).toBe(false);
+    expect(Object.keys(body.latency as object).sort()).toEqual([
+      "command_to_preview",
+      "confirm_to_ack",
+      "emit_to_write",
+      "receipt_to_client",
+    ]);
   });
 
   test("engine Fill and OrderRejected events reach the Activity_Log; a new engine session clears it (Req 2.1, 2.2)", async () => {
@@ -160,7 +167,8 @@ describe("startServer", () => {
         ts: 1,
       } as const;
       supervisor.emitEvent(trade);
-      expect(await next()).toEqual({ type: "event", event: trade });
+      // Events reach a client inside an event_batch, after the 10 ms flush window (Req 34).
+      expect(await next()).toEqual({ type: "event_batch", events: [trade] });
 
       ws.send("garbage");
       const err = await next();

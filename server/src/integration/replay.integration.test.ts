@@ -80,6 +80,20 @@ class Recorder<T> {
 type CandleEvent = Extract<Event, { type: "candle" }>;
 type TradeEvent = Extract<Event, { type: "trade" }>;
 
+/**
+ * Feeds one raw WebSocket frame to a recorder. The server sends live engine events inside an
+ * `event_batch` (Req 34); each event is recorded as its own `event` message, so the checks below
+ * read one event at a time, as for a cached snapshot (which is sent as a single `event`).
+ */
+function recordFrame(inbox: { push(m: ServerMessage): void }, data: unknown): void {
+  const msg = JSON.parse(String(data)) as ServerMessage;
+  if (msg.type === "event_batch") {
+    for (const event of msg.events) inbox.push({ type: "event", event });
+  } else {
+    inbox.push(msg);
+  }
+}
+
 const eventOf = (m: ServerMessage): Event | null => (m.type === "event" ? m.event : null);
 
 function btcCandle(m: ServerMessage): CandleEvent | null {
@@ -168,7 +182,7 @@ if (!HAVE_ENGINE) {
         const inbox = new Recorder<ServerMessage>();
         const ws = new WebSocket(`ws://${base}/ws`);
         client = ws;
-        ws.addEventListener("message", (e) => inbox.push(JSON.parse(String(e.data)) as ServerMessage));
+        ws.addEventListener("message", (e) => recordFrame(inbox, e.data));
         const opened = new Promise<void>((resolveOpen, reject) => {
           ws.addEventListener("open", () => resolveOpen(), { once: true });
           ws.addEventListener("error", () => reject(new Error("websocket error")), { once: true });
@@ -177,7 +191,8 @@ if (!HAVE_ENGINE) {
         await inbox.until(() => inbox.items.length >= 2, "hello and session");
         const hello = inbox.items[0]?.value;
         expect(hello?.type === "hello" && hello.data_mode).toBe("replay");
-        expect(hello?.type === "hello" && hello.venue).toBeNull();
+        expect(hello?.type === "hello" && hello.live_venues).toEqual([]);
+        expect(hello?.type === "hello" && hello.default_venue).toBe("replay");
         expect(inbox.items[1]?.value).toEqual({ type: "session", account_id: "guest", address: null });
 
         const subscribedAt = inbox.items.length;
@@ -311,7 +326,7 @@ if (!HAVE_ENGINE) {
       const inbox = new Recorder<ServerMessage>();
       const ws = new WebSocket(`ws://${base}/ws`);
       sockets.push(ws);
-      ws.addEventListener("message", (e) => inbox.push(JSON.parse(String(e.data)) as ServerMessage));
+      ws.addEventListener("message", (e) => recordFrame(inbox, e.data));
       const opened = new Promise<void>((resolveOpen, reject) => {
         ws.addEventListener("open", () => resolveOpen(), { once: true });
         ws.addEventListener("error", () => reject(new Error("websocket error")), { once: true });

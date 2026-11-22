@@ -106,7 +106,8 @@ describe("? text → preview → confirm", () => {
     expect(submits).toHaveLength(1);
     expect(submits[0]).toEqual({
       origin: { connectionId: "client-1", session: { accountId: "guest", address: null, jti: null, exp: null }, source: "web" },
-      order: { symbol: "BTC-USD", side: "buy", qty: 10_000_000n, kind: { type: "limit", price: 6_400_000n } },
+      // The venue is the client's or the default (replay), never from the model output.
+      order: { symbol: "BTC-USD", side: "buy", qty: 10_000_000n, kind: { type: "limit", price: 6_400_000n }, venue: "replay" },
     });
   });
 
@@ -201,7 +202,8 @@ describe("account change and busy guard", () => {
     const { connect, ask, send, previews, submits } = setup(provider);
     const ws = connect();
     ask(ws, "r1");
-    expect(pending).toHaveLength(1);
+    // The parser resolves its provider asynchronously, so the call starts a microtask later.
+    expect(await waitUntil(() => pending.length === 1)).toBe(true);
 
     send(ws, { type: "authenticate", token: "t" });
     expect(await waitUntil(() => ws.messages().some((m) => m.type === "session" && m.account_id === WALLET.accountId))).toBe(true);
@@ -220,6 +222,7 @@ describe("account change and busy guard", () => {
     ask(ws, "r1", "? first");
     ask(ws, "r2", "? second");
     expect(ws.last()).toMatchObject({ type: "parse_error", request_id: "r2" });
+    expect(await waitUntil(() => pending.length === 1)).toBe(true);
     // LlmOrderParser trims the text after the `?` before calling the provider.
     expect(texts).toEqual(["first"]);
     expect(pending).toHaveLength(1);
@@ -237,7 +240,7 @@ describe("account change and busy guard", () => {
     const b = connect();
     ask(a, "r1");
     ask(b, "r2");
-    expect(pending).toHaveLength(2);
+    expect(await waitUntil(() => pending.length === 2)).toBe(true);
   });
 
   test("a result that arrives after the connection closed is dropped", async () => {
@@ -245,6 +248,7 @@ describe("account change and busy guard", () => {
     const { connect, ask, gateway, previews } = setup(provider);
     const ws = connect();
     ask(ws, "r1");
+    expect(await waitUntil(() => pending.length === 1)).toBe(true);
     gateway.close(ws);
     pending[0]?.resolve(BUY_BTC);
     await settle();
@@ -254,11 +258,11 @@ describe("account change and busy guard", () => {
 });
 
 describe("disabled (Req 23.7)", () => {
-  test("without a provider, ? text gives Notice llm_disabled, no preview, no order", async () => {
+  test("without a provider, ? text gives Notice ai_disabled, no preview, no order", async () => {
     const { connect, ask, previews, submits, other } = setup(null);
     const ws = connect();
     ask(ws, "r1");
-    expect(await waitUntil(() => ws.messages().some((m) => m.type === "notice" && m.kind === "llm_disabled"))).toBe(true);
+    expect(await waitUntil(() => ws.messages().some((m) => m.type === "notice" && m.kind === "ai_disabled"))).toBe(true);
     expect(previews.size).toBe(0);
     expect(submits).toEqual([]);
     expect(other).toEqual([]);

@@ -24,8 +24,8 @@ use crate::keymap::{Action, Context, Keymap, chord_from_crossterm, resolve};
 use crate::line_editor::LineEditor;
 use crate::mouse::MouseAction;
 use crate::order_model::{
-    ConfirmAction, HistoryDirection, history_step, push_history, qty_text_allowed,
-    ticket_command_text,
+    ConfirmAction, HistoryDirection, TicketKind, history_step, push_history, qty_text_allowed,
+    ticket_command_text_kind,
 };
 
 /// Which part of the screen has the keyboard.
@@ -200,6 +200,12 @@ pub enum KeyCommand {
     Ticket(EditOp),
     /// `M` in the ticket: clear the limit price, so the order is a market order.
     TicketMarket,
+    /// `t` in the ticket: next order type.
+    TicketCycle,
+    /// `+` or `-` in the ticket: change the TWAP slice count.
+    TicketSlices(i32),
+    /// `]` or `[` in the ticket: change the TWAP interval in seconds.
+    TicketSecs(i32),
     /// Enter or Escape in the ticket quantity field.
     TicketDone,
     DialogConfirm,
@@ -260,6 +266,22 @@ fn ticket_command(
         KeyCode::Enter if app.book_cursor.is_none() => return Some(KeyCommand::TicketDone),
         KeyCode::Char('m' | 'M') if !has_command_modifier(key) => {
             return Some(KeyCommand::TicketMarket);
+        }
+        // `t` cycles Limit, Market, Stop, TWAP; `+`/`-` set TWAP slices; `[`/`]` its seconds.
+        KeyCode::Char('t' | 'T') if !has_command_modifier(key) => {
+            return Some(KeyCommand::TicketCycle);
+        }
+        KeyCode::Char('+' | '=') if !has_command_modifier(key) => {
+            return Some(KeyCommand::TicketSlices(1));
+        }
+        KeyCode::Char('-') if !has_command_modifier(key) => {
+            return Some(KeyCommand::TicketSlices(-1));
+        }
+        KeyCode::Char(']') if !has_command_modifier(key) => {
+            return Some(KeyCommand::TicketSecs(5));
+        }
+        KeyCode::Char('[') if !has_command_modifier(key) => {
+            return Some(KeyCommand::TicketSecs(-5));
         }
         KeyCode::Char(c) if (c.is_ascii_digit() || c == '.') && !has_command_modifier(key) => {
             return Some(KeyCommand::Ticket(EditOp::Insert(c)));
@@ -334,7 +356,15 @@ impl KeyOutcome {
 /// ticket shows a rejection and sends nothing. The ticket never places an order itself.
 fn submit_ticket(app: &mut App, side: Side, now_ms: i64) -> KeyOutcome {
     let symbol = app.symbol.clone();
-    match ticket_command_text(&symbol, side, app.ticket_limit_price(), app.ticket.qty) {
+    let result = ticket_command_text_kind(
+        app.ticket.kind,
+        &symbol,
+        side,
+        app.ticket_limit_price(),
+        app.ticket.qty,
+        (app.ticket.twap_slices, app.ticket.twap_secs),
+    );
+    match result {
         Err(reason) => {
             app.account.add_rejection(&reason, now_ms);
             KeyOutcome::changed(true)
@@ -343,11 +373,10 @@ fn submit_ticket(app: &mut App, side: Side, now_ms: i64) -> KeyOutcome {
             let request_id = app.request_ids.next(now_ms);
             // Ticket orders are not typed, so they stay out of the command history.
             app.account.command_sent(&request_id);
-            // Task 16.3 sends the TUI's Active_Venue; until then the server picks its default.
             KeyOutcome::send(ClientMessage::CommandText {
                 request_id,
                 text,
-                venue: None,
+                venue: Some(app.active_venue),
             })
         }
     }
@@ -365,11 +394,10 @@ fn submit_command(app: &mut App, now_ms: i64) -> KeyOutcome {
     push_history(&mut app.command.history, &text);
     app.command.history_index = None;
     app.command.submitted = Some(request_id.clone());
-    // Task 16.3 sends the TUI's Active_Venue; until then the server picks its default.
     KeyOutcome::send(ClientMessage::CommandText {
         request_id,
         text,
-        venue: None,
+        venue: Some(app.active_venue),
     })
 }
 
@@ -467,8 +495,33 @@ pub fn apply_key_command(app: &mut App, command: KeyCommand, now_ms: i64) -> Key
         }
         KeyCommand::Ticket(op) => KeyOutcome::changed(edit_ticket_qty(app, op)),
         KeyCommand::TicketMarket => {
-            let changed = app.ticket.limit_price.is_some();
+            let changed = app.ticket.limit_price.is_some() || app.ticket.kind != TicketKind::Market;
             app.ticket.limit_price = None;
+            app.ticket.kind = TicketKind::Market;
+            KeyOutcome::changed(changed)
+        }
+        KeyCommand::TicketCycle => {
+            app.ticket.kind = app.ticket.kind.next();
+            KeyOutcome::changed(true)
+        }
+        KeyCommand::TicketSlices(delta) => {
+            let next = app
+                .ticket
+                .twap_slices
+                .saturating_add_signed(delta)
+                .clamp(2, 20);
+            let changed = next != app.ticket.twap_slices;
+            app.ticket.twap_slices = next;
+            KeyOutcome::changed(changed)
+        }
+        KeyCommand::TicketSecs(delta) => {
+            let next = app
+                .ticket
+                .twap_secs
+                .saturating_add_signed(delta)
+                .clamp(5, 3_600);
+            let changed = next != app.ticket.twap_secs;
+            app.ticket.twap_secs = next;
             KeyOutcome::changed(changed)
         }
         KeyCommand::DialogConfirm => confirm_dialog(app, now_ms),
@@ -550,7 +603,7 @@ mod tests {
     }
 
     fn preview_message(request_id: &str, preview_id: &str, action: PreviewAction) -> NetEvent {
-        NetEvent::Message(ServerMessage::Preview {
+        NetEvent::msg(ServerMessage::Preview {
             request_id: request_id.into(),
             preview: OrderPreview {
                 preview_id: preview_id.into(),
@@ -929,7 +982,7 @@ mod tests {
         };
         update(
             &mut app,
-            NetEvent::Message(ServerMessage::ParseError {
+            NetEvent::msg(ServerMessage::ParseError {
                 request_id: request_id.clone(),
                 message: "unknown symbol XYZ".into(),
                 position: 4,
@@ -1036,7 +1089,7 @@ mod tests {
         let guest = AccountId::new("guest").unwrap();
         update(
             &mut app,
-            NetEvent::Message(ServerMessage::Session {
+            NetEvent::msg(ServerMessage::Session {
                 account_id: guest.clone(),
                 address: None,
             }),
@@ -1057,7 +1110,7 @@ mod tests {
         assert_eq!(app.account.confirm, Some(ConfirmAction::FlattenAll));
         update(
             &mut app,
-            NetEvent::Message(ServerMessage::Session {
+            NetEvent::msg(ServerMessage::Session {
                 account_id: AccountId::new("w_abc").unwrap(),
                 address: Some("abc".into()),
             }),

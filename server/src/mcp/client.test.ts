@@ -180,10 +180,10 @@ describe("preview", () => {
     expect(err.message).toContain("4");
   });
 
-  test("llm_disabled notice rejects a plain-English preview", async () => {
+  test("ai_disabled notice rejects a plain-English preview", async () => {
     const { client } = wsClient((ws, msg) => {
       if (msg.type === "command_text") {
-        ws.receive({ type: "notice", kind: "llm_disabled", message: "Plain-English orders are disabled." });
+        ws.receive({ type: "notice", kind: "ai_disabled", message: "Plain-English orders are disabled." });
       }
     });
     const err = await rejection(client.preview("? buy a little bitcoin"));

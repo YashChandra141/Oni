@@ -2,7 +2,13 @@
 import { describe, expect, test } from "bun:test";
 import { configuredVenueHealth, createHttpApp } from "./http.ts";
 
-const NO_LATENCY = { p50_ms: null, p95_ms: null };
+const EMPTY_STAGE = { count: 0, p50_us: null, p95_us: null };
+const NO_LATENCY = {
+  emit_to_write: EMPTY_STAGE,
+  command_to_preview: EMPTY_STAGE,
+  confirm_to_ack: EMPTY_STAGE,
+  receipt_to_client: EMPTY_STAGE,
+};
 
 describe("GET /health", () => {
   test("reports a running engine, its session id, venues, and latency, with no db field", async () => {
@@ -10,6 +16,7 @@ describe("GET /health", () => {
     const app = createHttpApp({
       engine,
       venues: () => [configuredVenueHealth({ dataMode: "replay", liveVenue: "backpack" }, engine)],
+      latency: () => NO_LATENCY,
     });
     const res = await app.request("/health");
     expect(res.status).toBe(200);
@@ -29,6 +36,7 @@ describe("GET /health", () => {
     const app = createHttpApp({
       engine,
       venues: () => [configuredVenueHealth({ dataMode: "live", liveVenue: "coinbase" }, engine)],
+      latency: () => NO_LATENCY,
     });
     const res = await app.request("/health");
     expect(res.status).toBe(200);

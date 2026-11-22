@@ -25,7 +25,7 @@ describe("create", () => {
     expect(store.create("c1", "guest", BUY, "BUY BTC-USD 0.1 LMT 64000.00")).toEqual({
       preview_id: "p1",
       text: "BUY BTC-USD 0.1 LMT 64000.00",
-      action: { type: "place", symbol: "BTC-USD", side: "buy", qty: "10000000", kind: { type: "limit", price: "6400000" } },
+      action: { type: "place", symbol: "BTC-USD", venue: "replay", side: "buy", qty: "10000000", kind: { type: "limit", price: "6400000" } },
       expires_at: 1_000_000 + PREVIEW_TTL_MS,
     });
     expect(PREVIEW_TTL_MS).toBe(60_000);
@@ -43,7 +43,7 @@ describe("take", () => {
   test("returns the command once (single use)", () => {
     const { store } = makeStore();
     const p = store.create("c1", "guest", BUY, "t");
-    expect(store.take(p.preview_id, "c1", "guest")).toEqual({ ok: true, command: BUY });
+    expect(store.take(p.preview_id, "c1", "guest")).toEqual({ ok: true, command: BUY, venue: "replay" });
     expect(store.take(p.preview_id, "c1", "guest")).toEqual({ ok: false, error: "unknown_preview" });
     expect(store.size).toBe(0);
   });

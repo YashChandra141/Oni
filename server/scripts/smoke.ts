@@ -11,7 +11,8 @@ import { z } from "zod";
 const BASE = process.env.SMOKE_BASE_URL ?? "http://localhost:10000";
 const ORIGIN = process.env.SMOKE_ORIGIN ?? "http://localhost:3000";
 const WS_URL = `${BASE.replace(/^http/, "ws")}/ws`;
-const ORDER_TEXT = "BUY BTC 0.001";
+const ORDER_TEXT = "BUY BTC-USD 0.001";
+const VENUE = "replay";
 const HEALTH_TIMEOUT_MS = 120_000;
 const ORDER_ATTEMPTS = 6;
 const FILL_WAIT_MS = 10_000;
@@ -27,6 +28,15 @@ const HealthSchema = z.object({
 const WsMessageSchema = z
   .object({ type: z.string() })
   .passthrough();
+const BatchSchema = z.object({
+  type: z.literal("event_batch"),
+  events: z.array(z.object({ type: z.string() }).passthrough()),
+});
+const HelloSchema = z.object({
+  type: z.literal("hello"),
+  venues: z.array(z.unknown()),
+  default_venue: z.string(),
+});
 const PreviewMessageSchema = z.object({
   type: z.literal("preview"),
   request_id: z.string(),
@@ -82,7 +92,15 @@ async function openSocket(): Promise<Inbox> {
   ws.addEventListener("message", (ev) => {
     try {
       const parsed = WsMessageSchema.safeParse(JSON.parse(String(ev.data)));
-      if (parsed.success) queue.push(parsed.data);
+      if (parsed.success) {
+        const batch = BatchSchema.safeParse(parsed.data);
+        if (batch.success) {
+          // Flatten event_batch into individual event messages.
+          for (const event of batch.data.events) queue.push({ type: "event", event });
+        } else {
+          queue.push(parsed.data);
+        }
+      }
     } catch {
       // Ignore non-JSON frames; the checks below time out with a clear message if needed.
     }
@@ -125,7 +143,7 @@ const send = (ws: WebSocket, msg: unknown) => ws.send(JSON.stringify(msg));
 async function placeUntilFill(inbox: Inbox): Promise<string> {
   for (let attempt = 1; attempt <= ORDER_ATTEMPTS; attempt++) {
     const requestId = `smoke-${attempt}`;
-    send(inbox.ws, { type: "command_text", request_id: requestId, text: ORDER_TEXT });
+    send(inbox.ws, { type: "command_text", request_id: requestId, text: ORDER_TEXT, venue: VENUE });
     const raw = await inbox.next(
       (m) => (m.type === "preview" || m.type === "parse_error") && m.request_id === requestId,
       10_000,
@@ -149,6 +167,15 @@ async function placeUntilFill(inbox: Inbox): Promise<string> {
       if (ev.type === "fill") {
         if (ev.account_id !== "guest") throw new SmokeError(`Fill carried account ${String(ev.account_id)}, expected guest`);
         step(`fill received for order ${String(ev.order_id)}`);
+        await inbox.next(
+          (m) => {
+            const e = EventMessageSchema.safeParse(m);
+            return e.success && e.data.event.type === "balance";
+          },
+          FILL_WAIT_MS,
+          "a Balance event",
+        );
+        step("balance event received");
         return String(ev.order_id);
       }
       // The replay may not have a book yet; try again.
@@ -193,9 +220,11 @@ async function main(): Promise<void> {
   await waitForHealth();
   const inbox = await openSocket();
   try {
-    await inbox.next((m) => m.type === "hello", 10_000, "the Hello message");
-    step("connected to /ws");
-    send(inbox.ws, { type: "subscribe", symbol: "BTC-USD", timeframe: "1m" });
+    const rawHello = await inbox.next((m) => m.type === "hello", 10_000, "the Hello message");
+    const hello = HelloSchema.safeParse(rawHello);
+    if (!hello.success) throw new SmokeError("Hello lacked venues/default_venue");
+    step(`connected to /ws; default venue ${hello.data.default_venue}`);
+    send(inbox.ws, { type: "subscribe", venue: VENUE, symbol: "BTC-USD", timeframe: "1m" });
     const orderId = await placeUntilFill(inbox);
     await waitForActivity(orderId);
   } finally {

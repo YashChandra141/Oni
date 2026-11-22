@@ -23,6 +23,7 @@ import { resolve } from "node:path";
 import { loadConfig } from "../config.ts";
 import { type EngineProcess, EngineSupervisor, spawnEngineProcess } from "../engine/supervisor.ts";
 import { memoryLogger } from "../gateway/testing.ts";
+import { PROTOCOL_VERSION } from "../gateway/ws.ts";
 import { REPO_ROOT, type RunningServer, startServer } from "../main.ts";
 import type { Event, ServerMessage } from "../protocol.ts";
 
@@ -203,7 +204,7 @@ if (!HAVE_ENGINE) {
         const hello = await inbox.next(() => true, "hello");
         expect(hello.type).toBe("hello");
         expect(hello.type === "hello" && hello.engine_running).toBe(true);
-        expect(hello.type === "hello" && hello.protocol_version).toBe(2);
+        expect(hello.type === "hello" && hello.protocol_version).toBe(PROTOCOL_VERSION);
         // Req 1.8: a guest Session follows Hello (every connection is guest until Task 19).
         expect(await inbox.next(() => true, "session")).toEqual({ type: "session", account_id: "guest", address: null });
 

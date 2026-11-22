@@ -15,7 +15,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use protocol::{
     Command, DecodeError, ErrorCode, Event, MAX_LINE_BYTES, MAX_REPLAY_SPEED, MIN_REPLAY_SPEED,
-    TimeMs, Venue, decode_command, encode_line, is_valid_fixture_name,
+    TimeMs, Venue, VenueStatusKind, WireEvent, decode_command, encode_line, is_valid_fixture_name,
 };
 use tokio::io::{AsyncBufRead, AsyncWrite, AsyncWriteExt};
 use tokio::sync::mpsc;
@@ -36,7 +36,9 @@ use crate::feed::replay::{
     ReplaySchedule, ScheduleError, Scheduled, align_to_now, error_event, load_error_event,
     schedule_error_event,
 };
+use crate::feed::{jupiter, raydium};
 use crate::lines::{Line, LineReader};
+use crate::synthetic_book::DexParams;
 
 /// Interval between Heartbeat Events (Req 3.4).
 pub const HEARTBEAT_PERIOD: Duration = Duration::from_secs(1);
@@ -58,12 +60,28 @@ pub struct RunConfig {
     pub balance: BalanceConfig,
 }
 
-/// Which live feed to start and for which symbols.
+/// Which live feeds to start and for which symbols.
 #[derive(Debug, Clone)]
 pub struct LiveFeedConfig {
-    pub venue: Venue,
+    /// Venues to run at once. The first one is the engine's primary (default) venue.
+    pub venues: Vec<Venue>,
     /// Internal symbols, e.g. `BTC-USD`.
     pub symbols: Vec<String>,
+    /// Jupiter poll interval with a key, in ms (`--jupiter-poll-ms`).
+    pub jupiter_poll_ms: Option<u64>,
+    /// Raydium price poll interval in ms (`--raydium-poll-ms`).
+    pub raydium_poll_ms: u64,
+    /// Synthetic_Book shape of the DEX venues (`--dex-*`).
+    pub dex: DexParams,
+    /// Largest accepted DEX deviation from the reference price, in percent.
+    pub dex_max_deviation_pct: u32,
+}
+
+impl LiveFeedConfig {
+    /// The primary venue: the first listed, or `Replay` when the list is empty.
+    pub fn primary(&self) -> Venue {
+        self.venues.first().copied().unwrap_or(Venue::Replay)
+    }
 }
 
 /// Capacity of the channel between a live adapter and the runtime.
@@ -103,7 +121,9 @@ fn spawn_backfill<F: HistoryFetcher>(
 }
 
 impl LiveFeed {
-    /// Spawns the adapter and the backfill task for `config.venue` on the current runtime.
+    /// Spawns one adapter task (plus a forwarder that stamps its venue and reports its status)
+    /// per venue of `config.venues`, and one backfill task for the primary venue when it has
+    /// klines. All adapters share one market channel and one error channel.
     fn start(config: Option<LiveFeedConfig>) -> Self {
         let none = Self {
             market: None,
@@ -114,38 +134,38 @@ impl LiveFeed {
         let Some(config) = config else {
             return none;
         };
-        match config.venue {
+        info!(
+            dex_levels = config.dex.levels,
+            dex_spread_bps = config.dex.spread_bps,
+            dex_step_bps = config.dex.step_bps,
+            dex_max_deviation_pct = config.dex_max_deviation_pct,
+            jupiter_key = std::env::var_os("JUPITER_API_KEY").is_some(),
+            "live feed settings"
+        );
+        let (tx, market) = mpsc::channel(LIVE_CHANNEL_CAPACITY);
+        let (err_tx, errors) = mpsc::channel(LIVE_ERROR_CAPACITY);
+        for venue in &config.venues {
+            spawn_venue(*venue, &config, tx.clone(), err_tx.clone());
+        }
+        // Backfill is per (venue, symbol) where the venue has klines. The core queues history
+        // requests for its primary venue only, so one fetcher serves that venue.
+        let (history_requests, history) = match config.primary() {
             Venue::Coinbase => {
-                let (tx, market) = mpsc::channel(LIVE_CHANNEL_CAPACITY);
-                let (err_tx, errors) = mpsc::channel(LIVE_ERROR_CAPACITY);
-                info!("starting the coinbase live feed");
-                tokio::spawn(run_coinbase(tx, err_tx, config.symbols));
-                let (history_requests, history) = spawn_backfill(CoinbaseHistory);
-                Self {
-                    market: Some(market),
-                    errors: Some(errors),
-                    history_requests: Some(history_requests),
-                    history: Some(history),
-                }
+                let (a, b) = spawn_backfill(CoinbaseHistory);
+                (Some(a), Some(b))
             }
             Venue::Backpack => {
-                // Same channels as the Coinbase arm. The adapter reports connection failures on
-                // `err_tx` and fetches REST depth snapshots itself (Task 7.5, Req 43).
-                let (tx, market) = mpsc::channel(LIVE_CHANNEL_CAPACITY);
-                let (err_tx, errors) = mpsc::channel(LIVE_ERROR_CAPACITY);
-                info!("starting the backpack live feed");
-                tokio::spawn(run_backpack(tx, err_tx, config.symbols));
-                let (history_requests, history) = spawn_backfill(BackpackHistory);
-                Self {
-                    market: Some(market),
-                    errors: Some(errors),
-                    history_requests: Some(history_requests),
-                    history: Some(history),
-                }
+                let (a, b) = spawn_backfill(BackpackHistory);
+                (Some(a), Some(b))
             }
-            // The Jupiter and Raydium adapters arrive with the DEX tasks; until then these
-            // venues have no live feed.
-            Venue::Jupiter | Venue::Raydium | Venue::Replay => none,
+            // DEX history comes from samples only.
+            Venue::Jupiter | Venue::Raydium | Venue::Replay => (None, None),
+        };
+        Self {
+            market: Some(market),
+            errors: Some(errors),
+            history_requests,
+            history,
         }
     }
 
@@ -175,6 +195,7 @@ impl LiveFeed {
     /// Sends `first` and then every message already queued, up to [`MAX_LIVE_BATCH`], to the
     /// engine, and returns the Events.
     fn on_market(&mut self, engine: &mut Engine, first: MarketMsg) -> Vec<Event> {
+        // Each venue's forwarder already stamped its own venue on the message.
         let mut events = engine.on_market(first);
         if let Some(rx) = self.market.as_mut() {
             for _ in 1..MAX_LIVE_BATCH {
@@ -185,6 +206,110 @@ impl LiveFeed {
             }
         }
         events
+    }
+}
+
+/// Spawns the adapter of `venue` and the forwarder that tags its messages with the venue and
+/// sends `Status` messages (connecting at start, connected on data, down on a disconnect).
+fn spawn_venue(
+    venue: Venue,
+    config: &LiveFeedConfig,
+    tx: mpsc::Sender<MarketMsg>,
+    err_tx: mpsc::Sender<Event>,
+) {
+    let (raw_tx, raw_rx) = mpsc::channel(LIVE_CHANNEL_CAPACITY);
+    let mut raw_errors = None;
+    info!(venue = venue.name(), "starting a live feed");
+    match venue {
+        Venue::Coinbase => {
+            let (e_tx, e_rx) = mpsc::channel(LIVE_ERROR_CAPACITY);
+            raw_errors = Some(e_rx);
+            tokio::spawn(run_coinbase(raw_tx, e_tx, config.symbols.clone()));
+        }
+        Venue::Backpack => {
+            let (e_tx, e_rx) = mpsc::channel(LIVE_ERROR_CAPACITY);
+            raw_errors = Some(e_rx);
+            tokio::spawn(run_backpack(raw_tx, e_tx, config.symbols.clone()));
+        }
+        Venue::Jupiter => {
+            // Only whether a key exists is read here; `https_get` attaches it and nothing logs it.
+            let has_key = std::env::var_os("JUPITER_API_KEY").is_some();
+            let (s_tx, mut s_rx) = mpsc::channel::<jupiter::PriceSample>(LIVE_CHANNEL_CAPACITY);
+            tokio::spawn(jupiter::run(has_key, config.jupiter_poll_ms, s_tx));
+            tokio::spawn(async move {
+                while let Some(sample) = s_rx.recv().await {
+                    if raw_tx.send(MarketMsg::from(sample)).await.is_err() {
+                        break;
+                    }
+                }
+            });
+        }
+        Venue::Raydium => {
+            let (u_tx, mut u_rx) = mpsc::channel::<raydium::RaydiumUpdate>(LIVE_CHANNEL_CAPACITY);
+            tokio::spawn(raydium::run(config.raydium_poll_ms, u_tx));
+            tokio::spawn(async move {
+                while let Some(update) = u_rx.recv().await {
+                    // Pool TVL has no market message; only prices go on.
+                    if let raydium::RaydiumUpdate::Price(sample) = update
+                        && raw_tx.send(MarketMsg::from(sample)).await.is_err()
+                    {
+                        break;
+                    }
+                }
+            });
+        }
+        Venue::Replay => return,
+    }
+    tokio::spawn(forward_venue(venue, raw_rx, raw_errors, tx, err_tx));
+}
+
+/// Stamps `venue` on every message of one adapter and reports its connection status.
+async fn forward_venue(
+    venue: Venue,
+    mut market: mpsc::Receiver<MarketMsg>,
+    mut errors: Option<mpsc::Receiver<Event>>,
+    tx: mpsc::Sender<MarketMsg>,
+    err_tx: mpsc::Sender<Event>,
+) {
+    let status = |status| MarketMsg::Status {
+        venue,
+        status,
+        ts: now_ms(),
+    };
+    if tx.send(status(VenueStatusKind::Connecting)).await.is_err() {
+        return;
+    }
+    let mut up = false;
+    loop {
+        tokio::select! {
+            msg = market.recv() => {
+                let Some(msg) = msg else { return };
+                if !up {
+                    up = true;
+                    if tx.send(status(VenueStatusKind::Connected)).await.is_err() {
+                        return;
+                    }
+                }
+                if tx.send(msg.with_venue(venue)).await.is_err() {
+                    return;
+                }
+            }
+            event = recv_opt(&mut errors) => {
+                let Some(event) = event else {
+                    errors = None;
+                    continue;
+                };
+                if matches!(&event, Event::Error { code, .. } if *code == ErrorCode::FeedDisconnected) {
+                    up = false;
+                    if tx.send(status(VenueStatusKind::Down)).await.is_err() {
+                        return;
+                    }
+                }
+                if err_tx.send(event).await.is_err() {
+                    return;
+                }
+            }
+        }
     }
 }
 
@@ -246,12 +371,16 @@ where
     let mut engine = match config.live.as_ref() {
         Some(live) => Engine::with_backfill()
             .with_balance(config.balance)
-            .with_venue(live.venue),
+            .with_venue(live.primary())
+            .with_dex(live.dex, live.dex_max_deviation_pct),
         None => Engine::new()
             .with_balance(config.balance)
             .with_venue(Venue::Replay),
     };
     let mut replay = Replay::new(config.fixtures_dir);
+    // Live mode only: the core gets a `Clock` each second and a `Down` status when the adapter
+    // reports a disconnect. Replay never goes stale (design D6).
+    let live_mode = config.live.is_some();
     let mut live = LiveFeed::start(config.live);
     let mut lines = LineReader::new(input, MAX_LINE_BYTES);
     let mut ticker = tokio::time::interval(config.heartbeat);
@@ -274,7 +403,14 @@ where
             () = sleep_until_some(deadline) => Wake::ReplayDue,
         };
         let events = match wake {
-            Wake::Heartbeat => vec![Event::Heartbeat { ts: now_ms() }],
+            Wake::Heartbeat => {
+                let ts = now_ms();
+                let mut events = vec![Event::Heartbeat { ts }];
+                if live_mode {
+                    events.extend(engine.on_market(MarketMsg::Clock { ts }));
+                }
+                events
+            }
             Wake::Line(Some(line)) => {
                 let mut events = on_line(&mut engine, &mut replay, line);
                 events.extend(live.queue_history(&mut engine));
@@ -291,6 +427,7 @@ where
                 live.market = None;
                 Vec::new()
             }
+            // The venue's forwarder already sent its `Down` status on the market channel.
             Wake::LiveError(Some(event)) => vec![event],
             Wake::LiveError(None) => {
                 live.errors = None;
@@ -551,14 +688,26 @@ async fn write_events<W: AsyncWrite + Unpin>(output: &mut W, events: &[Event]) -
         return Ok(());
     }
     let mut batch = String::new();
+    let emit_us = now_us();
     for event in events {
-        match encode_line(event) {
+        let wire = WireEvent {
+            event: event.clone(),
+            emit_us: Some(emit_us),
+        };
+        match encode_line(&wire) {
             Ok(line) => batch.push_str(&line),
             Err(err) => error!(%err, "dropped an event that failed to encode"),
         }
     }
     output.write_all(batch.as_bytes()).await?;
     output.flush().await
+}
+
+/// Wall-clock time in microseconds since the Unix epoch, stamped on each written line.
+fn now_us() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_micros()).unwrap_or(u64::MAX))
 }
 
 /// Wall-clock time in milliseconds since the Unix epoch, for Heartbeat Events and for aligning
@@ -742,6 +891,7 @@ mod tests {
         FixtureLine {
             recv,
             msg: MarketMsg::Trade {
+                venue: protocol::Venue::Replay,
                 symbol: "BTC-USD".into(),
                 price: Price(price),
                 qty: Qty(1),

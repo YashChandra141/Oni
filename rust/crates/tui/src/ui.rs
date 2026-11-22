@@ -8,13 +8,14 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Clear, Paragraph, Wrap};
 
-use crate::app::{App, ConnState};
+use crate::app::{App, ConnState, Page};
 use crate::book_model::{BookRow, layout_rows};
 use crate::book_widget::BookWidget;
 use crate::chart_model::visible_bars;
 use crate::chart_widget::{AXIS_WIDTH, CandleChart, PlotGeometry};
+use crate::copilot::CopilotOutput;
 use crate::hitmap::{HitMap, HitTarget, PanelId};
 use crate::indicator_model::{Indicator, IndicatorSeries, legend_text, subpane_rows};
 use crate::indicator_widget::{draw_overlays, draw_subpane, indicator_color};
@@ -42,11 +43,12 @@ pub const STRIP_MIN_HEIGHT: u16 = 40;
 pub const STRIP_HEIGHT: u16 = 8;
 
 /// Timeframe buttons, left to right (Req 25.3).
-pub const TIMEFRAMES: [Timeframe; 5] = [
+pub const TIMEFRAMES: [Timeframe; 6] = [
     Timeframe::M1,
     Timeframe::M5,
     Timeframe::M15,
     Timeframe::H1,
+    Timeframe::H4,
     Timeframe::D1,
 ];
 
@@ -54,7 +56,7 @@ pub const TIMEFRAMES: [Timeframe; 5] = [
 pub fn draw(frame: &mut Frame, app: &App, hits: &mut HitMap) {
     hits.clear();
     if !app.candles.is_empty() {
-        draw_chart(frame, app, hits);
+        draw_screen(frame, app, hits);
         crate::pairing_dialog::draw(frame, &app.pairing);
         return;
     }
@@ -106,8 +108,7 @@ fn logo_title() -> Line<'static> {
 /// The chart screen: the candle chart (Req 25.1), and on wide terminals a right column with the
 /// watchlist over the order book over the trades tape (Req 27.1–27.3). Narrower terminals show
 /// a one-line watchlist strip above the chart instead.
-fn draw_chart(frame: &mut Frame, app: &App, hits: &mut HitMap) {
-    let full = frame.area();
+fn draw_chart_in(frame: &mut Frame, app: &App, hits: &mut HitMap, full: Rect, show_strip: bool) {
     let wide = full.width >= WIDE_MIN_WIDTH;
     let bar_rows = order_widget::command_rows(app);
     let min_height = if wide {
@@ -131,7 +132,8 @@ fn draw_chart(frame: &mut Frame, app: &App, hits: &mut HitMap) {
     };
     // The strip sits above the bar on tall wide screens; elsewhere the bar shows a one-line
     // P&L summary.
-    let with_strip = wide && reserved && full.height >= STRIP_MIN_HEIGHT;
+    let with_strip =
+        wide && reserved && (full.height >= STRIP_MIN_HEIGHT || (show_strip && full.height >= 30));
     let (main, strip_area) = if with_strip {
         let [main, strip] =
             Layout::vertical([Constraint::Min(0), Constraint::Length(STRIP_HEIGHT)]).areas(rest);
@@ -239,6 +241,19 @@ fn draw_side_column(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect)
     ])
     .areas(area);
 
+    draw_book_panel(frame, app, hits, book_area);
+
+    // Req 30.1, 30.2: the ticket line with the book's limit price (selected symbol only), the
+    // quantity, and the BUY and SELL buttons.
+    order_widget::draw_ticket_line(frame, app, hits, ticket_area);
+
+    hits.register(tape_area, HitTarget::Panel(PanelId::Tape));
+    frame.render_widget(TapeWidget::new(&app.symbol, &app.tape), tape_area);
+}
+
+/// The order book with one hit entry per level row. DEX venues label their depth as
+/// simulated in the book widget.
+fn draw_book_panel(frame: &mut Frame, app: &App, hits: &mut HitMap, book_area: Rect) {
     hits.register(book_area, HitTarget::Panel(PanelId::Book));
     let book = app.book();
     frame.render_widget(
@@ -263,13 +278,585 @@ fn draw_side_column(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect)
             }
         }
     }
+}
 
-    // Req 30.1, 30.2: the ticket line with the book's limit price (selected symbol only), the
-    // quantity, and the BUY and SELL buttons.
-    order_widget::draw_ticket_line(frame, app, hits, ticket_area);
+/// Fewest columns and rows for the full layout: menu, Trade page panels, and key bar.
+pub const FULL_MIN_WIDTH: u16 = 140;
+pub const FULL_MIN_HEIGHT: u16 = 40;
+/// Width of the left menu.
+pub const MENU_WIDTH: u16 = 18;
+/// Rows of the News and Copilot row under the chart on the Trade page.
+pub const LOWER_ROW_HEIGHT: u16 = 6;
 
-    hits.register(tape_area, HitTarget::Panel(PanelId::Tape));
-    frame.render_widget(TapeWidget::new(&app.symbol, &app.tape), tape_area);
+/// Picks the layout: the full layout (menu, panels, key bar) from 140x40, otherwise only the
+/// selected page.
+fn draw_screen(frame: &mut Frame, app: &App, hits: &mut HitMap) {
+    let full = frame.area();
+    if full.width >= FULL_MIN_WIDTH && full.height >= FULL_MIN_HEIGHT {
+        let [header, body, key_bar] = Layout::vertical([
+            Constraint::Length(HEADER_HEIGHT),
+            Constraint::Min(0),
+            Constraint::Length(1),
+        ])
+        .areas(full);
+        draw_header(frame, app, hits, header);
+        let [menu, content] =
+            Layout::horizontal([Constraint::Length(MENU_WIDTH), Constraint::Min(0)]).areas(body);
+        draw_menu(frame, app, hits, menu);
+        draw_key_bar(frame, hits, key_bar);
+        if app.page == Page::Trade {
+            let [top, lower] =
+                Layout::vertical([Constraint::Min(0), Constraint::Length(LOWER_ROW_HEIGHT)])
+                    .areas(content);
+            draw_chart_in(frame, app, hits, top, true);
+            let [news, copilot] =
+                Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
+                    .areas(lower);
+            draw_news_panel(frame, app, hits, news);
+            draw_copilot_panel(frame, app, hits, copilot);
+        } else {
+            draw_page(frame, app, hits, content);
+            order_widget::draw_dialogs(frame, app, hits);
+        }
+    } else if app.page == Page::Trade {
+        draw_chart_in(frame, app, hits, full, false);
+    } else {
+        draw_page(frame, app, hits, full);
+        order_widget::draw_dialogs(frame, app, hits);
+    }
+    if app.help_open {
+        draw_help(frame, hits);
+    }
+    draw_picker(frame, app, hits);
+}
+
+/// Rows of the header: two borders and one line.
+pub const HEADER_HEIGHT: u16 = 3;
+
+/// The header segments: title, mode, exchanges, latency, help hint (Req 32).
+fn header_line(app: &App) -> Line<'static> {
+    use protocol::VenueStatusKind;
+    use protocol::client::DataMode;
+    let muted = Style::new().fg(crate::brand::MUTED);
+    let text = Style::new().fg(crate::brand::TEXT);
+    let total = app
+        .venue_status
+        .iter()
+        .filter(|e| e.status != VenueStatusKind::Disabled)
+        .count();
+    let connected = app
+        .venue_status
+        .iter()
+        .filter(|e| e.status == VenueStatusKind::Connected)
+        .count();
+    let stale = app
+        .venue_status
+        .iter()
+        .any(|e| e.status == VenueStatusKind::Stale);
+    let (mode, mode_color) = match app.hello.as_ref().map(|h| h.data_mode) {
+        Some(DataMode::Replay) => ("[REPLAY]", crate::brand::AMBER),
+        Some(_) if stale => ("[STALE]", crate::brand::AMBER),
+        Some(_) => ("[LIVE]", crate::brand::BUY),
+        None => ("[--]", crate::brand::FAINT),
+    };
+    let latency = app
+        .latency_ms
+        .map_or_else(|| "\u{2013}".to_owned(), |ms| ms.to_string());
+    let mut spans = vec![Span::styled(
+        format!(
+            "ONI {} v{} -- Multi-Exchange Trading Terminal",
+            "\u{9b3c}",
+            env!("CARGO_PKG_VERSION")
+        ),
+        Style::new()
+            .fg(crate::brand::ACCENT_BRIGHT)
+            .add_modifier(Modifier::BOLD),
+    )];
+    spans.push(Span::raw("  "));
+    spans.push(Span::styled(
+        mode,
+        Style::new().fg(mode_color).add_modifier(Modifier::BOLD),
+    ));
+    spans.push(Span::styled(
+        format!("  {connected}/{total} Exchanges"),
+        text,
+    ));
+    spans.push(Span::styled(format!("  Latency: {latency} ms"), text));
+    spans.push(Span::styled("  F1 Help", muted));
+    Line::from(spans)
+}
+
+/// The red-bordered header strip at the top of the full layout.
+fn draw_header(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect) {
+    hits.register(area, HitTarget::Panel(PanelId::Status));
+    let mut line = header_line(app);
+    let text = Style::new().fg(crate::brand::TEXT);
+    let venue = venue_chip_text(app);
+    let provider = provider_chip_text(app);
+    // The row inside the border; chips start after the base line and a two-cell gap.
+    let row = Rect::new(
+        area.x.saturating_add(1),
+        area.y.saturating_add(1),
+        area.width.saturating_sub(2),
+        1,
+    );
+    let mut x = u16::try_from(line.width())
+        .unwrap_or(u16::MAX)
+        .saturating_add(2);
+    let mut chips = Vec::with_capacity(2);
+    for (label, target) in [
+        (venue, HitTarget::VenueChip),
+        (provider, HitTarget::ProviderChip),
+    ] {
+        let width = u16::try_from(Line::from(label.as_str()).width()).unwrap_or(u16::MAX);
+        chips.push((x, width, target));
+        line.spans.push(Span::raw("  "));
+        line.spans.push(Span::styled(label, text));
+        x = x.saturating_add(width).saturating_add(2);
+    }
+    frame.render_widget(Paragraph::new(line).block(crate::brand::block()), area);
+    for (x, width, target) in chips {
+        let start = row.x.saturating_add(x);
+        let end = start
+            .saturating_add(width)
+            .min(row.x.saturating_add(row.width));
+        if start < end {
+            hits.register(Rect::new(start, row.y, end - start, 1), target);
+        }
+    }
+}
+
+/// A one-cell mark of a venue's connection state, as the web chips show it (Req 32).
+fn venue_mark(app: &App, venue: protocol::Venue) -> &'static str {
+    use protocol::VenueStatusKind;
+    if venue == protocol::Venue::Replay {
+        return "\u{25cf}";
+    }
+    match app
+        .venue_status
+        .iter()
+        .find(|e| e.venue == venue)
+        .map(|e| e.status)
+    {
+        Some(VenueStatusKind::Connected) => "\u{25cf}",
+        Some(VenueStatusKind::Connecting) => "\u{2026}",
+        Some(VenueStatusKind::Stale) => "\u{25d0}",
+        Some(VenueStatusKind::Down) => "\u{25cb}",
+        Some(VenueStatusKind::Disabled) | None => "\u{2013}",
+    }
+}
+
+fn provider_name(id: protocol::ProviderId) -> String {
+    format!("{id:?}").to_lowercase()
+}
+
+/// The venue chip text: `[v] <mark> <venue>`.
+fn venue_chip_text(app: &App) -> String {
+    format!(
+        "[v] {} {}",
+        venue_mark(app, app.active_venue),
+        app.active_venue.name()
+    )
+}
+
+/// The provider chip text: `[m] AI: <provider>`.
+fn provider_chip_text(app: &App) -> String {
+    let name = app
+        .provider
+        .map_or_else(|| "none".to_owned(), provider_name);
+    format!("[m] AI: {name}")
+}
+
+/// The venue or provider picker popup, centered, with one hit entry per row. A backdrop entry
+/// registered first closes the picker on a click outside it (Task 16.3).
+fn draw_picker(frame: &mut Frame, app: &App, hits: &mut HitMap) {
+    let Some(picker) = app.picker else {
+        return;
+    };
+    let full = frame.area();
+    hits.register(full, HitTarget::PickerBackdrop);
+    let (title, rows): (&str, Vec<(String, bool)>) = match picker.kind {
+        crate::app::PickerKind::Venue => (
+            " VENUE ",
+            app.venues
+                .iter()
+                .map(|v| {
+                    let active = if *v == app.active_venue { " *" } else { "" };
+                    (
+                        format!("{} {}{active}", venue_mark(app, *v), v.name()),
+                        true,
+                    )
+                })
+                .collect(),
+        ),
+        crate::app::PickerKind::Provider => (
+            " PROVIDER ",
+            app.providers
+                .iter()
+                .map(|p| {
+                    let active = if Some(p.id) == app.provider { " *" } else { "" };
+                    match &p.reason {
+                        Some(reason) => (format!("{} ({reason})", provider_name(p.id)), false),
+                        None => (
+                            format!("{} ({}){active}", provider_name(p.id), p.model),
+                            true,
+                        ),
+                    }
+                })
+                .collect(),
+        ),
+    };
+    let width = rows
+        .iter()
+        .map(|(text, _)| Line::from(text.as_str()).width())
+        .max()
+        .unwrap_or(0)
+        .saturating_add(6)
+        .max(24);
+    let width = u16::try_from(width).unwrap_or(u16::MAX).min(full.width);
+    let height = u16::try_from(rows.len())
+        .unwrap_or(u16::MAX)
+        .saturating_add(2)
+        .min(full.height);
+    let rect = Rect::new(
+        full.x + (full.width - width) / 2,
+        full.y + (full.height - height) / 2,
+        width,
+        height,
+    );
+    frame.render_widget(Clear, rect);
+    let block = crate::brand::block().title(title);
+    let inner = block.inner(rect);
+    frame.render_widget(block, rect);
+    for (i, (text, selectable)) in rows.iter().enumerate() {
+        let Ok(offset) = u16::try_from(i) else {
+            break;
+        };
+        if offset >= inner.height {
+            break;
+        }
+        let row = Rect::new(inner.x, inner.y + offset, inner.width, 1);
+        let style = if i == picker.cursor {
+            selected_style()
+        } else if *selectable {
+            Style::new().fg(crate::brand::TEXT)
+        } else {
+            Style::new().fg(crate::brand::FAINT)
+        };
+        hits.register(row, HitTarget::PickerRow(i));
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(format!(" {text}"), style))),
+            row,
+        );
+    }
+}
+
+/// One non-Trade page filling `area` (the focused panel only).
+fn draw_page(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect) {
+    match app.page {
+        Page::Trade => draw_chart_in(frame, app, hits, area, false),
+        Page::Book => {
+            let [book, tape] =
+                Layout::vertical([Constraint::Percentage(60), Constraint::Min(0)]).areas(area);
+            draw_book_panel(frame, app, hits, book);
+            hits.register(tape, HitTarget::Panel(PanelId::Tape));
+            frame.render_widget(TapeWidget::new(&app.symbol, &app.tape), tape);
+        }
+        Page::Positions | Page::Orders => order_widget::draw_strip(frame, app, hits, area),
+        Page::Watchlist => draw_watchlist_panel(frame, app, hits, area),
+        Page::News => draw_news_panel(frame, app, hits, area),
+        Page::Copilot => draw_copilot_panel(frame, app, hits, area),
+        Page::Config => draw_placeholder(
+            frame,
+            hits,
+            area,
+            PanelId::Config,
+            "CONFIG",
+            "Provider and account settings arrive with the Copilot task.",
+        ),
+    }
+}
+
+/// Cuts `text` to `width` characters, ending with `…` when it cut.
+fn truncate_chars(text: &str, width: usize) -> String {
+    if text.chars().count() <= width {
+        return text.to_owned();
+    }
+    let keep = width.saturating_sub(1);
+    let mut out: String = text.chars().take(keep).collect();
+    if width > 0 {
+        out.push('…');
+    }
+    out
+}
+
+/// The News panel: newest items with time ago, title, and symbols (Task 16.4).
+fn draw_news_panel(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect) {
+    hits.register(area, HitTarget::Panel(PanelId::News));
+    let block = crate::brand::block().title(" NEWS ");
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let news = &app.news;
+    let muted = Style::new().fg(crate::brand::MUTED);
+    if !news.enabled || !news.available {
+        frame.render_widget(
+            Paragraph::new(Line::styled("News unavailable", muted)),
+            inner,
+        );
+        return;
+    }
+    if news.items.is_empty() {
+        frame.render_widget(Paragraph::new(Line::styled("No news yet.", muted)), inner);
+        return;
+    }
+    let url_row = news.shown_url.is_some() && inner.height > 1;
+    let rows = usize::from(inner.height).saturating_sub(usize::from(url_row));
+    if rows == 0 {
+        return;
+    }
+    let first = news.selected.saturating_sub(rows - 1);
+    let width = usize::from(inner.width);
+    let mut lines = Vec::new();
+    for (index, item) in news.items.iter().enumerate().skip(first).take(rows) {
+        let ago = crate::copilot::time_ago(app.now_ms, item.published_at);
+        let prefix = format!("{ago:>4} ");
+        let suffix = if item.symbols.is_empty() {
+            String::new()
+        } else {
+            format!(" [{}]", item.symbols.join(","))
+        };
+        let room = width
+            .saturating_sub(prefix.chars().count())
+            .saturating_sub(suffix.chars().count());
+        let text = format!(
+            "{prefix}{}{suffix}",
+            truncate_chars(&item.title, room.max(1))
+        );
+        let style = if app.page == Page::News && index == news.selected {
+            selected_style()
+        } else {
+            Style::new().fg(crate::brand::TEXT)
+        };
+        lines.push(Line::styled(truncate_chars(&text, width), style));
+    }
+    if let Some(url) = &news.shown_url
+        && url_row
+    {
+        lines.push(Line::styled(truncate_chars(url, width), muted));
+    }
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// The AI Copilot panel: result text above, input line at the bottom (Task 16.4).
+fn draw_copilot_panel(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect) {
+    hits.register(area, HitTarget::Panel(PanelId::Copilot));
+    let mut block = crate::brand::block().title(" AI COPILOT ");
+    if app.copilot.focused {
+        block = block.border_style(Style::new().fg(crate::brand::ACCENT_BRIGHT));
+    }
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    if inner.height == 0 {
+        return;
+    }
+    let [body, input] = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(inner);
+    let muted = Style::new().fg(crate::brand::MUTED);
+    let text = Style::new().fg(crate::brand::TEXT);
+    let mut lines: Vec<Line> = Vec::new();
+    match &app.copilot.output {
+        Some(CopilotOutput::Analysis {
+            analysis,
+            command,
+            preview_error,
+        }) => {
+            let bias_color = match analysis.bias {
+                protocol::AnalysisBias::Long => crate::brand::BUY,
+                protocol::AnalysisBias::Short => crate::brand::SELL,
+                protocol::AnalysisBias::Neutral => crate::brand::MUTED,
+            };
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!(
+                        "{} {} ",
+                        analysis.symbol,
+                        crate::copilot::bias_label(analysis.bias)
+                    ),
+                    Style::new().fg(bias_color).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(format!("{}%", analysis.confidence_bps / 100), muted),
+            ]));
+            lines.push(Line::styled(analysis.summary.clone(), text));
+            for reason in &analysis.rationale {
+                lines.push(Line::styled(format!("- {reason}"), muted));
+            }
+            if let Some(command) = command {
+                lines.push(Line::styled(
+                    format!("Idea: {command}   [t] preview (you still confirm)"),
+                    Style::new().fg(crate::brand::ACCENT_BRIGHT),
+                ));
+            } else if let Some(error) = preview_error {
+                lines.push(Line::styled(format!("No preview: {error}"), muted));
+            }
+        }
+        Some(CopilotOutput::Scan(items)) => {
+            for item in items {
+                lines.push(Line::styled(
+                    format!(
+                        "{} {} {}% {}",
+                        item.symbol,
+                        crate::copilot::bias_label(item.bias),
+                        item.confidence_bps / 100,
+                        item.summary
+                    ),
+                    text,
+                ));
+            }
+            if items.is_empty() {
+                lines.push(Line::styled("Scan found nothing.", muted));
+            }
+        }
+        Some(CopilotOutput::Strategy(body)) => {
+            lines.extend(body.lines().map(|l| Line::styled(l.to_owned(), text)));
+        }
+        Some(CopilotOutput::Error(message)) => {
+            lines.push(Line::styled(
+                message.clone(),
+                Style::new().fg(crate::brand::SELL),
+            ));
+        }
+        None if crate::copilot::ai_disabled(app) => {
+            lines.push(Line::styled("AI features are disabled", muted));
+        }
+        None => {
+            lines.push(Line::styled(
+                "Analyze the chart symbol, or /scan, /strategy <text>. Preview only: it never places orders.",
+                muted,
+            ));
+        }
+    }
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), body);
+    let line = if app.copilot.pending.is_some() {
+        Line::styled("… thinking (Esc cancels)", muted)
+    } else if app.copilot.focused {
+        Line::styled(
+            format!("> {}▏", app.copilot.input.text()),
+            Style::new().fg(crate::brand::ACCENT_BRIGHT),
+        )
+    } else if app.copilot.input.is_empty() {
+        Line::styled("[a] ask the Copilot", muted)
+    } else {
+        Line::styled(format!("> {}", app.copilot.input.text()), muted)
+    };
+    frame.render_widget(Paragraph::new(line), input);
+}
+
+fn draw_placeholder(
+    frame: &mut Frame,
+    hits: &mut HitMap,
+    area: Rect,
+    panel: PanelId,
+    title: &str,
+    body: &str,
+) {
+    hits.register(area, HitTarget::Panel(panel));
+    let block = crate::brand::block().title(format!(" {title} "));
+    let paragraph = Paragraph::new(body.to_owned())
+        .style(Style::new().fg(crate::brand::MUTED))
+        .block(block);
+    frame.render_widget(paragraph, area);
+}
+
+/// The left menu: `[1] Trade` to `[8] Config`, then `[q] Quit`.
+fn draw_menu(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect) {
+    hits.register(area, HitTarget::Panel(PanelId::Menu));
+    let block = crate::brand::block().title(logo_title());
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    let mut lines = Vec::new();
+    for (i, page) in Page::ALL.iter().enumerate() {
+        let style = if *page == app.page {
+            Style::new()
+                .fg(crate::brand::ACCENT_BRIGHT)
+                .add_modifier(Modifier::REVERSED | Modifier::BOLD)
+        } else {
+            Style::new().fg(crate::brand::TEXT)
+        };
+        lines.push(Line::styled(
+            format!(" [{}] {}", page.number(), page.label()),
+            style,
+        ));
+        if let Ok(dy) = u16::try_from(i)
+            && dy < inner.height
+        {
+            hits.register(
+                Rect::new(inner.x, inner.y + dy, inner.width, 1),
+                HitTarget::MenuItem(*page),
+            );
+        }
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::styled(
+        " [q] Quit",
+        Style::new().fg(crate::brand::MUTED),
+    ));
+    if let Ok(dy) = u16::try_from(Page::ALL.len() + 1)
+        && dy < inner.height
+    {
+        hits.register(
+            Rect::new(inner.x, inner.y + dy, inner.width, 1),
+            HitTarget::MenuQuit,
+        );
+    }
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+const KEY_BAR_TEXT: &str =
+    " 1-8 page  < > timeframe  B buy  S sell  : command  P sign in  F1 help  q quit";
+
+/// The bottom key bar.
+fn draw_key_bar(frame: &mut Frame, hits: &mut HitMap, area: Rect) {
+    hits.register(area, HitTarget::Panel(PanelId::KeyBar));
+    frame.render_widget(
+        Paragraph::new(KEY_BAR_TEXT).style(Style::new().fg(crate::brand::MUTED)),
+        area,
+    );
+}
+
+const HELP_LINES: [&str; 12] = [
+    "1-8        switch page (Trade, Book, Positions, Orders,",
+    "           Watchlist, News, Copilot, Config)",
+    "< >        previous / next timeframe",
+    "Tab        next symbol",
+    "+ -        zoom the chart",
+    "B  S       buy / sell with the ticket",
+    ":          command bar",
+    "?          plain-English order (preview only)",
+    "P          sign in with a wallet",
+    "F1         this help (Esc closes it)",
+    "q          quit",
+    "Mouse: click menu rows, timeframes, watchlist, book levels.",
+];
+
+/// The F1 overlay, centered over the screen.
+fn draw_help(frame: &mut Frame, hits: &mut HitMap) {
+    let area = frame.area();
+    let width = 66.min(area.width);
+    let height = u16::try_from(HELP_LINES.len() + 2)
+        .unwrap_or(u16::MAX)
+        .min(area.height);
+    let rect = Rect::new(
+        area.x + (area.width - width) / 2,
+        area.y + (area.height - height) / 2,
+        width,
+        height,
+    );
+    hits.register(rect, HitTarget::Panel(PanelId::Config));
+    frame.render_widget(Clear, rect);
+    let lines: Vec<Line> = HELP_LINES.iter().map(|l| Line::from(*l)).collect();
+    frame.render_widget(
+        Paragraph::new(lines).block(crate::brand::block().title(" HELP ")),
+        rect,
+    );
 }
 
 /// The chart panel with its timeframe buttons inside `area`.
@@ -331,6 +918,7 @@ fn draw_chart_panel(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect)
         draw_overlays(buf, geometry, shown, series, &app.toggles);
     };
     let chart = CandleChart::new(&app.candles, app.timeframe, app.chart_view)
+        .line(app.chart_line)
         .crosshair(app.crosshair)
         .overlay(&hook);
     frame.render_widget(chart, price_area);
@@ -509,7 +1097,7 @@ mod tests {
     }
 
     fn hello(data_mode: DataMode, venue: Option<Venue>) -> NetEvent {
-        NetEvent::Message(ServerMessage::Hello {
+        NetEvent::msg(ServerMessage::Hello {
             protocol_version: 2,
             data_mode,
             live_venues: venue.into_iter().collect(),
@@ -571,7 +1159,7 @@ mod tests {
         update(&mut app, hello(DataMode::Live, Some(Venue::Backpack)));
         update(
             &mut app,
-            NetEvent::Message(ServerMessage::Session {
+            NetEvent::msg(ServerMessage::Session {
                 account_id: AccountId::new("guest").unwrap(),
                 address: None,
             }),
@@ -579,7 +1167,7 @@ mod tests {
         for _ in 0..3 {
             update(
                 &mut app,
-                NetEvent::Message(ServerMessage::Event {
+                NetEvent::msg(ServerMessage::Event {
                     event: Event::Heartbeat { ts: 1 },
                 }),
             );
@@ -607,7 +1195,7 @@ mod tests {
         update(&mut app, NetEvent::Connected);
         update(
             &mut app,
-            NetEvent::Message(ServerMessage::Event {
+            NetEvent::msg(ServerMessage::Event {
                 event: Event::Error {
                     code: ErrorCode::InvalidJson,
                     message: "oops".into(),
@@ -867,18 +1455,19 @@ mod tests {
     #[test]
     fn toggle_buttons_follow_the_timeframe_buttons_in_the_hit_map() {
         // Narrow layout: the button row is row 2, below the watchlist strip and the border.
-        let (rows, hits) = draw_with_hits(60, 14, &with_indicators());
+        let (rows, hits) = draw_with_hits(70, 14, &with_indicators());
         assert!(
             rows[2].contains("EMA") && rows[2].contains("ATR"),
             "{}",
             rows[2]
         );
+        // Six timeframe buttons ("1m" .. "1d", 4h included) come first, so the toggles start at 33.
         for (x, indicator) in [
-            (28, Indicator::Ema),
-            (34, Indicator::Vwap),
-            (41, Indicator::Bollinger),
-            (46, Indicator::Rsi),
-            (52, Indicator::Atr),
+            (33, Indicator::Ema),
+            (39, Indicator::Vwap),
+            (46, Indicator::Bollinger),
+            (51, Indicator::Rsi),
+            (57, Indicator::Atr),
         ] {
             assert_eq!(
                 hits.resolve(x, 2),
@@ -898,7 +1487,7 @@ mod tests {
         let mut app = app_with_book();
         update(
             &mut app,
-            NetEvent::Message(ServerMessage::Event {
+            NetEvent::msg(ServerMessage::Event {
                 event: Event::Trade {
                     venue: protocol::Venue::Replay,
                     symbol: "ETH-USD".into(),
@@ -1054,7 +1643,7 @@ mod tests {
         // The guest account.
         update(
             &mut app,
-            NetEvent::Message(ServerMessage::Session {
+            NetEvent::msg(ServerMessage::Session {
                 account_id: AccountId::new("guest").unwrap(),
                 address: None,
             }),
@@ -1070,7 +1659,7 @@ mod tests {
         let address = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
         update(
             &mut app,
-            NetEvent::Message(ServerMessage::Session {
+            NetEvent::msg(ServerMessage::Session {
                 account_id: AccountId::new(format!("w_{address}")).unwrap(),
                 address: Some(address.to_owned()),
             }),

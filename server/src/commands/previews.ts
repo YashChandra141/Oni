@@ -61,6 +61,16 @@ export function previewAction(command: ParsedCommand, venue: Venue = DEFAULT_PRE
     case "cancel_all":
     case "flatten_all":
       return { type: command.kind };
+    case "twap":
+      return {
+        type: "twap",
+        symbol: command.symbol,
+        side: command.side,
+        venue,
+        total_qty: fromBigInt(command.totalQty),
+        slices: command.slices,
+        interval_s: command.intervalS,
+      };
     case "place": {
       const o = command.order;
       return {

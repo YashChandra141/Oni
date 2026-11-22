@@ -547,12 +547,12 @@ mod tests {
     #[tokio::test]
     async fn unknown_symbol_fails_before_any_request() {
         let mut stats = DropStats::new();
-        let result = fetch_klines("DOGE-USD", Timeframe::M1, 1_000, &mut stats).await;
-        assert_eq!(result, Err(FetchError::UnknownSymbol("DOGE-USD".into())));
+        let result = fetch_klines("NOPE-USD", Timeframe::M1, 1_000, &mut stats).await;
+        assert_eq!(result, Err(FetchError::UnknownSymbol("NOPE-USD".into())));
         let mut fetcher = HttpFetcher::new("127.0.0.1");
         assert_eq!(
-            fetcher.fetch("DOGE-USD").await,
-            Err(FetchError::UnknownSymbol("DOGE-USD".into()))
+            fetcher.fetch("NOPE-USD").await,
+            Err(FetchError::UnknownSymbol("NOPE-USD".into()))
         );
     }
 
@@ -800,6 +800,7 @@ mod tests {
     #[test]
     fn snapshot_message_shape() {
         let msg = MarketMsg::BookSnapshot {
+            venue: protocol::Venue::Replay,
             symbol: "SOL-USD".into(),
             bids: vec![Level {
                 price: Price(1),

@@ -10,14 +10,14 @@ import type { UTCTimestamp } from "lightweight-charts";
 import type { Bar, Timeframe } from "../../shared/protocol/index";
 import { formatUnits } from "./format";
 
-/** The timeframes in button order. Keys 1 to 5 select the entry at the same position (Req 25.3). */
-export const timeframeLabels: readonly Timeframe[] = ["1m", "5m", "15m", "1h", "1d"];
+/** The timeframes in button order. Keys 1 to 6 select the entry at the same position (Req 25.3). */
+export const timeframeLabels: readonly Timeframe[] = ["1m", "5m", "15m", "1h", "4h", "1d"];
 
 export function isTimeframe(value: string): value is Timeframe {
   return (timeframeLabels as readonly string[]).includes(value);
 }
 
-/** Maps the key "1".."5" to its timeframe (`"1"` -> `"1m"`), or null for any other key. */
+/** Maps the key "1".."6" to its timeframe (`"1"` -> `"1m"`), or null for any other key. */
 export function timeframeFromKey(key: string): Timeframe | null {
   if (key.length !== 1) return null;
   const index = key.charCodeAt(0) - "1".charCodeAt(0);
@@ -30,6 +30,7 @@ const TIMEFRAME_MS: Readonly<Record<Timeframe, number>> = {
   "5m": 300_000,
   "15m": 900_000,
   "1h": 3_600_000,
+  "4h": 14_400_000,
   "1d": 86_400_000,
 };
 
@@ -154,6 +155,32 @@ export function barsToVolume(bars: readonly Bar[], qtyDecimals: number): VolumeP
     if (point !== null) points.push(point);
   }
   return sortAndDedupe(points);
+}
+
+/** Chart types in selector order (Task 14.4, Req 23). */
+export const CHART_TYPES = ["candles", "line", "area", "heikin"] as const;
+export type ChartType = (typeof CHART_TYPES)[number];
+
+export const CHART_TYPE_LABELS: Readonly<Record<ChartType, string>> = {
+  candles: "Candles",
+  line: "Line",
+  area: "Area",
+  heikin: "Heikin-Ashi",
+};
+
+export interface LinePoint {
+  readonly time: UTCTimestamp;
+  readonly value: number;
+}
+
+/** Line and area data: the close price of each valid bar, ordered like `barsToCandles`. */
+export function barsToCloseLine(bars: readonly Bar[], priceDecimals: number): LinePoint[] {
+  return barsToCandles(bars, priceDecimals).map((c) => ({ time: c.time, value: c.close }));
+}
+
+/** DEX venues (Jupiter, Raydium) are price-only and carry no volume. */
+export function venueHasVolume(venue: string): boolean {
+  return venue !== "jupiter" && venue !== "raydium";
 }
 
 /** Price-scale format for an instrument's price decimals: `2` -> precision 2, minMove 0.01. */

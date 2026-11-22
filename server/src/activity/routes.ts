@@ -17,7 +17,7 @@ import {
 
 export interface ActivityRoutesDeps {
   readonly log: ActivityLog;
-  readonly positions: Pick<AccountView, "positions">;
+  readonly positions: Pick<AccountView, "positions" | "balance">;
   readonly auth: TokenVerifier;
 }
 
@@ -112,15 +112,24 @@ export function activityRoutes(deps: ActivityRoutesDeps): Hono<Env> {
 
   app.get("/positions", (c) => {
     const account = c.get("accountId");
-    return c.json(
-      deps.positions.positions(account).map((p) => ({
+    const b = deps.positions.balance?.(account);
+    return c.json({
+      positions: deps.positions.positions(account).map((p) => ({
         symbol: p.symbol,
         qty: p.qty.toString(),
         avg_entry: p.avgEntry === null ? null : p.avgEntry.toString(),
         realized: p.realized.toString(),
         unrealized: p.unrealized.toString(),
       })),
-    );
+      balance:
+        b === undefined
+          ? null
+          : {
+              paper_balance: b.paperBalance.toString(),
+              free_balance: b.freeBalance.toString(),
+              equity: b.equity.toString(),
+            },
+    });
   });
 
   return app;

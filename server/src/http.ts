@@ -9,6 +9,8 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import type { ActivityEnv } from "./activity/routes.ts";
 import { checkOrigin, normalizeOrigin } from "./gateway/origin.ts";
+import { latencySummary } from "./latency/histogram.ts";
+import type { HealthLatency } from "./protocol.ts";
 
 /** What `/health` reads. The EngineSupervisor satisfies it. */
 export interface EngineHealth {
@@ -24,11 +26,8 @@ export interface VenueHealth {
   readonly status: VenueStatusKind;
 }
 
-/** Latency_Histogram summary (Req 33.12). Null until Task 13.2 records samples. */
-export interface LatencyHealth {
-  readonly p50_ms: number | null;
-  readonly p95_ms: number | null;
-}
+/** Latency_Histogram summary per stage (Req 33.12): count, p50 and p95 in microseconds. */
+export type LatencyHealth = HealthLatency;
 
 /** Paths the REST routes use; CORS applies to them as to `/auth/*`. */
 const CORS_PATHS = ["/auth/*", "/orders", "/positions", "/journal", "/quote/*", "/candles/*"] as const;
@@ -63,12 +62,12 @@ export interface HealthBody {
   readonly latency: LatencyHealth;
 }
 
-export const NO_LATENCY: LatencyHealth = Object.freeze({ p50_ms: null, p95_ms: null });
+export const NO_LATENCY: LatencyHealth = latencySummary();
 
 export function healthBody(
   engine: EngineHealth,
   venues: () => readonly VenueHealth[] = () => [],
-  latency: () => LatencyHealth = () => NO_LATENCY,
+  latency: () => LatencyHealth = latencySummary,
 ): HealthBody {
   return {
     ok: true,

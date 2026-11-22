@@ -268,7 +268,19 @@ pub fn draw_ticket_line(frame: &mut Frame, app: &App, hits: &mut HitMap, area: R
     if invalid {
         value_style = value_style.fg(crate::brand::SELL);
     }
-    let head = ticket_head(app.ticket_limit_price());
+    let head = match app.ticket.kind {
+        // Limit keeps the book-prefill text the tests and Req 30.1 describe.
+        crate::order_model::TicketKind::Limit => ticket_head(app.ticket_limit_price()),
+        crate::order_model::TicketKind::Market => "TICKET: MKT".to_owned(),
+        crate::order_model::TicketKind::Stop => match app.ticket_limit_price() {
+            Some(p) => format!("TICKET: STP {}", crate::chart_model::format_price(p)),
+            None => "TICKET: STP -".to_owned(),
+        },
+        crate::order_model::TicketKind::Twap => format!(
+            "TICKET: TWAP {}x{}s",
+            app.ticket.twap_slices, app.ticket.twap_secs
+        ),
+    };
     let value_cell = right_pad(&value, 10);
     let segments: Vec<Segment> = vec![
         (head, Style::new(), None),
@@ -475,6 +487,7 @@ fn draw_orders(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect) {
                 rect,
             );
         }
+        draw_twaps(frame, app, inner, 2);
         return;
     }
     let rows = usize::from(inner.height - 1);
@@ -494,6 +507,45 @@ fn draw_orders(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect) {
         // The ✕ cell is registered after the row, so it wins.
         let cross = Rect::new(rect.x, rect.y, 3_u16.min(rect.width), 1);
         hits.register(cross, HitTarget::OpenOrder(order.id.clone()));
+    }
+    let shown = account.orders.len().saturating_sub(first).min(rows);
+    draw_twaps(frame, app, inner, shown.saturating_add(1));
+}
+
+/// Draws TWAP plan statuses in the rows of `inner` from `first_row` on (Task 16.4).
+fn draw_twaps(frame: &mut Frame, app: &App, inner: Rect, first_row: usize) {
+    for (i, twap) in app.twaps.iter().rev().enumerate() {
+        let Ok(dy) = u16::try_from(first_row.saturating_add(i)) else {
+            break;
+        };
+        if dy >= inner.height {
+            break;
+        }
+        let side = match twap.side {
+            Side::Buy => "BUY",
+            Side::Sell => "SELL",
+        };
+        let status = match twap.status {
+            protocol::TwapStatus::Active => "active",
+            protocol::TwapStatus::Done => "done",
+            protocol::TwapStatus::Canceled => "canceled",
+        };
+        let reason = twap
+            .reason
+            .as_deref()
+            .map_or_else(String::new, |r| format!(" ({r})"));
+        let text = format!(
+            "TWAP {side} {} {}/{} {status}{reason}",
+            twap.symbol, twap.sent, twap.slices
+        );
+        let rect = Rect::new(inner.x, inner.y + dy, inner.width, 1);
+        frame.render_widget(
+            Paragraph::new(Line::styled(
+                text,
+                Style::new().fg(crate::brand::ACCENT_BRIGHT),
+            )),
+            rect,
+        );
     }
 }
 
@@ -1097,7 +1149,7 @@ mod tests {
         let mut app = App::new("ws://x/ws");
         crate::app::update(
             &mut app,
-            NetEvent::Message(ServerMessage::Session {
+            NetEvent::msg(ServerMessage::Session {
                 account_id: guest(),
                 address: None,
             }),

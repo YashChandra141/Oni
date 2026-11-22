@@ -32,6 +32,7 @@ COPY --from=deps /app/node_modules ./node_modules
 # Workspace packages that Bun does not hoist into the root node_modules.
 COPY --from=deps /app/server/node_modules ./server/node_modules
 COPY package.json bun.lock ./
+# Includes shared/protocol/instruments.json, which the server reads at start-up.
 COPY shared/ shared/
 COPY fixtures/ fixtures/
 COPY server/package.json server/tsconfig.json server/

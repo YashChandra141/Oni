@@ -35,6 +35,7 @@ import {
   type Timeframe,
   TimeframeSchema,
   TimeMsSchema,
+  type Venue,
 } from "../protocol.ts";
 
 // ---------------------------------------------------------------------------------------------
@@ -134,16 +135,34 @@ export const CandlesResponseSchema = z.object({
 export type CandlesResponse = z.infer<typeof CandlesResponseSchema>;
 
 /** `GET /positions`: the caller's Paper_Account (Req 20.6, 20.28). */
-export const PositionsResponseSchema = z.array(
-  z.object({
-    symbol: z.string(),
-    qty: QtySchema,
-    avg_entry: PriceSchema.nullable(),
-    realized: MoneySchema,
-    unrealized: MoneySchema,
-  }),
-);
+const PositionRowSchema = z.object({
+  symbol: z.string(),
+  qty: QtySchema,
+  avg_entry: PriceSchema.nullable(),
+  realized: MoneySchema,
+  unrealized: MoneySchema,
+});
+/** Paper balance of the account (Money strings); present when the server reports it. */
+export const BalanceSummarySchema = z.object({
+  paper_balance: MoneySchema,
+  free_balance: MoneySchema,
+  equity: MoneySchema,
+});
+export type BalanceSummary = z.infer<typeof BalanceSummarySchema>;
+
+/** Either a bare array of rows (older servers) or `{ positions, balance }`; normalized below. */
+const PositionsWireSchema = z.union([
+  z.array(PositionRowSchema),
+  z.object({ positions: z.array(PositionRowSchema), balance: BalanceSummarySchema.nullable().default(null) }),
+]);
+export const PositionsResponseSchema = z.array(PositionRowSchema);
 export type PositionsResponse = z.infer<typeof PositionsResponseSchema>;
+
+export const AccountResponseSchema = PositionsWireSchema.transform(
+  (wire): { positions: PositionsResponse; balance: BalanceSummary | null } =>
+    Array.isArray(wire) ? { positions: wire, balance: null } : { positions: wire.positions, balance: wire.balance },
+);
+export type AccountResponse = z.output<typeof AccountResponseSchema>;
 
 /** One Fill event, as received (decimal strings kept). */
 export interface FillSummary {
@@ -172,7 +191,7 @@ export type PlaceStatus =
   | "done";
 
 export interface PlaceOutcome {
-  readonly action: "place" | "cancel_all" | "flatten_all";
+  readonly action: "place" | "cancel_all" | "flatten_all" | "twap";
   /** Canonical command text of the confirmed preview. */
   readonly command: string;
   readonly status: PlaceStatus;
@@ -217,11 +236,13 @@ export const DEFAULT_SETTLE_MS = 2_000;
 
 /** What `TerminalClient` offers the tools; tests may substitute it. */
 export interface TerminalApi {
-  quote(symbol: string): Promise<QuoteResponse>;
-  candles(symbol: string, timeframe: Timeframe, limit: number): Promise<CandlesResponse>;
+  quote(symbol: string, venue?: Venue): Promise<QuoteResponse>;
+  candles(symbol: string, timeframe: Timeframe, limit: number, venue?: Venue): Promise<CandlesResponse>;
   positions(): Promise<PositionsResponse>;
-  preview(text: string): Promise<OrderPreview>;
-  place(text: string): Promise<PlaceOutcome>;
+  /** Positions plus the paper balance/equity when the server reports it. */
+  account(): Promise<AccountResponse>;
+  preview(text: string, venue?: Venue): Promise<OrderPreview>;
+  place(text: string, venue?: Venue): Promise<PlaceOutcome>;
 }
 
 type ConnSignal = { readonly kind: "message"; readonly msg: ServerMessage } | { readonly kind: "closed" };
@@ -310,19 +331,26 @@ export class TerminalClient implements TerminalApi {
   // -------------------------------------------------------------------------------------------
 
   /** `GET /quote/:symbol` (Req 24.2). `symbol` is a full instrument symbol. */
-  quote(symbol: string): Promise<QuoteResponse> {
-    return this.#get(`/quote/${encodeURIComponent(symbol)}`, QuoteResponseSchema);
+  quote(symbol: string, venue?: Venue): Promise<QuoteResponse> {
+    const suffix = venue === undefined ? "" : `?venue=${venue}`;
+    return this.#get(`/quote/${encodeURIComponent(symbol)}${suffix}`, QuoteResponseSchema);
   }
 
   /** `GET /candles/:symbol?timeframe=&limit=` (Req 24.3). */
-  candles(symbol: string, timeframe: Timeframe, limit: number): Promise<CandlesResponse> {
+  candles(symbol: string, timeframe: Timeframe, limit: number, venue?: Venue): Promise<CandlesResponse> {
     const query = new URLSearchParams({ timeframe, limit: String(limit) });
+    if (venue !== undefined) query.set("venue", venue);
     return this.#get(`/candles/${encodeURIComponent(symbol)}?${query.toString()}`, CandlesResponseSchema);
   }
 
   /** `GET /positions` of this client's Paper_Account (Req 24.4). */
   positions(): Promise<PositionsResponse> {
     return this.#get("/positions", PositionsResponseSchema);
+  }
+
+  /** `GET /positions` with the paper balance when present (balance is null otherwise). */
+  account(): Promise<AccountResponse> {
+    return this.#get("/positions", AccountResponseSchema);
   }
 
   async #get<T>(path: string, schema: z.ZodType<T>): Promise<T> {
@@ -372,10 +400,10 @@ export class TerminalClient implements TerminalApi {
   // -------------------------------------------------------------------------------------------
 
   /** Returns the server's Order_Preview for `text`. Confirms nothing (Req 24.5). */
-  preview(text: string): Promise<OrderPreview> {
+  preview(text: string, venue?: Venue): Promise<OrderPreview> {
     return this.#exclusive(async () => {
       const conn = await this.#connection();
-      return this.#previewOn(conn, text);
+      return this.#previewOn(conn, text, venue ?? null);
     });
   }
 
@@ -383,10 +411,10 @@ export class TerminalClient implements TerminalApi {
    * Previews `text`, confirms that preview on the same connection, and waits for the outcome
    * (Req 24.6). The server's Router applies the Risk_Engine; this client cannot skip it.
    */
-  place(text: string): Promise<PlaceOutcome> {
+  place(text: string, venue?: Venue): Promise<PlaceOutcome> {
     return this.#exclusive(async () => {
       const conn = await this.#connection();
-      const preview = await this.#previewOn(conn, text);
+      const preview = await this.#previewOn(conn, text, venue ?? null);
       return this.#confirmOn(conn, preview);
     });
   }
@@ -541,7 +569,7 @@ export class TerminalClient implements TerminalApi {
     conn.ws.send(JSON.stringify(message));
   }
 
-  #previewOn(conn: Connection, text: string): Promise<OrderPreview> {
+  #previewOn(conn: Connection, text: string, venue: Venue | null): Promise<OrderPreview> {
     const requestId = this.#randomId();
     return new Promise<OrderPreview>((resolve, reject) => {
       const finish = (result: { ok: true; preview: OrderPreview } | { ok: false; error: TerminalError }) => {
@@ -582,8 +610,9 @@ export class TerminalClient implements TerminalApi {
 
       conn.listener = listener;
       try {
-        // No venue: the server uses its default venue. MCP arguments never choose one (rule 10).
-        this.#send(conn, { type: "command_text", request_id: requestId, text, venue: null });
+        // Null venue: the server uses its default venue. The venue is validated against the
+        // protocol Venue enum; no account is ever sent (rule 10).
+        this.#send(conn, { type: "command_text", request_id: requestId, text, venue });
       } catch (err) {
         finish({ ok: false, error: err instanceof TerminalError ? err : new TerminalError("unavailable", "send failed") });
       }

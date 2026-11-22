@@ -20,18 +20,33 @@ describe("connectionLabel", () => {
 });
 
 describe("modeLabel", () => {
-  const base = { protocolVersion: 2, engineRunning: true } as const;
+  const base = { protocolVersion: 3, engineRunning: true } as const;
 
   test("replay", () => {
-    expect(modeLabel({ ...base, dataMode: "replay", venue: null })).toBe("REPLAY");
+    expect(
+      modeLabel({ ...base, dataMode: "replay", venue: null, liveVenues: [], defaultVenue: "replay" }),
+    ).toBe("REPLAY");
   });
 
-  test("live shows the venue", () => {
-    expect(modeLabel({ ...base, dataMode: "live", venue: "backpack" })).toBe(
-      "LIVE · Backpack (USDC)",
-    );
-    expect(modeLabel({ ...base, dataMode: "live", venue: "coinbase" })).toBe("LIVE · Coinbase");
-    expect(modeLabel({ ...base, dataMode: "live", venue: null })).toBe("LIVE");
+  test("live shows the venues", () => {
+    expect(
+      modeLabel({ ...base, dataMode: "live", venue: "backpack", liveVenues: ["backpack"], defaultVenue: "backpack" }),
+    ).toBe("LIVE · Backpack (USDC)");
+    expect(
+      modeLabel({ ...base, dataMode: "live", venue: "coinbase", liveVenues: ["coinbase"], defaultVenue: "coinbase" }),
+    ).toBe("LIVE · Coinbase");
+    expect(
+      modeLabel({
+        ...base,
+        dataMode: "live",
+        venue: "coinbase",
+        liveVenues: ["coinbase", "backpack"],
+        defaultVenue: "coinbase",
+      }),
+    ).toBe("LIVE · Coinbase, Backpack (USDC)");
+    expect(
+      modeLabel({ ...base, dataMode: "live", venue: null, liveVenues: [], defaultVenue: "coinbase" }),
+    ).toBe("LIVE");
   });
 });
 

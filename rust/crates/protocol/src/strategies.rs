@@ -352,8 +352,11 @@ pub fn venue_status_entry() -> impl Strategy<Value = VenueStatusEntry> + Clone {
 }
 
 pub fn trade_idea() -> impl Strategy<Value = TradeIdea> + Clone {
-    (side(), any_qty(), order_kind(any_price()))
-        .prop_map(|(side, qty, kind)| TradeIdea { side, qty, kind })
+    (side(), any_qty(), order_kind(any_price())).prop_map(|(side, qty, kind)| TradeIdea {
+        side,
+        qty,
+        kind,
+    })
 }
 
 pub fn analysis_result() -> impl Strategy<Value = AnalysisResult> + Clone {
@@ -397,16 +400,14 @@ pub fn news_item() -> impl Strategy<Value = NewsItem> + Clone {
         any_time(),
         vec(free_text(), 0..4),
     )
-        .prop_map(
-            |(id, title, source, url, published_at, symbols)| NewsItem {
-                id,
-                title,
-                source,
-                url,
-                published_at,
-                symbols,
-            },
-        )
+        .prop_map(|(id, title, source, url, published_at, symbols)| NewsItem {
+            id,
+            title,
+            source,
+            url,
+            published_at,
+            symbols,
+        })
 }
 
 pub fn data_mode() -> impl Strategy<Value = DataMode> + Clone {
@@ -652,7 +653,16 @@ pub fn any_event() -> impl Strategy<Value = Event> + Clone {
             (any_qty(), any_time()),
         )
             .prop_map(
-                |((account_id, venue), order_id, symbol, side, price, qty, fee, (remaining, ts))| {
+                |(
+                    (account_id, venue),
+                    order_id,
+                    symbol,
+                    side,
+                    price,
+                    qty,
+                    fee,
+                    (remaining, ts),
+                )| {
                     Event::Fill {
                         account_id,
                         venue,
@@ -685,20 +695,15 @@ pub fn any_event() -> impl Strategy<Value = Event> + Clone {
                     unrealized,
                 }
             ),
-        (
-            free_text(),
-            venue(),
-            ticker(),
-            any::<bool>(),
-            any_time()
-        )
-            .prop_map(|(symbol, venue, ticker, synthetic, ts)| Event::Ticker24h {
+        (free_text(), venue(), ticker(), any::<bool>(), any_time()).prop_map(
+            |(symbol, venue, ticker, synthetic, ts)| Event::Ticker24h {
                 symbol,
                 venue,
                 ticker,
                 synthetic,
                 ts,
-            }),
+            }
+        ),
         (venue(), venue_status_kind(), any_time())
             .prop_map(|(venue, status, ts)| Event::VenueStatus { venue, status, ts }),
         (venue(), free_text(), pair_health(), any_time()).prop_map(
@@ -718,15 +723,15 @@ pub fn any_event() -> impl Strategy<Value = Event> + Clone {
             any_money(),
             any_time()
         )
-            .prop_map(
-                |(account_id, paper_balance, free_balance, equity, ts)| Event::Balance {
+            .prop_map(|(account_id, paper_balance, free_balance, equity, ts)| {
+                Event::Balance {
                     account_id,
                     paper_balance,
                     free_balance,
                     equity,
                     ts,
                 }
-            ),
+            }),
         any_time().prop_map(|ts| Event::Heartbeat { ts }),
         any::<u64>().prop_map(|id| Event::Pong { id }),
         (error_code(), free_text()).prop_map(|(code, message)| Event::Error { code, message }),
@@ -771,8 +776,10 @@ pub fn any_client_message() -> impl Strategy<Value = ClientMessage> {
                 venue,
             }
         }),
-        (free_text(), free_text())
-            .prop_map(|(request_id, twap_id)| ClientMessage::CancelTwap { request_id, twap_id }),
+        (free_text(), free_text()).prop_map(|(request_id, twap_id)| ClientMessage::CancelTwap {
+            request_id,
+            twap_id
+        }),
         provider_id().prop_map(|provider| ClientMessage::SetProvider { provider }),
         (
             free_text(),
@@ -782,8 +789,8 @@ pub fn any_client_message() -> impl Strategy<Value = ClientMessage> {
             timeframe(),
             venue()
         )
-            .prop_map(
-                |(request_id, action, text, symbol, timeframe, venue)| ClientMessage::AiRequest {
+            .prop_map(|(request_id, action, text, symbol, timeframe, venue)| {
+                ClientMessage::AiRequest {
                     request_id,
                     action,
                     text,
@@ -791,7 +798,7 @@ pub fn any_client_message() -> impl Strategy<Value = ClientMessage> {
                     timeframe,
                     venue,
                 }
-            ),
+            }),
         free_text().prop_map(|request_id| ClientMessage::AiCancel { request_id }),
         Just(ClientMessage::SubscribeNews),
         Just(ClientMessage::UnsubscribeNews),
@@ -837,8 +844,8 @@ pub fn preview_action() -> impl Strategy<Value = PreviewAction> + Clone {
             any::<u32>(),
             any::<u32>()
         )
-            .prop_map(
-                |(symbol, side, venue, total_qty, slices, interval_s)| PreviewAction::Twap {
+            .prop_map(|(symbol, side, venue, total_qty, slices, interval_s)| {
+                PreviewAction::Twap {
                     symbol,
                     side,
                     venue,
@@ -846,7 +853,7 @@ pub fn preview_action() -> impl Strategy<Value = PreviewAction> + Clone {
                     slices,
                     interval_s,
                 }
-            ),
+            }),
         Just(PreviewAction::CancelAll),
         Just(PreviewAction::FlattenAll),
     ]
@@ -925,13 +932,11 @@ pub fn any_server_message() -> impl Strategy<Value = ServerMessage> {
             option::of(provider_id()),
             option::of(provider_id())
         )
-            .prop_map(
-                |(available, default, selected)| ServerMessage::Providers {
-                    available,
-                    default,
-                    selected,
-                }
-            ),
+            .prop_map(|(available, default, selected)| ServerMessage::Providers {
+                available,
+                default,
+                selected,
+            }),
         (
             (free_text(), provider_id(), free_text()),
             analysis_result(),
@@ -969,13 +974,11 @@ pub fn any_server_message() -> impl Strategy<Value = ServerMessage> {
             vec(news_item(), 0..4),
             option::of(any_time())
         )
-            .prop_map(
-                |(available, items, updated_at)| ServerMessage::News {
-                    available,
-                    items,
-                    updated_at,
-                }
-            ),
+            .prop_map(|(available, items, updated_at)| ServerMessage::News {
+                available,
+                items,
+                updated_at,
+            }),
         (
             (free_text(), free_text(), side(), venue()),
             (any::<u32>(), any::<u32>(), twap_status()),

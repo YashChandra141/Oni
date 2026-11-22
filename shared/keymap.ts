@@ -20,6 +20,7 @@ export const ACTIONS = [
   "timeframe.5m",
   "timeframe.15m",
   "timeframe.1h",
+  "timeframe.4h",
   "timeframe.1d",
   "symbol.next",
   "symbol.prev",
@@ -51,6 +52,20 @@ export const ACTIONS = [
   "command.blur",
   "dialog.confirm",
   "dialog.cancel",
+  "venue.next",
+  "provider.next",
+  "copilot.focus",
+  "help",
+  "timeframe.prev",
+  "timeframe.next",
+  "page.1",
+  "page.2",
+  "page.3",
+  "page.4",
+  "page.5",
+  "page.6",
+  "page.7",
+  "page.8",
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 
@@ -58,11 +73,19 @@ export type Action = (typeof ACTIONS)[number];
 export const TUI_ONLY_ACTIONS: readonly Action[] = ["app.quit", "auth.pair"];
 
 export type Client = "web" | "tui";
+const CLIENTS: readonly Client[] = ["web", "tui"];
 
-/** A validated keymap. Every context is present; map keys are normalized. */
+type ContextMaps = Readonly<Record<Context, ReadonlyMap<string, Action>>>;
+
+/**
+ * A validated keymap. Every context is present; map keys are normalized. `contexts` is the view
+ * that `resolve` uses: the loaded keymap carries the TUI view, and `forClient` returns a keymap
+ * whose `contexts` is the view of that client. `clients` keeps both views.
+ */
 export interface Keymap {
   readonly version: 1;
-  readonly contexts: Readonly<Record<Context, ReadonlyMap<string, Action>>>;
+  readonly contexts: ContextMaps;
+  readonly clients: Readonly<Record<Client, ContextMaps>>;
 }
 
 export type LoadResult =
@@ -219,7 +242,10 @@ export function loadKeymap(json: unknown): LoadResult {
     if (k !== "version" && k !== "contexts") errors.push(`keymap: unknown field "${k}"`);
   }
   if (json.version !== 1) errors.push(`keymap: "version" must be 1`);
-  const contexts = emptyContexts();
+  const clients: Record<Client, Record<Context, Map<string, Action>>> = {
+    web: emptyContexts(),
+    tui: emptyContexts(),
+  };
   const rawContexts = json.contexts;
   if (!isPlainObject(rawContexts)) {
     errors.push(`keymap: "contexts" must be an object`);
@@ -234,31 +260,67 @@ export function loadKeymap(json: unknown): LoadResult {
       errors.push(`context "${ctxName}": bindings must be an object`);
       continue;
     }
-    const target = contexts[ctxName as Context];
-    const rawByNormalized = new Map<string, string>();
-    for (const [key, action] of Object.entries(bindings)) {
+    const ctx = ctxName as Context;
+    const rawByNormalized: Record<Client, Map<string, string>> = { web: new Map(), tui: new Map() };
+    const bind = (client: Client, key: string, action: Action): void => {
       const norm = normalizeKey(key);
       if (norm === null) {
-        errors.push(`context "${ctxName}": invalid key "${key}"`);
-        continue;
+        // A legacy binding is tried for both clients; report the bad key once.
+        const message = `context "${ctxName}": invalid key "${key}"`;
+        if (!errors.includes(message)) errors.push(message);
+        return;
       }
-      if (typeof action !== "string" || !ACTION_SET.has(action)) {
-        errors.push(`context "${ctxName}": key "${key}" has unknown action ${JSON.stringify(action)}`);
-        continue;
-      }
-      const prev = rawByNormalized.get(norm);
+      const prev = rawByNormalized[client].get(norm);
       if (prev !== undefined) {
         errors.push(
-          `context "${ctxName}": key "${key}" duplicates "${prev}" (both normalize to "${norm}")`,
+          `context "${ctxName}" (${client}): key "${key}" duplicates "${prev}" (both normalize to "${norm}")`,
         );
+        return;
+      }
+      rawByNormalized[client].set(norm, key);
+      clients[client][ctx].set(norm, action);
+    };
+    for (const [name, value] of Object.entries(bindings)) {
+      if (typeof value === "string") {
+        // Legacy form: "<key>": "<action>", bound for both clients.
+        if (!ACTION_SET.has(value)) {
+          errors.push(`context "${ctxName}": key "${name}" has unknown action ${JSON.stringify(value)}`);
+          continue;
+        }
+        for (const c of CLIENTS) bind(c, name, value as Action);
         continue;
       }
-      rawByNormalized.set(norm, key);
-      target.set(norm, action as Action);
+      // New form: "<action>": ["<key>", ...] (both clients) or {"web": [...], "tui": [...]}.
+      if (!ACTION_SET.has(name)) {
+        errors.push(`context "${ctxName}": unknown action ${JSON.stringify(name)}`);
+        continue;
+      }
+      const action = name as Action;
+      const perClient = new Map<Client, unknown>();
+      if (Array.isArray(value)) {
+        for (const c of CLIENTS) perClient.set(c, value);
+      } else if (isPlainObject(value)) {
+        for (const f of Object.keys(value)) {
+          if (f !== "web" && f !== "tui") {
+            errors.push(`context "${ctxName}": action "${name}" has unknown client "${f}"`);
+          }
+        }
+        for (const c of CLIENTS) if (value[c] !== undefined) perClient.set(c, value[c]);
+      } else {
+        errors.push(`context "${ctxName}": action "${name}" must list keys`);
+        continue;
+      }
+      for (const [c, list] of perClient) {
+        if (!Array.isArray(list) || !list.every((k): k is string => typeof k === "string")) {
+          errors.push(`context "${ctxName}": action "${name}" (${c}) must be a list of key strings`);
+          continue;
+        }
+        for (const k of list) bind(c, k, action);
+      }
     }
   }
   if (errors.length > 0) return { ok: false, errors };
-  return { ok: true, keymap: { version: 1, contexts } };
+  return { ok: true, keymap: { version: 1, contexts: clients.tui, clients } };
 }
 
 /**
@@ -280,11 +342,11 @@ export function forClient(keymap: Keymap, client: Client): Keymap {
   if (client === "tui") return keymap;
   const contexts = emptyContexts();
   for (const ctx of CONTEXTS) {
-    for (const [key, action] of keymap.contexts[ctx]) {
+    for (const [key, action] of keymap.clients.web[ctx]) {
       if (!TUI_ONLY_ACTIONS.includes(action)) contexts[ctx].set(key, action);
     }
   }
-  return { version: 1, contexts };
+  return { version: 1, contexts, clients: keymap.clients };
 }
 
 function loadBundled(): Keymap {

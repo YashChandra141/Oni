@@ -22,6 +22,7 @@ Oni is a crypto **paper-trading** terminal for fast order entry, built for the K
 - Market: crypto only, ten symbols (BTC-USD, ETH-USD, SOL-USD, BNB-USD, XRP-USD, DOGE-USD, JUP-USD, WIF-USD, BONK-USD, PEPE-USD). Live data comes from four venues chosen by `LIVE_VENUES` (default all four): Coinbase and Backpack public feeds, and Jupiter and Raydium public prices. Backpack's USDC pairs are shown as USD. Binance and Bybit appear in the web UI as disabled chips only. Replay of recorded fixtures is the default data mode.
 - Accounts: each signed-in wallet gets its own paper account, keyed by its address (`w_<address>`). Everyone without a valid session shares one `guest` account, with no login needed. Every account resets when the engine restarts; nothing is stored or restored. An order that the account cannot pay for is rejected with `insufficient_balance`.
 - Wallets sign only the sign-in message, never a transaction.
+- TUI pages are `[1]`–`[8]`; `<` and `>` change the timeframe. The keymap is per client (`web`, `tui`) in `shared/keymap.json`.
 - Input: mouse and keyboard only. No gamepad, MIDI, or other hardware.
 - No WASM.
 - Hosting: Render (Docker web service + static site) via `render.yaml`. No database service.

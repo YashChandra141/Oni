@@ -146,12 +146,15 @@ proptest! {
         let symbols: Vec<&'static str> = INSTRUMENTS.iter().map(|x| x.symbol).collect();
         let a = symbols[i];
         let b = symbols[j];
-        let va = to_venue_symbol(venue, a);
-        prop_assert!(va.is_some());
-        let va = va.unwrap_or_default();
-        prop_assert_eq!(from_venue_symbol(venue, va), Some(a));
-        if a != b {
-            prop_assert_ne!(Some(va), to_venue_symbol(venue, b));
+        // A venue may not list a symbol (Coinbase has no JUP-USD product): only the listed
+        // symbols round-trip, and unlisted ones are skipped.
+        if let Some(va) = to_venue_symbol(venue, a) {
+            prop_assert_eq!(from_venue_symbol(venue, va), Some(a));
+            if a != b
+                && let Some(vb) = to_venue_symbol(venue, b)
+            {
+                prop_assert_ne!(va, vb);
+            }
         }
     }
 

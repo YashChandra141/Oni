@@ -28,6 +28,16 @@ pub enum MouseAction {
     /// Drag to the left: show newer bars, by this many columns.
     PanForward(usize),
     SelectTimeframe(Timeframe),
+    /// Left click on a menu row: switch page.
+    SelectPage(crate::app::Page),
+    /// Left click on `[q] Quit`.
+    Quit,
+    /// Left click on the header's venue or provider chip.
+    OpenPicker(crate::app::PickerKind),
+    /// Left click on a picker row.
+    PickerRow(usize),
+    /// Left click outside the open picker.
+    ClosePicker,
     /// Left click on an indicator toggle button (Req 26.3).
     ToggleIndicator(Indicator),
     /// Left click on the ✕ of an open order: cancel it (Req 30.3).
@@ -98,6 +108,16 @@ pub fn mouse_action(map: &HitMap, drag: &mut DragState, ev: MouseEvent) -> Optio
                 Some((_, HitTarget::TicketBuy)) => Some(MouseAction::TicketBuy),
                 Some((_, HitTarget::TicketSell)) => Some(MouseAction::TicketSell),
                 Some((_, HitTarget::TicketQty)) => Some(MouseAction::FocusTicket),
+                Some((_, HitTarget::MenuItem(page))) => Some(MouseAction::SelectPage(*page)),
+                Some((_, HitTarget::MenuQuit)) => Some(MouseAction::Quit),
+                Some((_, HitTarget::VenueChip)) => {
+                    Some(MouseAction::OpenPicker(crate::app::PickerKind::Venue))
+                }
+                Some((_, HitTarget::ProviderChip)) => {
+                    Some(MouseAction::OpenPicker(crate::app::PickerKind::Provider))
+                }
+                Some((_, HitTarget::PickerRow(i))) => Some(MouseAction::PickerRow(*i)),
+                Some((_, HitTarget::PickerBackdrop)) => Some(MouseAction::ClosePicker),
                 Some((_, HitTarget::DialogConfirm)) => Some(MouseAction::DialogConfirm),
                 Some((_, HitTarget::DialogCancel)) => Some(MouseAction::DialogCancel),
                 Some((_, HitTarget::Panel(PanelId::Orders))) => Some(MouseAction::FocusOrders),

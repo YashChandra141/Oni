@@ -64,6 +64,7 @@ pub fn valid_market_msg() -> impl Strategy<Value = MarketMsg> + Clone {
             any_time()
         )
             .prop_map(|(symbol, price, qty, side, ts)| MarketMsg::Trade {
+                venue: protocol::Venue::Replay,
                 symbol,
                 price: Price(price),
                 qty: Qty(qty),
@@ -77,6 +78,7 @@ pub fn valid_market_msg() -> impl Strategy<Value = MarketMsg> + Clone {
             any_time()
         )
             .prop_map(|(symbol, bids, asks, ts)| MarketMsg::BookSnapshot {
+                venue: protocol::Venue::Replay,
                 symbol,
                 bids,
                 asks,
@@ -90,6 +92,7 @@ pub fn valid_market_msg() -> impl Strategy<Value = MarketMsg> + Clone {
             any_time()
         )
             .prop_map(|(symbol, side, price, qty, ts)| MarketMsg::BookDelta {
+                venue: protocol::Venue::Replay,
                 symbol,
                 side,
                 price: Price(price),

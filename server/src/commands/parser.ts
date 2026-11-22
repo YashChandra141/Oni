@@ -51,8 +51,24 @@ export type ParsedCommand =
       /** How the amount was typed. A percent is already resolved into `qty`. */
       readonly source: AmountSource;
     }
+  | {
+      /** `BUY|SELL <symbol> <qty> TWAP <slices> <seconds>` (Req 17.1, 17.12, 17.13). */
+      readonly kind: "twap";
+      readonly side: Side;
+      readonly symbol: string;
+      /** Total lots, positive, at least `slices`. */
+      readonly totalQty: bigint;
+      readonly slices: number;
+      readonly intervalS: number;
+    }
   | { readonly kind: "cancel_all" }
   | { readonly kind: "flatten_all" };
+
+/** TWAP bounds (design: Router, TWAP, and Risk). */
+export const TWAP_MIN_SLICES = 2;
+export const TWAP_MAX_SLICES = 20;
+export const TWAP_MIN_INTERVAL_S = 5;
+export const TWAP_MAX_INTERVAL_S = 3_600;
 
 export interface ParseError {
   readonly message: string;
@@ -95,6 +111,9 @@ type Failure = Extract<ParseResult, { ok: false }>;
 function fail(message: string, position: number): Failure {
   return { ok: false, error: { message, position } };
 }
+
+/** The short names from the instrument list, for error messages. */
+const SHORT_SYMBOLS = INSTRUMENTS.map((i) => i.short).join(", ");
 
 /** Resolves a short (`BTC`) or full (`BTC-USD`) symbol, case-insensitively. */
 export function resolveSymbol(token: string): InstrumentInfo | undefined {
@@ -188,12 +207,35 @@ function noExtra(tokens: Token[], index: number): Failure | null {
   return fail(`unexpected ${quote(extra.text)}`, extra.start);
 }
 
+/** Parses a whole-number token in [min, max]. */
+function parseBounded(token: Token | undefined, what: string, min: number, max: number, end: number): { value: number } | Failure {
+  if (token === undefined) return fail(`expected ${what}`, end);
+  if (!/^\d{1,9}$/.test(token.text)) return fail(`invalid ${what} ${quote(token.text)}`, token.start);
+  const value = Number(token.text);
+  if (value < min || value > max) return fail(`${what} ${quote(token.text)} must be from ${min} to ${max}`, token.start);
+  return { value };
+}
+
+function parseTwap(side: Side, symbol: string, qty: bigint, tokens: Token[], end: number): ParseResult {
+  const slices = parseBounded(tokens[4], "slices", TWAP_MIN_SLICES, TWAP_MAX_SLICES, end);
+  if ("ok" in slices) return slices;
+  const seconds = parseBounded(tokens[5], "seconds", TWAP_MIN_INTERVAL_S, TWAP_MAX_INTERVAL_S, end);
+  if ("ok" in seconds) return seconds;
+  const extra = noExtra(tokens, 6);
+  if (extra !== null) return extra;
+  if (qty < BigInt(slices.value)) {
+    const amountToken = tokens[2];
+    return fail(`amount must be at least ${slices.value} lots so every slice is one lot`, amountToken === undefined ? end : amountToken.start);
+  }
+  return { ok: true, command: { kind: "twap", side, symbol, totalQty: qty, slices: slices.value, intervalS: seconds.value } };
+}
+
 function parseOrder(side: Side, tokens: Token[], end: number, ctx: ParseContext): ParseResult {
   const symbolToken = tokens[1];
-  if (symbolToken === undefined) return fail("expected a symbol (BTC, ETH, or SOL)", end);
+  if (symbolToken === undefined) return fail(`expected a symbol (${SHORT_SYMBOLS})`, end);
   const instrument = resolveSymbol(symbolToken.text);
   if (instrument === undefined) {
-    return fail(`unknown symbol ${quote(symbolToken.text)}; expected BTC, ETH, or SOL`, symbolToken.start);
+    return fail(`unknown symbol ${quote(symbolToken.text)}; expected ${SHORT_SYMBOLS}`, symbolToken.start);
   }
 
   const amountToken = tokens[2];
@@ -225,6 +267,10 @@ function parseOrder(side: Side, tokens: Token[], end: number, ctx: ParseContext)
     return { ok: true, command: { kind: "place", side, symbol: instrument.symbol, qty, order: { type: "market" }, source } };
   }
   const typeWord = typeToken.text.toUpperCase();
+  if (typeWord === "TWAP") {
+    if (isPercent) return fail("a percent amount is a market order; TWAP is not allowed", typeToken.start);
+    return parseTwap(side, instrument.symbol, qty, tokens, end);
+  }
   if (typeWord !== "LMT" && typeWord !== "STP") {
     return fail(`expected LMT or STP, got ${quote(typeToken.text)}`, typeToken.start);
   }

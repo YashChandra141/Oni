@@ -13,6 +13,7 @@
     "check:ts": "bun run typecheck && bun test",
     "typecheck": "tsc --noEmit -p shared && tsc --noEmit -p server && tsc --noEmit -p web",
     "gen:protocol": "cargo test --manifest-path rust/Cargo.toml -p protocol export_bindings",
+    "bench:latency": "bun server/scripts/bench-latency.ts",
     "test": "bun test"
   },
   "devDependencies": {

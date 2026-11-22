@@ -7,7 +7,9 @@ use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 
 use protocol::client::{DataMode, NoticeKind, ServerMessage};
-use protocol::{AccountId, Bar, Event, IndicatorValues, Price, Qty, Side, Timeframe, Venue};
+use protocol::{
+    AccountId, Bar, Event, IndicatorValues, Price, ProviderId, Qty, Side, Timeframe, Venue,
+};
 
 use crate::account_model::AccountState;
 use crate::book_model::{BookCursor, BookState, MAX_TAPE, TapeEntry};
@@ -16,7 +18,7 @@ use crate::indicator_model::{IndicatorPoint, IndicatorSeries, Toggles};
 use crate::line_editor::LineEditor;
 use crate::net::NetEvent;
 use crate::order_input::{CommandLine, Focus};
-use crate::order_model::{RequestIds, parse_qty};
+use crate::order_model::{RequestIds, TicketKind, parse_qty};
 use crate::pairing::PairingState;
 use crate::watchlist_model::{WatchQuote, default_watchlist, watchlist_symbols};
 
@@ -25,6 +27,60 @@ pub const DEFAULT_SYMBOL: &str = "BTC-USD";
 
 /// How many recent errors the app keeps.
 pub const MAX_RECENT_ERRORS: usize = 16;
+
+/// The pages of the left menu, `[1]` to `[8]` (Req 30.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Page {
+    #[default]
+    Trade,
+    Book,
+    Positions,
+    Orders,
+    Watchlist,
+    News,
+    Copilot,
+    Config,
+}
+
+impl Page {
+    pub const ALL: [Page; 8] = [
+        Page::Trade,
+        Page::Book,
+        Page::Positions,
+        Page::Orders,
+        Page::Watchlist,
+        Page::News,
+        Page::Copilot,
+        Page::Config,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Page::Trade => "Trade",
+            Page::Book => "Book",
+            Page::Positions => "Positions",
+            Page::Orders => "Orders",
+            Page::Watchlist => "Watchlist",
+            Page::News => "News",
+            Page::Copilot => "Copilot",
+            Page::Config => "Config",
+        }
+    }
+
+    /// The page for number key `1` to `8`.
+    pub fn from_digit(c: char) -> Option<Page> {
+        let index = usize::try_from(c.to_digit(10)?).ok()?.checked_sub(1)?;
+        Self::ALL.get(index).copied()
+    }
+
+    /// The number shown in the menu, 1 to 8.
+    pub fn number(self) -> usize {
+        Self::ALL
+            .iter()
+            .position(|p| *p == self)
+            .map_or(1, |i| i + 1)
+    }
+}
 
 /// The state of the connection to the server, as the UI shows it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,24 +126,46 @@ impl SessionInfo {
 /// must be deleted: the `auth_failed`, `session_expired`, and `signed_out` notices (Req 48.12).
 /// Pure; the caller (main) does the deletion so the reducer stays free of I/O.
 pub fn forgets_token(event: &NetEvent) -> bool {
+    let NetEvent::Message(message) = event else {
+        return false;
+    };
     matches!(
-        event,
-        NetEvent::Message(ServerMessage::Notice {
+        message.as_ref(),
+        ServerMessage::Notice {
             kind: NoticeKind::AuthFailed | NoticeKind::SessionExpired | NoticeKind::SignedOut,
             ..
-        })
+        }
     )
 }
 
 /// The order ticket the book prefills (Req 30.1). Order entry itself comes in Task 12.
 // `side` and `qty` are filled by order entry (Task 12); the book only sets symbol and price.
 #[allow(dead_code)]
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ticket {
     pub symbol: String,
     pub side: Option<Side>,
+    /// The limit price, or the stop price when `kind` is Stop.
     pub limit_price: Option<Price>,
     pub qty: Option<Qty>,
+    pub kind: TicketKind,
+    /// TWAP slices (2 to 20) and interval seconds (5 to 3600).
+    pub twap_slices: u32,
+    pub twap_secs: u32,
+}
+
+impl Default for Ticket {
+    fn default() -> Self {
+        Self {
+            symbol: String::new(),
+            side: None,
+            limit_price: None,
+            qty: None,
+            kind: TicketKind::default(),
+            twap_slices: 4,
+            twap_secs: 60,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -122,6 +200,10 @@ pub struct App {
     pub book_cursor: Option<BookCursor>,
     /// The limit ticket prefilled from the book (Req 30.1).
     pub ticket: Ticket,
+    /// True when the chart draws a close-price line instead of candles (key `l`).
+    pub chart_line: bool,
+    /// Ping bookkeeping behind `latency_ms` (Task 16.10).
+    pub latency: crate::latency::Latency,
     /// Indicator values per (symbol, timeframe), from `Event::Indicators` (Req 26.1, 26.2).
     pub indicators: HashMap<(String, Timeframe), IndicatorSeries>,
     /// Which indicators are shown (Req 26.3).
@@ -146,6 +228,155 @@ pub struct App {
     /// preview deadlines and rejection times, so they stay free of clock reads.
     pub now_ms: i64,
     pub request_ids: RequestIds,
+    /// The page the left menu has selected.
+    pub page: Page,
+    /// Whether the F1 help overlay is open.
+    pub help_open: bool,
+    /// The status of each venue, from `hello` and `VenueStatus` events (header, Req 32).
+    pub venue_status: Vec<protocol::client::VenueStatusEntry>,
+    /// Round-trip latency in ms for the header; `None` shows `–` until a source sets it.
+    pub latency_ms: Option<u32>,
+    /// The venue every panel and order uses (Active_Venue, Task 16.3).
+    pub active_venue: Venue,
+    /// The venues the picker offers, from the last `hello`.
+    pub venues: Vec<Venue>,
+    /// The LLM providers of the last `hello` or `providers` message.
+    pub providers: Vec<protocol::client::ProviderInfo>,
+    /// The provider chosen for this connection, if any.
+    pub provider: Option<ProviderId>,
+    /// The open picker popup and its highlighted row.
+    pub picker: Option<Picker>,
+    /// Set when a `hello` moved the Active_Venue; `main` drains it to resubscribe.
+    pub venue_switched_from: Option<Venue>,
+    /// The news list (Task 16.4).
+    pub news: crate::copilot::NewsState,
+    /// The AI Copilot panel (Task 16.4).
+    pub copilot: crate::copilot::CopilotState,
+    /// Recent TWAP plans, oldest first (Task 16.4).
+    pub twaps: Vec<crate::copilot::TwapRow>,
+}
+
+/// Which popup picker is open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PickerKind {
+    Venue,
+    Provider,
+}
+
+/// An open picker popup with the highlighted row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Picker {
+    pub kind: PickerKind,
+    pub cursor: usize,
+}
+
+impl App {
+    /// The number of rows of a picker.
+    pub fn picker_len(&self, kind: PickerKind) -> usize {
+        match kind {
+            PickerKind::Venue => self.venues.len(),
+            PickerKind::Provider => self.providers.len(),
+        }
+    }
+
+    /// Opens a picker with the cursor on the current choice. Returns whether it opened.
+    pub fn open_picker(&mut self, kind: PickerKind) -> bool {
+        if self.picker_len(kind) == 0 {
+            return false;
+        }
+        let cursor = match kind {
+            PickerKind::Venue => self.venues.iter().position(|v| *v == self.active_venue),
+            PickerKind::Provider => self
+                .providers
+                .iter()
+                .position(|p| Some(p.id) == self.provider),
+        };
+        self.picker = Some(Picker {
+            kind,
+            cursor: cursor.unwrap_or(0),
+        });
+        true
+    }
+
+    /// Moves the picker cursor one row down (`forward`) or up, wrapping.
+    pub fn move_picker(&mut self, forward: bool) -> bool {
+        let Some(picker) = self.picker else {
+            return false;
+        };
+        let len = self.picker_len(picker.kind);
+        if len == 0 {
+            return false;
+        }
+        let cursor = if forward {
+            (picker.cursor + 1) % len
+        } else {
+            (picker.cursor + len - 1) % len
+        };
+        self.picker = Some(Picker { cursor, ..picker });
+        true
+    }
+
+    /// Chooses row `index` of the open picker and closes it. A venue choice returns
+    /// `(old, new)` when the venue changed; a provider choice returns the `SetProvider`
+    /// message. A provider with a `reason` (unavailable) is not selectable and keeps the
+    /// picker open.
+    pub fn choose_picker_row(
+        &mut self,
+        index: usize,
+    ) -> (
+        bool,
+        Option<(Venue, Venue)>,
+        Option<protocol::client::ClientMessage>,
+    ) {
+        let Some(picker) = self.picker else {
+            return (false, None, None);
+        };
+        match picker.kind {
+            PickerKind::Venue => {
+                let Some(venue) = self.venues.get(index).copied() else {
+                    return (false, None, None);
+                };
+                self.picker = None;
+                let switched = self.select_venue(venue).map(|old| (old, venue));
+                (true, switched, None)
+            }
+            PickerKind::Provider => {
+                let Some(info) = self.providers.get(index) else {
+                    return (false, None, None);
+                };
+                if info.reason.is_some() {
+                    return (false, None, None);
+                }
+                let id = info.id;
+                self.picker = None;
+                self.provider = Some(id);
+                (
+                    true,
+                    None,
+                    Some(protocol::client::ClientMessage::SetProvider { provider: id }),
+                )
+            }
+        }
+    }
+
+    /// Switches the Active_Venue: market data of the old venue is dropped, and the caller
+    /// resubscribes. Returns the previous venue when it changed.
+    pub fn select_venue(&mut self, venue: Venue) -> Option<Venue> {
+        if venue == self.active_venue {
+            return None;
+        }
+        let previous = std::mem::replace(&mut self.active_venue, venue);
+        self.candles.clear();
+        self.indicators.clear();
+        self.books.clear();
+        self.tape.clear();
+        self.quotes.clear();
+        self.chart_view.offset_from_right = 0;
+        self.crosshair = None;
+        self.book_cursor = None;
+        self.ticket.limit_price = None;
+        Some(previous)
+    }
 }
 
 impl App {
@@ -167,6 +398,8 @@ impl App {
             tape: VecDeque::new(),
             book_cursor: None,
             ticket: Ticket::default(),
+            chart_line: false,
+            latency: crate::latency::Latency::default(),
             indicators: HashMap::new(),
             toggles: Toggles::default(),
             watchlist: default_watchlist(),
@@ -178,7 +411,27 @@ impl App {
             ticket_qty: LineEditor::new(),
             now_ms: 0,
             request_ids: RequestIds::default(),
+            page: Page::default(),
+            help_open: false,
+            venue_status: Vec::new(),
+            latency_ms: None,
+            active_venue: Venue::Replay,
+            venues: Vec::new(),
+            providers: Vec::new(),
+            provider: None,
+            picker: None,
+            venue_switched_from: None,
+            news: crate::copilot::NewsState::default(),
+            copilot: crate::copilot::CopilotState::default(),
+            twaps: Vec::new(),
         }
+    }
+
+    /// Switches the menu page; returns whether it changed.
+    pub fn select_page(&mut self, page: Page) -> bool {
+        let changed = self.page != page;
+        self.page = page;
+        changed
     }
 
     /// Records the wall clock and closes an expired preview. Returns whether the screen changed
@@ -186,6 +439,22 @@ impl App {
     pub fn tick(&mut self, now_ms: i64) -> bool {
         self.now_ms = now_ms;
         self.account.tick(now_ms)
+    }
+
+    /// Forgets the latency samples; the header shows `–` until the next pong (Task 16.10).
+    pub fn reset_latency(&mut self) {
+        self.latency.reset();
+        self.latency_ms = None;
+    }
+
+    /// The `ping` to send now, if connected and 2 s have passed since the last one.
+    pub fn latency_ping(&mut self, now_ms: i64) -> Option<protocol::client::ClientMessage> {
+        if self.conn != ConnState::Connected {
+            return None;
+        }
+        self.latency
+            .due(now_ms)
+            .map(|id| protocol::client::ClientMessage::Ping { id })
     }
 
     /// The limit price of the ticket, for the selected symbol only (Req 30.1).
@@ -299,6 +568,9 @@ impl App {
             self.ticket = Ticket {
                 symbol: symbol.to_owned(),
                 qty,
+                kind: self.ticket.kind,
+                twap_slices: self.ticket.twap_slices,
+                twap_secs: self.ticket.twap_secs,
                 ..Ticket::default()
             };
             if had_symbol {
@@ -306,6 +578,10 @@ impl App {
             }
         }
         self.ticket.limit_price = Some(price);
+        // A book click supplies a price, which a market or TWAP ticket cannot use.
+        if self.ticket.kind == TicketKind::Market {
+            self.ticket.kind = TicketKind::Limit;
+        }
     }
 
     /// Switches every panel to another symbol (Req 27.4): the chart's candles and the
@@ -393,18 +669,23 @@ pub fn update(app: &mut App, event: NetEvent) -> bool {
                     next_delay,
                 }
             };
-            let changed = app.conn != conn;
+            let changed = app.conn != conn || app.latency_ms.is_some();
             app.conn = conn;
+            app.reset_latency();
             changed
         }
         NetEvent::Connected => {
             app.conn = ConnState::Connected;
+            app.reset_latency();
             app.hello = None;
             app.session = None;
+            // A request in flight on the old connection will never be answered.
+            app.copilot.pending = None;
             true
         }
         NetEvent::Disconnected { reason } => {
             app.conn = ConnState::Disconnected;
+            app.reset_latency();
             app.record_error(reason);
             true
         }
@@ -412,7 +693,7 @@ pub fn update(app: &mut App, event: NetEvent) -> bool {
             app.record_error(format!("bad frame: {error}"));
             true
         }
-        NetEvent::Message(message) => apply_message(app, message),
+        NetEvent::Message(message) => apply_message(app, *message),
     }
 }
 
@@ -422,10 +703,31 @@ fn apply_message(app: &mut App, message: ServerMessage) -> bool {
             protocol_version,
             data_mode,
             live_venues,
+            venue_status,
+            default_venue,
             engine_running,
             instruments,
+            providers,
+            news_enabled,
             ..
         } => {
+            app.news.enabled = news_enabled;
+            let mut venues = live_venues.clone();
+            if !venues.contains(&default_venue) {
+                venues.push(default_venue);
+            }
+            app.venues = venues;
+            // Keep the choice across a reconnect while the server still offers it.
+            if !app.venues.contains(&app.active_venue)
+                && let Some(old) = app.select_venue(default_venue)
+            {
+                app.venue_switched_from = Some(old);
+            }
+            if app.provider.is_none() {
+                app.provider = providers.iter().find(|p| p.reason.is_none()).map(|p| p.id);
+            }
+            app.providers = providers;
+            app.venue_status = venue_status;
             app.watchlist = watchlist_symbols(&instruments);
             app.hello = Some(HelloInfo {
                 protocol_version,
@@ -459,15 +761,23 @@ fn apply_message(app: &mut App, message: ServerMessage) -> bool {
             }
             changed
         }
-        // Task 16.4 adds the TUI's Copilot, news, provider, and TWAP views; until then these
-        // messages are ignored.
-        ServerMessage::Providers { .. }
-        | ServerMessage::Analysis { .. }
+        ServerMessage::Providers {
+            available,
+            default,
+            selected,
+        } => {
+            app.provider = selected.or(default);
+            app.providers = available;
+            true
+        }
+        message @ (ServerMessage::Analysis { .. }
         | ServerMessage::ScanResult { .. }
         | ServerMessage::StrategyDraft { .. }
         | ServerMessage::AiError { .. }
         | ServerMessage::News { .. }
-        | ServerMessage::Twap { .. } => false,
+        | ServerMessage::Twap { .. }) => {
+            crate::copilot::apply_message(app, &message).unwrap_or(false)
+        }
         // The engine restarted: every paper account is flat again (Req 15.7).
         ServerMessage::Notice {
             kind: NoticeKind::AccountReset,
@@ -499,13 +809,30 @@ fn apply_message(app: &mut App, message: ServerMessage) -> bool {
             message,
             position,
         } => app.account.on_parse_error(&request_id, &message, position),
-        ServerMessage::Notice { .. } | ServerMessage::Pong { .. } => false,
+        ServerMessage::Pong { id } => match app.latency.on_pong(id, app.now_ms) {
+            Some(ms) => {
+                let changed = app.latency_ms != Some(ms);
+                app.latency_ms = Some(ms);
+                changed
+            }
+            None => false,
+        },
+        ServerMessage::Notice { .. } => false,
     }
 }
 
 /// Applies one engine event to the app state and counts it.
 fn apply_engine_event(app: &mut App, event: Event) {
     app.events_received = app.events_received.saturating_add(1);
+    // Market data of another venue (in flight during a venue switch) is dropped.
+    if let Event::Candle { venue, .. }
+    | Event::Indicators { venue, .. }
+    | Event::Book { venue, .. }
+    | Event::Trade { venue, .. } = &event
+        && *venue != app.active_venue
+    {
+        return;
+    }
     match event {
         Event::Error { code, message } => {
             app.record_error(format!("server error {code:?}: {message}"));
@@ -570,6 +897,14 @@ fn apply_engine_event(app: &mut App, event: Event) {
         | Event::Position { .. }) => {
             app.account.apply_event(&account_event, app.now_ms);
         }
+        Event::VenueStatus { venue, status, .. } => {
+            match app.venue_status.iter_mut().find(|e| e.venue == venue) {
+                Some(entry) => entry.status = status,
+                None => app
+                    .venue_status
+                    .push(protocol::client::VenueStatusEntry { venue, status }),
+            }
+        }
         _ => {}
     }
 }
@@ -581,7 +916,7 @@ mod tests {
     use protocol::{ErrorCode, Price, Qty, Side};
 
     fn hello(data_mode: DataMode, venue: Option<Venue>) -> NetEvent {
-        NetEvent::Message(ServerMessage::Hello {
+        NetEvent::msg(ServerMessage::Hello {
             protocol_version: 2,
             data_mode,
             live_venues: venue.into_iter().collect(),
@@ -596,14 +931,14 @@ mod tests {
     }
 
     fn guest_session() -> NetEvent {
-        NetEvent::Message(ServerMessage::Session {
+        NetEvent::msg(ServerMessage::Session {
             account_id: AccountId::new("guest").unwrap(),
             address: None,
         })
     }
 
     fn trade() -> NetEvent {
-        NetEvent::Message(ServerMessage::Event {
+        NetEvent::msg(ServerMessage::Event {
             event: Event::Trade {
                 venue: Venue::Replay,
                 symbol: "BTC-USD".into(),
@@ -660,7 +995,7 @@ mod tests {
     }
 
     fn notice(kind: NoticeKind) -> NetEvent {
-        NetEvent::Message(ServerMessage::Notice {
+        NetEvent::msg(ServerMessage::Notice {
             kind,
             message: "m".into(),
         })
@@ -700,7 +1035,7 @@ mod tests {
         let address = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM";
         update(
             &mut app,
-            NetEvent::Message(ServerMessage::Session {
+            NetEvent::msg(ServerMessage::Session {
                 account_id: AccountId::new(format!("w_{address}")).unwrap(),
                 address: Some(address.to_owned()),
             }),
@@ -738,7 +1073,7 @@ mod tests {
 
         assert!(!update(
             &mut app,
-            NetEvent::Message(ServerMessage::Pong { id: 1 })
+            NetEvent::msg(ServerMessage::Pong { id: 1 })
         ));
     }
 
@@ -780,7 +1115,7 @@ mod tests {
         let last = format!("bad frame: e{}", MAX_RECENT_ERRORS + 3);
         assert_eq!(app.last_error, Some(last));
 
-        let server_error = NetEvent::Message(ServerMessage::Event {
+        let server_error = NetEvent::msg(ServerMessage::Event {
             event: Event::Error {
                 code: ErrorCode::InvalidJson,
                 message: "bad".into(),
@@ -803,7 +1138,7 @@ mod tests {
     }
 
     fn candles(timeframe: Timeframe, snapshot: bool, bars: Vec<Bar>) -> NetEvent {
-        NetEvent::Message(ServerMessage::Event {
+        NetEvent::msg(ServerMessage::Event {
             event: Event::Candle {
                 venue: Venue::Replay,
                 symbol: "BTC-USD".into(),
@@ -869,7 +1204,7 @@ mod tests {
             price: Price(*p),
             qty: Qty(1),
         };
-        NetEvent::Message(ServerMessage::Event {
+        NetEvent::msg(ServerMessage::Event {
             event: Event::Book {
                 venue: Venue::Replay,
                 symbol: symbol.into(),
@@ -884,7 +1219,7 @@ mod tests {
     }
 
     fn trade_at(symbol: &str, price: i64) -> NetEvent {
-        NetEvent::Message(ServerMessage::Event {
+        NetEvent::msg(ServerMessage::Event {
             event: Event::Trade {
                 venue: Venue::Replay,
                 symbol: symbol.into(),
@@ -962,7 +1297,7 @@ mod tests {
     }
 
     fn indicators_event(symbol: &str, timeframe: Timeframe, ts: i64, ema: f64) -> NetEvent {
-        NetEvent::Message(ServerMessage::Event {
+        NetEvent::msg(ServerMessage::Event {
             event: Event::Indicators {
                 venue: Venue::Replay,
                 symbol: symbol.into(),
@@ -1002,7 +1337,7 @@ mod tests {
     }
 
     fn snapshot_with_indicators(points: Option<Vec<(i64, f64)>>) -> NetEvent {
-        NetEvent::Message(ServerMessage::Event {
+        NetEvent::msg(ServerMessage::Event {
             event: Event::Candle {
                 venue: Venue::Replay,
                 symbol: "BTC-USD".into(),
@@ -1261,10 +1596,12 @@ mod tests {
             short: "SOL".into(),
             price_decimals: 2,
             qty_decimals: 8,
+            reference_price: "150.00".into(),
+            venues: vec![Venue::Coinbase],
         }];
         update(
             &mut app,
-            NetEvent::Message(ServerMessage::Hello {
+            NetEvent::msg(ServerMessage::Hello {
                 protocol_version: 2,
                 data_mode: DataMode::Replay,
                 live_venues: Vec::new(),
@@ -1283,7 +1620,7 @@ mod tests {
         // An empty instrument table falls back to the defaults.
         update(
             &mut app,
-            NetEvent::Message(ServerMessage::Hello {
+            NetEvent::msg(ServerMessage::Hello {
                 protocol_version: 2,
                 data_mode: DataMode::Replay,
                 live_venues: Vec::new(),
@@ -1311,11 +1648,11 @@ mod order_reducer_tests {
     }
 
     fn event(event: Event) -> NetEvent {
-        NetEvent::Message(ServerMessage::Event { event })
+        NetEvent::msg(ServerMessage::Event { event })
     }
 
     fn session(account: &str, address: Option<&str>) -> NetEvent {
-        NetEvent::Message(ServerMessage::Session {
+        NetEvent::msg(ServerMessage::Session {
             account_id: AccountId::new(account).unwrap(),
             address: address.map(str::to_owned),
         })
@@ -1342,7 +1679,7 @@ mod order_reducer_tests {
     }
 
     fn preview(request_id: &str) -> NetEvent {
-        NetEvent::Message(ServerMessage::Preview {
+        NetEvent::msg(ServerMessage::Preview {
             request_id: request_id.into(),
             preview: OrderPreview {
                 preview_id: "p1".into(),
@@ -1453,7 +1790,7 @@ mod order_reducer_tests {
     fn a_parse_error_is_stored_with_its_position() {
         let mut app = App::new("ws://x/ws");
         app.account.command_sent("r1");
-        let error = NetEvent::Message(ServerMessage::ParseError {
+        let error = NetEvent::msg(ServerMessage::ParseError {
             request_id: "r1".into(),
             message: "unknown symbol".into(),
             position: 4,
@@ -1497,14 +1834,14 @@ mod order_reducer_tests {
         update(&mut app, session("guest", None));
         update(&mut app, position(5));
         update(&mut app, ack("o-1", OrderStatus::Accepted));
-        let notice = NetEvent::Message(ServerMessage::Notice {
+        let notice = NetEvent::msg(ServerMessage::Notice {
             kind: NoticeKind::AccountReset,
             message: "reset".into(),
         });
         assert!(update(&mut app, notice));
         assert!(app.account.positions.is_empty() && app.account.orders.is_empty());
         // Other notices change nothing on screen.
-        let engine_down = NetEvent::Message(ServerMessage::Notice {
+        let engine_down = NetEvent::msg(ServerMessage::Notice {
             kind: NoticeKind::EngineDown,
             message: "down".into(),
         });

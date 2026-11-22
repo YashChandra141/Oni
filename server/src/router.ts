@@ -50,17 +50,33 @@ import {
   fromBigInt,
   toBigInt,
 } from "./protocol.ts";
+import { type GuardReason, type GuardResult, type MarketHealthSource, checkMarketGuards } from "./market/guards.ts";
 import type { ActivityOrder, ActivityRejection } from "./activity/log.ts";
 import type { RiskLimits } from "./risk/limits.ts";
 import { type RateWindow, type RejectReason, type RiskOrderKind, type RiskResult, checkOrder } from "./risk/risk.ts";
 import type { AccountView, OrderNote } from "./state/account.ts";
 import type { MarketState } from "./state/market.ts";
+import { TwapScheduler, type TwapChildOrder, type TwapStatus as SchedulerTwapStatus } from "./twap/scheduler.ts";
 
 // ---------------------------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------------------------
 
-export type OrderSource = "web" | "tui" | "mcp" | "llm";
+export type OrderSource = "web" | "tui" | "mcp" | "llm" | "twap";
+
+/** A confirmed TWAP_Plan (Req 17). Lots and whole seconds. */
+export interface TwapRequest {
+  readonly symbol: string;
+  readonly side: Side;
+  readonly venue: Venue;
+  readonly totalQty: bigint;
+  readonly slices: number;
+  readonly intervalS: number;
+}
+
+export type TwapStartResult =
+  | { readonly ok: true; readonly twapId: string }
+  | { readonly ok: false; readonly reason: RouterRejectReason };
 
 /** The gateway's Connection_Session, as the Router needs it (structurally a ConnectionSession). */
 export interface RouterSession {
@@ -91,7 +107,7 @@ export interface SubmitOrder {
   readonly venue?: Venue;
 }
 
-export type RouterRejectReason = RejectReason | "engine_unavailable" | "session_expired" | "invalid_order";
+export type RouterRejectReason = RejectReason | GuardReason | "engine_unavailable" | "session_expired" | "invalid_order";
 
 export type SubmitResult =
   | { readonly ok: true; readonly orderId: OrderId }
@@ -162,6 +178,10 @@ export interface RouterDeps {
   /** Delivers an OrderRejected event to the requesting connection (Req 17.10, 19.7). */
   readonly onRejected: (connectionId: string, event: OrderRejectedEvent) => void;
   readonly logger: Pick<Logger, "info" | "warn" | "error">;
+  /** Venue and pair health for the market guards. When absent, the guards are skipped (replay-only wiring). */
+  readonly health?: MarketHealthSource;
+  /** Receives every TWAP status change, for delivery to the owning account's connections. */
+  readonly onTwapStatus?: (status: SchedulerTwapStatus) => void;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -286,13 +306,95 @@ export class Router {
   /** connection id → recent order attempts. Keyed by connection, never by account (Req 19.5). */
   readonly #rates = new Map<string, RateWindow>();
 
+  readonly #twap: TwapScheduler;
+  /** twap id → the confirming connection's origin. Children are submitted with it. */
+  readonly #twapOrigins = new Map<string, OrderOrigin>();
+  #startingOrigin: OrderOrigin | null = null;
+
   constructor(deps: RouterDeps) {
     this.#deps = deps;
+    this.#twap = new TwapScheduler({
+      clock: {
+        now: () => deps.now(),
+        setTimer: (ms, fn) => {
+          const t = setTimeout(fn, ms);
+          return () => clearTimeout(t);
+        },
+      },
+      // The only order path: every child goes through `submit` (guards, Risk_Engine, Activity_Log).
+      submit: (child: TwapChildOrder) => {
+        const origin = this.#twapOrigins.get(child.twapId) ?? this.#startingOrigin;
+        if (origin === null || origin.session.accountId !== child.accountId) {
+          return { ok: false, reason: "invalid_order" };
+        }
+        const venue = VenueSchema.safeParse(child.venue);
+        if (!venue.success) return { ok: false, reason: "invalid_order" };
+        const result = this.submit(
+          { symbol: child.symbol, side: child.side, qty: child.qtyLots, kind: { type: "market" }, venue: venue.data },
+          { ...origin, source: "twap" },
+        );
+        return result.ok ? { ok: true } : { ok: false, reason: result.reason };
+      },
+      onStatus: (status) => {
+        if (status.state !== "running") this.#twapOrigins.delete(status.id);
+        try {
+          deps.onTwapStatus?.(status);
+        } catch (err) {
+          deps.logger.error(`[router] twap status hook failed: ${err instanceof Error ? err.name : "unknown"}`);
+        }
+      },
+      isKillSwitchOn: () => deps.risk.killSwitch,
+      isEngineUp: () => deps.engineRunning(),
+    });
   }
 
-  /** Drops the rate window of a closed connection. */
+  /** Starts a confirmed TWAP_Plan for the origin's account. Each child goes through `submit`. */
+  startTwap(plan: TwapRequest, origin: OrderOrigin): TwapStartResult {
+    const gate = this.#gate(origin);
+    if (gate !== null) return gate;
+    this.#startingOrigin = origin;
+    try {
+      const result = this.#twap.start(origin.session.accountId, origin.connectionId, 0, {
+        symbol: plan.symbol,
+        side: plan.side,
+        venue: plan.venue,
+        totalQtyLots: plan.totalQty,
+        slices: plan.slices,
+        intervalS: plan.intervalS,
+      });
+      if (!result.ok) return { ok: false, reason: result.reason === "invalid_plan" ? "invalid_order" : result.reason };
+      if (this.#twap.get(result.twapId)?.state === "running") this.#twapOrigins.set(result.twapId, origin);
+      return { ok: true, twapId: result.twapId };
+    } finally {
+      this.#startingOrigin = null;
+    }
+  }
+
+  /** Cancels one TWAP of the origin's account. Another account's id is `unknown_twap`. */
+  cancelTwap(twapId: string, origin: OrderOrigin): ActionResult {
+    const result = this.#twap.cancel(origin.session.accountId, twapId);
+    return result.ok ? { ok: true } : { ok: false, reason: "invalid_order" };
+  }
+
+  /** The connection's account changed: its TWAPs stop. */
+  twapSessionChanged(connectionId: string): void {
+    this.#twap.onSessionChange(connectionId, 1);
+  }
+
+  /** The engine restarted: every TWAP stops. */
+  twapEngineRestarted(): void {
+    this.#twap.onEngineRestart();
+  }
+
+  /** The kill switch turned on: every TWAP stops. */
+  twapKillSwitch(): void {
+    this.#twap.onKillSwitch();
+  }
+
+  /** Drops the rate window of a closed connection and stops its TWAPs. */
   forgetConnection(connectionId: string): void {
     this.#rates.delete(connectionId);
+    this.#twap.onDisconnect(connectionId);
   }
 
   /** Number of connections with a rate window (for tests). */
@@ -320,9 +422,24 @@ export class Router {
     // lookups, the PlaceOrder, and the Activity_Log record.
     const venue = order.venue ?? this.#venue();
 
+    // 3b. Market guards: venue_unavailable, stale_market_data, price_deviation (Req 14.6 to 14.8).
+    // Before the Risk_Engine, so a guard rejection never consumes the rate window.
+    if (deps.health !== undefined) {
+      let guard: GuardResult;
+      try {
+        guard = checkMarketGuards(deps.health.context(order.symbol, venue, deps.now()));
+      } catch (err) {
+        deps.logger.error(`[router] market guard threw: ${err instanceof Error ? err.name : "unknown"}`);
+        return fail("venue_unavailable");
+      }
+      if (!guard.ok) return fail(guard.reason);
+    }
+
     // 4. Risk_Engine (Req 18.2). Position and open orders are the order's account's.
     let risk: RiskResult;
     try {
+      const cachedBalance = deps.accounts.balance?.(accountId);
+      const avgEntry = deps.accounts.positions(accountId).find((p) => p.symbol === order.symbol)?.avgEntry ?? null;
       risk = checkOrder(
         {
           accountId,
@@ -342,6 +459,7 @@ export class Router {
           bestAsk: deps.market.bestAsk(order.symbol, venue),
           rate: this.#rates.get(origin.connectionId) ?? [],
           now: deps.now(),
+          balance: cachedBalance === undefined ? null : { freeBalance: cachedBalance.freeBalance, avgEntry },
         },
       );
     } catch (err) {

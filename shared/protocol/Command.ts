@@ -5,6 +5,7 @@ import type { OrderKind } from "./OrderKind";
 import type { Qty } from "./Qty";
 import type { Side } from "./Side";
 import type { Timeframe } from "./Timeframe";
+import type { Venue } from "./Venue";
 
 /**
  * A message sent to the engine on stdin, one JSON line each.
@@ -16,4 +17,4 @@ import type { Timeframe } from "./Timeframe";
  * server's Router sets it from the requesting connection's session, never from client input
  * (Req 18.5).
  */
-export type Command = { "type": "subscribe", symbol: string, timeframe: Timeframe, } | { "type": "unsubscribe", symbol: string, timeframe: Timeframe, } | { "type": "place_order", account_id: AccountId, order_id: OrderId, symbol: string, side: Side, qty: Qty, kind: OrderKind, } | { "type": "cancel", account_id: AccountId, order_id: OrderId, } | { "type": "cancel_all", account_id: AccountId, } | { "type": "start_replay", fixture: string, speed: number, } | { "type": "reset_account", account_id: AccountId, } | { "type": "ping", id: number, };
+export type Command = { "type": "subscribe", venue: Venue, symbol: string, timeframe: Timeframe, } | { "type": "unsubscribe", venue: Venue, symbol: string, timeframe: Timeframe, } | { "type": "subscribe_ticker", symbol: string, venue: Venue, } | { "type": "unsubscribe_ticker", symbol: string, venue: Venue, } | { "type": "place_order", account_id: AccountId, venue: Venue, order_id: OrderId, symbol: string, side: Side, qty: Qty, kind: OrderKind, } | { "type": "cancel", account_id: AccountId, order_id: OrderId, } | { "type": "cancel_all", account_id: AccountId, } | { "type": "start_replay", fixture: string, speed: number, } | { "type": "reset_account", account_id: AccountId, } | { "type": "ping", id: number, };

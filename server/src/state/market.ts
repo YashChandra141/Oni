@@ -19,7 +19,24 @@
 //
 // Pure: no I/O, no timers, no clock. Every getter returns copies.
 
-import type { Bar, Event, IndicatorPoint, Level, Price, Qty, Side, Timeframe, Venue } from "../protocol.ts";
+import { instrumentBySymbol } from "../instruments.ts";
+import type { GuardContext, MarketHealthSource, PairInfo } from "../market/guards.ts";
+import {
+  type Bar,
+  type Event,
+  type IndicatorPoint,
+  type Level,
+  type PairHealth,
+  type Price,
+  type Qty,
+  type Side,
+  type Timeframe,
+  type Venue,
+  type VenueStatusKind,
+  VenueSchema,
+} from "../protocol.ts";
+
+type GuardVenueStatus = GuardContext["venueStatus"];
 
 /**
  * Venue assumed by a getter called without one. Every production caller passes the venue
@@ -125,8 +142,83 @@ function pairKey(venue: Venue, symbol: string): string {
   return `${venue}|${symbol}`;
 }
 
-export class MarketState {
+/** Default maximum age of a pair's last price for the stale_market_data guard (ms). */
+export const DEFAULT_MAX_PRICE_AGE_MS = 15_000;
+
+export interface MarketStateOptions {
+  /** Epoch milliseconds. Defaults to `Date.now`. */
+  readonly now?: () => number;
+  /** Maximum age of a last price before the guards call it stale. */
+  readonly maxPriceAgeMs?: number;
+}
+
+export class MarketState implements MarketHealthSource {
   readonly #trades = new Map<string, LastTrade>();
+  /** venue → latest status from VenueStatus events. */
+  readonly #venueStatus = new Map<Venue, VenueStatusKind>();
+  /** pairKey → latest health from PairStatus events. */
+  readonly #pairHealth = new Map<string, PairHealth>();
+  /** pairKey → epoch ms of the last Trade or Book event (wall clock at arrival). */
+  readonly #lastPriceAt = new Map<string, number>();
+  /** symbol → Reference_Venue (null when none). */
+  readonly #reference = new Map<string, Venue | null>();
+  readonly #now: () => number;
+  readonly #maxPriceAgeMs: number;
+
+  constructor(options: MarketStateOptions = {}) {
+    this.#now = options.now ?? Date.now;
+    this.#maxPriceAgeMs = options.maxPriceAgeMs ?? DEFAULT_MAX_PRICE_AGE_MS;
+  }
+
+  /** Latest status of a venue, or null before any VenueStatus event. */
+  venueStatus(venue: Venue): VenueStatusKind | null {
+    return this.#venueStatus.get(venue) ?? null;
+  }
+
+  /** Every venue status seen so far. */
+  venueStatuses(): { venue: Venue; status: VenueStatusKind }[] {
+    return [...this.#venueStatus].map(([venue, status]) => ({ venue, status }));
+  }
+
+  /** Latest health of a pair, or null before any PairStatus event. */
+  pairHealth(symbol: string, venue: Venue): PairHealth | null {
+    return this.#pairHealth.get(pairKey(venue, symbol)) ?? null;
+  }
+
+  /** The Reference_Venue of a symbol from the latest ReferenceVenue event, or null. */
+  referenceVenue(symbol: string): Venue | null {
+    return this.#reference.get(symbol) ?? null;
+  }
+
+  /** MarketHealthSource for the Router's guards (Req 14.6 to 14.8). */
+  context(symbol: string, venue: string, now: number): GuardContext {
+    const parsed = VenueSchema.safeParse(venue);
+    if (!parsed.success) {
+      return { venueStatus: "down", listed: false, pair: null, now, maxAgeMs: this.#maxPriceAgeMs };
+    }
+    const v = parsed.data;
+    const listed = instrumentBySymbol(symbol)?.venues.includes(v) ?? false;
+    const key = pairKey(v, symbol);
+    const isReplay = v === "replay";
+    // The replay venue is exempt from staleness (design D6) and never reports a status.
+    const status = this.#venueStatus.get(v);
+    let venueStatus: GuardVenueStatus;
+    if (isReplay && status === undefined) venueStatus = "up";
+    else if (status === "connected" || status === "stale") venueStatus = "up";
+    else if (status === "disabled") venueStatus = "disabled";
+    else venueStatus = "down";
+    const at = this.#lastPriceAt.get(key);
+    const known = this.#trades.has(key) || this.#books.has(key);
+    const pair: PairInfo | null =
+      known || this.#pairHealth.has(key)
+        ? {
+            health: this.#pairHealth.get(key) ?? "ok",
+            lastPriceTs: isReplay ? now : (at ?? null),
+          }
+        : null;
+    return { venueStatus, listed, pair, now, maxAgeMs: this.#maxPriceAgeMs };
+  }
+
   readonly #books = new Map<string, TopOfBook>();
   /** candleKey → cached bars, oldest first. */
   readonly #candles = new Map<string, Bar[]>();
@@ -143,8 +235,19 @@ export class MarketState {
           side: event.side,
           ts: event.ts,
         });
+        this.#lastPriceAt.set(pairKey(event.venue, event.symbol), this.#now());
+        return;
+      case "venue_status":
+        this.#venueStatus.set(event.venue, event.status);
+        return;
+      case "pair_status":
+        this.#pairHealth.set(pairKey(event.venue, event.symbol), event.health);
+        return;
+      case "reference_venue":
+        this.#reference.set(event.symbol, event.venue);
         return;
       case "book":
+        this.#lastPriceAt.set(pairKey(event.venue, event.symbol), this.#now());
         this.#books.set(pairKey(event.venue, event.symbol), {
           bid: bestLevel(event.bids, "bid"),
           ask: bestLevel(event.asks, "ask"),
@@ -228,6 +331,10 @@ export class MarketState {
   /** Forgets everything (engine exit, Req 15.7). */
   clear(): void {
     this.#trades.clear();
+    this.#venueStatus.clear();
+    this.#pairHealth.clear();
+    this.#lastPriceAt.clear();
+    this.#reference.clear();
     this.#books.clear();
     this.#candles.clear();
     this.#indicators.clear();

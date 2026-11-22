@@ -18,13 +18,13 @@
 import { z } from "zod";
 import { MAX_COMMAND_LENGTH, resolveSymbol } from "../commands/parser.ts";
 import { INSTRUMENTS, instrumentBySymbol } from "../instruments.ts";
-import { type OrderPreview, TimeframeSchema, formatDecimal } from "../protocol.ts";
+import { type OrderPreview, TimeframeSchema, VenueSchema, formatDecimal } from "../protocol.ts";
 import { MONEY_DECIMALS } from "../risk/limits.ts";
 import type {
+  AccountResponse,
   CandlesResponse,
   FillSummary,
   PlaceOutcome,
-  PositionsResponse,
   QuoteResponse,
   TerminalApi,
 } from "./client.ts";
@@ -76,7 +76,7 @@ const symbolParsed = z
     return info.symbol;
   });
 
-const timeframeAdvertised = TimeframeSchema.describe("Candle timeframe: 1m, 5m, 15m, 1h, or 1d.");
+const timeframeAdvertised = TimeframeSchema.describe(`Candle timeframe: ${TimeframeSchema.options.join(", ")}.`);
 const limitAdvertised = z
   .number()
   .int()
@@ -89,8 +89,9 @@ const COMMAND_HELP =
   "Order command in the terminal's command bar syntax: `BUY|SELL <symbol> <qty> [LMT <price> | STP <price>]`, " +
   "`BUY|SELL <symbol> <percent>%` (percent of the current position, market order), `CANCEL ALL`, or `FLAT` " +
   "(close all positions). Examples: `BUY BTC 0.01`, `SELL ETH 0.5 LMT 3500`, `BUY SOL 2 STP 180.25`, " +
-  "`SELL BTC 50%`, `CANCEL ALL`, `FLAT`. Text starting with `?` is a plain-English order and needs the " +
-  "server's OPENAI_API_KEY.";
+  "`SELL BTC 50%`, `CANCEL ALL`, `FLAT`. TWAP orders use the TWAP command text of the terminal, e.g. " +
+  "`TWAP BUY BTC 0.5 SLICES 5 EVERY 30s`. Text starting with `?` is a plain-English order and needs " +
+  "the server's AI provider.";
 
 const commandAdvertised = z.string().min(1).max(MAX_COMMAND_LENGTH).describe(COMMAND_HELP);
 const commandParsed = z
@@ -98,14 +99,19 @@ const commandParsed = z
   .max(MAX_COMMAND_LENGTH)
   .refine((s) => s.trim().length > 0, "command must not be empty");
 
-const QuoteArgs = z.object({ symbol: symbolParsed });
+const venueAdvertised = VenueSchema.optional().describe(
+  `Venue: ${VenueSchema.options.join(", ")}. Optional; defaults to the server's default venue.`,
+);
+
+const QuoteArgs = z.object({ symbol: symbolParsed, venue: VenueSchema.optional() });
 const CandlesArgs = z.object({
   symbol: symbolParsed,
+  venue: VenueSchema.optional(),
   timeframe: TimeframeSchema,
   limit: z.number().int().min(1).max(MAX_CANDLES).default(DEFAULT_CANDLES),
 });
 const NoArgs = z.object({});
-const CommandArgs = z.object({ command: commandParsed });
+const CommandArgs = z.object({ command: commandParsed, venue: VenueSchema.optional() });
 
 // ---------------------------------------------------------------------------------------------
 // Results
@@ -202,9 +208,19 @@ export function formatCandles(c: CandlesResponse) {
   };
 }
 
-export function formatPositions(rows: PositionsResponse) {
+export function formatPositions(account: AccountResponse) {
+  const { positions: rows, balance } = account;
   return {
     paper: true,
+    ...(balance === null
+      ? {}
+      : {
+          balance: {
+            paper_balance_usd: moneyText(balance.paper_balance),
+            free_balance_usd: moneyText(balance.free_balance),
+            equity_usd: moneyText(balance.equity),
+          },
+        }),
     positions: rows.map((p) => ({
       symbol: p.symbol,
       qty: qtyText(p.symbol, p.qty),
@@ -227,7 +243,17 @@ export function formatPreview(p: OrderPreview) {
           ...(a.kind.type === "limit" ? { limit_price: priceText(a.symbol, a.kind.price) } : {}),
           ...(a.kind.type === "stop" ? { stop_price: priceText(a.symbol, a.kind.stop_price) } : {}),
         }
-      : { type: a.type };
+      : a.type === "twap"
+        ? {
+            type: "twap",
+            side: a.side,
+            symbol: a.symbol,
+            venue: a.venue,
+            total_qty: qtyText(a.symbol, a.total_qty),
+            slices: a.slices,
+            interval_s: a.interval_s,
+          }
+        : { type: a.type };
   return {
     paper: true,
     placed: false,
@@ -296,20 +322,26 @@ export function createTools(api: TerminalApi): ToolDef[] {
         name: "get_quote",
         title: "Get quote",
         description: `${PAPER} Returns the best bid, best ask, spread, and last trade price for a symbol from the terminal's market data.`,
-        inputShape: { symbol: symbolAdvertised },
+        inputShape: { symbol: symbolAdvertised, venue: venueAdvertised },
       },
       QuoteArgs,
-      async ({ symbol }) => okResult(formatQuote(await api.quote(symbol))),
+      async ({ symbol, venue }) => okResult(formatQuote(await api.quote(symbol, venue))),
     ),
     tool(
       {
         name: "get_candles",
         title: "Get candles",
         description: `${PAPER} Returns recent OHLCV candles (oldest first) for a symbol and timeframe.`,
-        inputShape: { symbol: symbolAdvertised, timeframe: timeframeAdvertised, limit: limitAdvertised },
+        inputShape: {
+          symbol: symbolAdvertised,
+          venue: venueAdvertised,
+          timeframe: timeframeAdvertised,
+          limit: limitAdvertised,
+        },
       },
       CandlesArgs,
-      async ({ symbol, timeframe, limit }) => okResult(formatCandles(await api.candles(symbol, timeframe, limit))),
+      async ({ symbol, venue, timeframe, limit }) =>
+        okResult(formatCandles(await api.candles(symbol, timeframe, limit, venue))),
     ),
     tool(
       {
@@ -319,17 +351,17 @@ export function createTools(api: TerminalApi): ToolDef[] {
         inputShape: {},
       },
       NoArgs,
-      async () => okResult(formatPositions(await api.positions())),
+      async () => okResult(formatPositions(await api.account())),
     ),
     tool(
       {
         name: "preview_order",
         title: "Preview paper order",
         description: `${PAPER} Parses an order command on the server and returns its preview. Places nothing.`,
-        inputShape: { command: commandAdvertised },
+        inputShape: { command: commandAdvertised, venue: venueAdvertised },
       },
       CommandArgs,
-      async ({ command }) => okResult(formatPreview(await api.preview(command))),
+      async ({ command, venue }) => okResult(formatPreview(await api.preview(command, venue))),
     ),
     tool(
       {
@@ -339,11 +371,11 @@ export function createTools(api: TerminalApi): ToolDef[] {
           `${PAPER} Places a PAPER order: the server previews the command, this tool confirms it, and the ` +
           "server's risk checks (order value, position, open orders, price band, rate limit, kill switch) " +
           "approve or reject it before the paper matcher fills it. Returns the status, fills, or rejection reason.",
-        inputShape: { command: commandAdvertised },
+        inputShape: { command: commandAdvertised, venue: venueAdvertised },
       },
       CommandArgs,
-      async ({ command }) => {
-        const outcome = await api.place(command);
+      async ({ command, venue }) => {
+        const outcome = await api.place(command, venue);
         const view = formatOutcome(outcome);
         if (outcome.status === "rejected") {
           return errorResult(`Paper order rejected: ${outcome.reason ?? "unknown reason"}`, view);

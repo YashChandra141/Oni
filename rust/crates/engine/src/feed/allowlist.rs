@@ -195,7 +195,10 @@ mod tests {
     #[test]
     fn existing_routes_pass() {
         for (h, p) in [
-            (COINBASE_HOST, "/api/v3/brokerage/market/products/BTC-USD/candles?start=1&end=2"),
+            (
+                COINBASE_HOST,
+                "/api/v3/brokerage/market/products/BTC-USD/candles?start=1&end=2",
+            ),
             (BACKPACK_HOST, "/api/v1/depth?symbol=SOL_USDC"),
             (BACKPACK_HOST, "/api/v1/klines?symbol=BTC_USDC"),
             (JUPITER_HOST, "/price/v3?ids=abc"),
@@ -208,13 +211,28 @@ mod tests {
 
     #[test]
     fn forbidden_routes_fail() {
-        assert_eq!(check_get("transaction-v1.raydium.io", "/mint/price"), Err(Denied::Host));
-        assert_eq!(check_get(RAYDIUM_HOST, "/transaction/swap"), Err(Denied::Path));
+        assert_eq!(
+            check_get("transaction-v1.raydium.io", "/mint/price"),
+            Err(Denied::Host)
+        );
+        assert_eq!(
+            check_get(RAYDIUM_HOST, "/transaction/swap"),
+            Err(Denied::Path)
+        );
         assert_eq!(check_get(JUPITER_HOST, "/swap/v1/swap"), Err(Denied::Path));
-        assert_eq!(check_get(JUPITER_HOST, "/price/v3/../order"), Err(Denied::Path));
+        assert_eq!(
+            check_get(JUPITER_HOST, "/price/v3/../order"),
+            Err(Denied::Path)
+        );
         assert_eq!(check_get(BACKPACK_HOST, "/api/v1/order"), Err(Denied::Path));
         assert_eq!(check_get("example.com", "/"), Err(Denied::Host));
-        assert_eq!(check(Method::Post, JUPITER_HOST, 443, "/price/v3"), Err(Denied::Method));
-        assert_eq!(check(Method::Get, JUPITER_HOST, 80, "/price/v3"), Err(Denied::Port));
+        assert_eq!(
+            check(Method::Post, JUPITER_HOST, 443, "/price/v3"),
+            Err(Denied::Method)
+        );
+        assert_eq!(
+            check(Method::Get, JUPITER_HOST, 80, "/price/v3"),
+            Err(Denied::Port)
+        );
     }
 }

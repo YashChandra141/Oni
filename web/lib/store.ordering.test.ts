@@ -103,7 +103,7 @@ describe("web store ordering (Property 5)", () => {
       fc.property(fc.array(stepArb, { maxLength: 30 }), (steps) => {
         let state = initialState();
         for (const step of steps) {
-          const key = candleKey(SYMBOL, step.tf);
+          const key = candleKey("replay", SYMBOL, step.tf);
           const before = state.seriesVersion[key] ?? { snapshot: 0, rewrite: 0 };
           let newest = (state.candles[key] ?? []).at(-1)?.t ?? null;
           let expectedRewrite = before.rewrite;
@@ -141,7 +141,7 @@ describe("web store ordering (Property 5)", () => {
       toMessage({ kind: "snapshot", tf: "1m", ks: [5, 1, 3, 3] }),
     );
     state = applyServerMessage(state, toMessage({ kind: "live", tf: "1m", ks: [2] }));
-    const key = candleKey(SYMBOL, "1m");
+    const key = candleKey("replay", SYMBOL, "1m");
     expect(state.seriesVersion[key]).toEqual({ snapshot: 1, rewrite: 1 });
     expect(state.candles[key]?.map((b) => b.t / STEP)).toEqual([1, 2, 3, 5]);
   });

@@ -226,6 +226,7 @@ fn trades_event(event: &TradesEvent, stats: &mut DropStats, out: &mut Vec<Market
             continue;
         };
         out.push(MarketMsg::Trade {
+            venue: protocol::Venue::Replay,
             symbol: symbol.to_owned(),
             price,
             qty,
@@ -275,6 +276,7 @@ fn book_event(
                 }
             }
             out.push(MarketMsg::BookSnapshot {
+                venue: protocol::Venue::Replay,
                 symbol: symbol.to_owned(),
                 bids,
                 asks,
@@ -299,6 +301,7 @@ fn book_event(
                     continue;
                 };
                 out.push(MarketMsg::BookDelta {
+                    venue: protocol::Venue::Replay,
                     symbol: symbol.to_owned(),
                     side,
                     price,
@@ -565,6 +568,7 @@ mod tests {
         assert_eq!(
             msgs,
             vec![MarketMsg::Trade {
+                venue: protocol::Venue::Replay,
                 symbol: "BTC-USD".into(),
                 price: Price(6_716_813),
                 qty: Qty(150_000),
@@ -593,6 +597,7 @@ mod tests {
         assert_eq!(
             msgs,
             vec![MarketMsg::BookSnapshot {
+                venue: protocol::Venue::Replay,
                 symbol: "ETH-USD".into(),
                 bids: vec![level(189_925, 350_000_000), level(189_920, 1_225_000_000)],
                 asks: vec![level(189_926, 175_000_000), level(189_930, 800_000_000)],
@@ -622,6 +627,7 @@ mod tests {
             msgs,
             vec![
                 MarketMsg::BookDelta {
+                    venue: protocol::Venue::Replay,
                     symbol: "ETH-USD".into(),
                     side: Side::Buy,
                     price: Price(189_925),
@@ -629,6 +635,7 @@ mod tests {
                     ts: 1_794_631_989_341,
                 },
                 MarketMsg::BookDelta {
+                    venue: protocol::Venue::Replay,
                     symbol: "ETH-USD".into(),
                     side: Side::Sell,
                     price: Price(189_926),
@@ -669,9 +676,9 @@ mod tests {
     #[test]
     fn unknown_symbols_and_channels_are_ignored() {
         let mut stats = DropStats::new();
-        let text = trade_sample().replace("BTC-USD", "DOGE-USD");
+        let text = trade_sample().replace("BTC-USD", "NOPE-USD");
         assert!(parse_message(&text, &mut stats).unwrap().is_empty());
-        let text = update_sample().replace("ETH-USD", "DOGE-USD");
+        let text = update_sample().replace("ETH-USD", "NOPE-USD");
         assert!(parse_message(&text, &mut stats).unwrap().is_empty());
         for text in [
             r#"{"channel":"heartbeats","timestamp":"2026-11-14T04:53:09Z","events":[{"current_time":"x","heartbeat_counter":1}]}"#,

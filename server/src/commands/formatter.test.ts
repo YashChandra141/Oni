@@ -50,7 +50,7 @@ describe("canonical text", () => {
 
   test("an unknown symbol is refused", () => {
     expect(() =>
-      formatCommand({ kind: "place", side: "buy", symbol: "XRP-USD", qty: 1n, order: { type: "market" }, source: "absolute" }),
+      formatCommand({ kind: "place", side: "buy", symbol: "NOPE-USD", qty: 1n, order: { type: "market" }, source: "absolute" }),
     ).toThrow(RangeError);
   });
 });

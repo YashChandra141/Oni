@@ -5,7 +5,9 @@
 import { memo, useMemo } from "react";
 import { tapeRows } from "../lib/bookView";
 import { formatPrice, formatQty } from "../lib/format";
-import { useTerminalStore, type TapeEntry } from "../lib/store";
+import { pairKey, useTerminalStore, type TapeEntry } from "../lib/store";
+
+const NO_TAPE: readonly TapeEntry[] = [];
 import { formatClock } from "../lib/timeFormat";
 
 interface TapeRowProps {
@@ -25,8 +27,10 @@ const TapeRow = memo(function TapeRow({ entry, priceDecimals, qtyDecimals }: Tap
 });
 
 export default function TradesTape() {
-  const tape = useTerminalStore((state) => state.tape);
   const symbol = useTerminalStore((state) => state.selection.symbol);
+  const tape = useTerminalStore(
+    (state) => state.tape[pairKey(state.selection.venue, state.selection.symbol)] ?? NO_TAPE,
+  );
   const info = useTerminalStore((state) => state.instruments[state.selection.symbol]);
   const rows = useMemo(() => tapeRows(tape, symbol), [tape, symbol]);
 

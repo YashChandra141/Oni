@@ -13,6 +13,7 @@ import {
   applyServerMessage,
   candleKey,
   initialState,
+  pairKey,
   type TerminalState,
 } from "./store";
 
@@ -41,8 +42,11 @@ interface Model {
   realized: Map<string, string>;
   orders: Map<string, ModelOrder>;
   lastTrade: Map<string, TapeContent>;
-  tape: TapeContent[];
+  /** Per symbol; every generated event uses the replay venue. */
+  tape: Map<string, TapeContent[]>;
 }
+
+const VENUE = "replay" as const;
 
 function emptyModel(): Model {
   return {
@@ -52,14 +56,14 @@ function emptyModel(): Model {
     realized: new Map(),
     orders: new Map(),
     lastTrade: new Map(),
-    tape: [],
+    tape: new Map(),
   };
 }
 
 function modelApply(m: Model, e: Event): void {
   switch (e.type) {
     case "candle": {
-      const key = candleKey(e.symbol, e.timeframe);
+      const key = candleKey(VENUE, e.symbol, e.timeframe);
       if (e.snapshot) {
         m.candles.set(key, e.bars.slice(-MAX_CANDLES));
         return;
@@ -101,7 +105,7 @@ function modelApply(m: Model, e: Event): void {
     case "trade": {
       const entry = { symbol: e.symbol, price: e.price, qty: e.qty, side: e.side, ts: e.ts };
       m.lastTrade.set(e.symbol, entry);
-      m.tape = [entry, ...m.tape].slice(0, MAX_TAPE);
+      m.tape.set(e.symbol, [entry, ...(m.tape.get(e.symbol) ?? [])].slice(0, MAX_TAPE));
       return;
     }
     default:
@@ -119,9 +123,9 @@ const content = (t: TapeContent): TapeContent => ({
 
 function expectEqualToModel(s: TerminalState, m: Model): void {
   expect(s.candles).toEqual(Object.fromEntries(m.candles));
-  expect(Object.keys(s.book).sort()).toEqual([...m.book.keys()].sort());
+  expect(Object.keys(s.book).sort()).toEqual([...m.book.keys()].map((k) => pairKey(VENUE, k)).sort());
   for (const [sym, e] of m.book) {
-    expect(s.book[sym]).toEqual({
+    expect(s.book[pairKey(VENUE, sym)]).toEqual({
       bids: e.bids,
       asks: e.asks,
       spread: e.spread,
@@ -151,9 +155,11 @@ function expectEqualToModel(s: TerminalState, m: Model): void {
   }
   // Watchlist prices come from the last trade per symbol.
   expect(Object.fromEntries(Object.entries(s.lastTrade).map(([k, v]) => [k, content(v)]))).toEqual(
-    Object.fromEntries(m.lastTrade),
+    Object.fromEntries([...m.lastTrade].map(([sym, v]) => [pairKey(VENUE, sym), v])),
   );
-  expect(s.tape.map(content)).toEqual(m.tape);
+  expect(Object.fromEntries(Object.entries(s.tape).map(([k, v]) => [k, v.map(content)]))).toEqual(
+    Object.fromEntries([...m.tape].map(([sym, v]) => [pairKey(VENUE, sym), v])),
+  );
 }
 
 // ---- generators ----
@@ -175,6 +181,7 @@ const orderId = fc.constantFrom("o1", "o2", "o3");
 const eventArb: fc.Arbitrary<Event> = fc.oneof(
   fc.record({
     type: fc.constant("candle" as const),
+    venue: fc.constant(VENUE),
     symbol,
     timeframe: frame,
     snapshot: fc.boolean(),
@@ -184,6 +191,7 @@ const eventArb: fc.Arbitrary<Event> = fc.oneof(
   }),
   fc.record({
     type: fc.constant("trade" as const),
+    venue: fc.constant(VENUE),
     symbol,
     price: int(100_000),
     qty: int(1_000),
@@ -192,6 +200,7 @@ const eventArb: fc.Arbitrary<Event> = fc.oneof(
   }),
   fc.record({
     type: fc.constant("book" as const),
+    venue: fc.constant(VENUE),
     symbol,
     bids: fc.array(levelArb, { maxLength: 5 }),
     asks: fc.array(levelArb, { maxLength: 5 }),
@@ -261,7 +270,7 @@ describe("store preservation (Property 11)", () => {
           if (e.type === "trade") newest.set(e.symbol, e);
         }
         for (const [sym, e] of newest) {
-          expect(state.lastTrade[sym]).toMatchObject({
+          expect(state.lastTrade[pairKey(VENUE, sym)]).toMatchObject({
             symbol: sym,
             price: e.price,
             qty: e.qty,
@@ -269,7 +278,9 @@ describe("store preservation (Property 11)", () => {
             ts: e.ts,
           });
         }
-        expect(Object.keys(state.lastTrade).sort()).toEqual([...newest.keys()].sort());
+        expect(Object.keys(state.lastTrade).sort()).toEqual(
+          [...newest.keys()].map((k) => pairKey(VENUE, k)).sort(),
+        );
       }),
       { numRuns: 100 },
     );
@@ -292,9 +303,10 @@ describe("store preservation (Property 11)", () => {
         }),
       );
     }
-    expect(state.tape.length).toBe(MAX_TAPE);
-    expect(state.tape[0]?.ts).toBe(MAX_TAPE + 24);
-    expect(state.tape[MAX_TAPE - 1]?.ts).toBe(25);
+    const tape = state.tape[pairKey(VENUE, "BTC-USD")] ?? [];
+    expect(tape.length).toBe(MAX_TAPE);
+    expect(tape[0]?.ts).toBe(MAX_TAPE + 24);
+    expect(tape[MAX_TAPE - 1]?.ts).toBe(25);
   });
 
   test("live candles keep at most MAX_CANDLES, newest kept", () => {
@@ -306,7 +318,7 @@ describe("store preservation (Property 11)", () => {
         wrap({ type: "candle", venue: "replay", symbol: "BTC-USD", timeframe: "1m", snapshot: false, bars: [bar] }),
       );
     }
-    const bars = state.candles[candleKey("BTC-USD", "1m")] ?? [];
+    const bars = state.candles[candleKey(VENUE, "BTC-USD", "1m")] ?? [];
     expect(bars.length).toBe(MAX_CANDLES);
     expect(bars[0]?.t).toBe(20 * 60_000);
   });

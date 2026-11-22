@@ -98,12 +98,14 @@ fn run(ops: &[Op]) -> Run {
         let ts = (i as TimeMs) + 1_000;
         match op {
             Op::Snapshot(bids, asks) => events.extend(engine.on_market(MarketMsg::BookSnapshot {
+                venue: protocol::Venue::Replay,
                 symbol: BTC.into(),
                 bids: levels(bids),
                 asks: levels(asks),
                 ts,
             })),
             Op::Delta(side, price, qty) => events.extend(engine.on_market(MarketMsg::BookDelta {
+                venue: protocol::Venue::Replay,
                 symbol: BTC.into(),
                 side: *side,
                 price: Price(*price),
@@ -111,6 +113,7 @@ fn run(ops: &[Op]) -> Run {
                 ts,
             })),
             Op::Trade(price, qty, side) => events.extend(engine.on_market(MarketMsg::Trade {
+                venue: protocol::Venue::Replay,
                 symbol: BTC.into(),
                 price: Price(*price),
                 qty: Qty(*qty),

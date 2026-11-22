@@ -18,7 +18,7 @@ function actions() {
 const PREVIEW: OrderPreview = {
   preview_id: "p1",
   text: "BUY BTC-USD 0.1 LMT 64000.00",
-  action: { type: "place", symbol: "BTC-USD", side: "buy", qty: "10000000", kind: { type: "limit", price: "6400000" } },
+  action: { type: "place", symbol: "BTC-USD", venue: "replay", side: "buy", qty: "10000000", kind: { type: "limit", price: "6400000" } },
   expires_at: 0,
 };
 
@@ -59,7 +59,7 @@ describe("ticket orders (B and S)", () => {
 describe("command bar", () => {
   test("submitCommand sends the text as typed and records history", () => {
     expect(actions().submitCommand("?buy a bit of bitcoin")).toBe(true);
-    expect(sent[0]).toMatchObject({ type: "command_text", text: "?buy a bit of bitcoin" });
+    expect(sent[0]).toMatchObject({ type: "command_text", text: "?buy a bit of bitcoin", venue: "replay" });
     expect(useTerminalStore.getState().commandHistory).toEqual(["?buy a bit of bitcoin"]);
   });
 

@@ -7,7 +7,7 @@ import { encodeBase58 } from "../../../shared/base58.ts";
 import { TOKEN_TTL_SEC, TokenService } from "../auth/token.ts";
 import type { Event } from "../protocol.ts";
 import { NOTICES_TOPIC, accountTopic, routeAccountEvent } from "./routing.ts";
-import { FakePublisher, FakeSocket, FakeSupervisor, memoryLogger, waitUntil } from "./testing.ts";
+import { FakePublisher, FakeSocket, FakeSupervisor, eventsOf, immediateTimer, memoryLogger, waitUntil } from "./testing.ts";
 import { Gateway } from "./ws.ts";
 
 const BASE58 = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
@@ -147,6 +147,7 @@ describe("P34 end-to-end account routing model", () => {
             randomUUID: () => `c${++ids}`,
             tokens,
             now: () => clock.ms,
+            batcherTimer: immediateTimer,
           });
           gateway.setPublisher(publisher);
 
@@ -270,15 +271,14 @@ describe("P34 end-to-end account routing model", () => {
                 const event = buildEvent(op.kind, accountId, tag);
                 supervisor.emitEvent(event);
                 sockets.forEach((s, i) => {
-                  const got = s.messages().filter((x) => x.type === "event" && eventKey(x.event) === tag);
+                  // Events arrive inside event_batch messages (Req 34); unwrap them.
+                  const got = eventsOf(s).filter((x) => eventKey(x) === tag);
                   const mm = models[i];
                   const expected = mm !== undefined && mm.open && mm.account === accountId ? 1 : 0;
                   expect(got).toHaveLength(expected);
                   for (const x of got) {
                     // Never another account's event.
-                    expect<string | undefined>(
-                      x.type === "event" && "account_id" in x.event ? x.event.account_id : accountId,
-                    ).toBe(mm?.account);
+                    expect<string | undefined>("account_id" in x ? x.account_id : accountId).toBe(mm?.account);
                   }
                 });
                 break;

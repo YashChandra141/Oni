@@ -182,7 +182,7 @@ const SERVER_MESSAGES: ServerMessage[] = [
     starting_balance: "1000000000000000",
     engine_running: true,
     instruments: [
-      { symbol: "BTC-USD", short: "BTC", price_decimals: 2, qty_decimals: 8, venues: ["coinbase", "backpack"] },
+      { symbol: "BTC-USD", short: "BTC", price_decimals: 2, qty_decimals: 8, reference_price: "6400000", venues: ["coinbase", "backpack"] },
     ],
     providers: [],
     news_enabled: false,
@@ -553,7 +553,7 @@ const GOLDEN_CLIENT_LINES = [
 ];
 
 const GOLDEN_SERVER_LINES = [
-  '{"type":"hello","protocol_version":3,"data_mode":"replay","live_venues":[],"venue_status":[],"default_venue":"replay","starting_balance":"1000000000000000","engine_running":true,"instruments":[{"symbol":"BTC-USD","short":"BTC","price_decimals":2,"qty_decimals":8,"venues":["coinbase","backpack"]}],"providers":[],"news_enabled":false}',
+  '{"type":"hello","protocol_version":3,"data_mode":"replay","live_venues":[],"venue_status":[],"default_venue":"replay","starting_balance":"1000000000000000","engine_running":true,"instruments":[{"symbol":"BTC-USD","short":"BTC","price_decimals":2,"qty_decimals":8,"reference_price":"59400","venues":["coinbase","backpack","jupiter","raydium"]}],"providers":[],"news_enabled":false}',
   '{"type":"hello","protocol_version":3,"data_mode":"live","live_venues":["backpack"],"venue_status":[{"venue":"backpack","status":"connected"}],"default_venue":"backpack","starting_balance":"1000000000000000","engine_running":false,"instruments":[],"providers":[{"id":"openai","model":"gpt","reason":null}],"news_enabled":true}',
   '{"type":"event_batch","events":[{"type":"pong","id":1,"emit_us":5}]}',
   '{"type":"providers","available":[{"id":"nvidia","model":"m","reason":"no key"}],"default":"nvidia","selected":null}',

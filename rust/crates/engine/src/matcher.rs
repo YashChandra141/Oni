@@ -329,6 +329,109 @@ impl Matcher {
     }
 }
 
+/// One [`Matcher`] per order venue: an order rests in the matcher of its venue and is matched
+/// only against that venue's book. Cancels and account resets search every venue.
+#[derive(Debug)]
+pub struct Matchers {
+    fee_bps: u32,
+    /// The venue that stamps a rejection of an order that is open nowhere.
+    default_venue: Venue,
+    by_venue: BTreeMap<Venue, Matcher>,
+}
+
+impl Default for Matchers {
+    fn default() -> Self {
+        Self::new(DEFAULT_FEE_BPS, Venue::Replay)
+    }
+}
+
+impl Matchers {
+    pub fn new(fee_bps: u32, default_venue: Venue) -> Self {
+        Self {
+            fee_bps,
+            default_venue,
+            by_venue: BTreeMap::new(),
+        }
+    }
+
+    /// The same set with `venue` as the default venue.
+    pub fn with_venue(mut self, venue: Venue) -> Self {
+        self.default_venue = venue;
+        self
+    }
+
+    fn matcher_mut(&mut self, venue: Venue) -> &mut Matcher {
+        let fee_bps = self.fee_bps;
+        self.by_venue
+            .entry(venue)
+            .or_insert_with(|| Matcher::new(fee_bps).with_venue(venue))
+    }
+
+    /// [`Matcher::place`] on the matcher of `venue`.
+    pub fn place(
+        &mut self,
+        venue: Venue,
+        req: PlaceRequest,
+        book: &OrderBook,
+        last: Option<Price>,
+        ts: TimeMs,
+    ) -> MatchOutput {
+        self.matcher_mut(venue).place(req, book, last, ts)
+    }
+
+    /// [`Matcher::on_market`] on the matcher of `venue`; nothing if it has no orders.
+    pub fn on_market(
+        &mut self,
+        venue: Venue,
+        symbol: &str,
+        book: &OrderBook,
+        last: Option<Price>,
+        ts: TimeMs,
+    ) -> MatchOutput {
+        match self.by_venue.get_mut(&venue) {
+            Some(matcher) => matcher.on_market(symbol, book, last, ts),
+            None => MatchOutput::default(),
+        }
+    }
+
+    /// Cancels the account's order `order_id` on whichever venue it rests.
+    pub fn cancel(&mut self, account_id: &AccountId, order_id: &OrderId) -> Vec<Event> {
+        for matcher in self.by_venue.values_mut() {
+            let events = matcher.cancel(account_id, order_id);
+            if !matches!(events.first(), Some(Event::OrderRejected { .. })) {
+                return events;
+            }
+        }
+        let venue = self.default_venue;
+        self.matcher_mut(venue).cancel(account_id, order_id)
+    }
+
+    /// Cancels every open order of the account on every venue, venue by venue.
+    pub fn cancel_all(&mut self, account_id: &AccountId) -> Vec<Event> {
+        self.by_venue
+            .values_mut()
+            .flat_map(|matcher| matcher.cancel_all(account_id))
+            .collect()
+    }
+
+    /// Number of open orders, all accounts and venues.
+    #[allow(dead_code)] // used by tests only
+    pub fn open_count(&self) -> usize {
+        self.by_venue.values().map(Matcher::open_count).sum()
+    }
+
+    /// Open orders of one account, venue by venue, in acceptance order within a venue.
+    #[allow(dead_code)] // used by tests only
+    pub fn open_orders_for<'a>(
+        &'a self,
+        account_id: &'a AccountId,
+    ) -> impl Iterator<Item = &'a Order> + 'a {
+        self.by_venue
+            .values()
+            .flat_map(move |matcher| matcher.open_orders_for(account_id))
+    }
+}
+
 fn ack(venue: Venue, account_id: &AccountId, order_id: &OrderId, status: OrderStatus) -> Event {
     Event::OrderAck {
         account_id: account_id.clone(),
@@ -878,7 +981,7 @@ mod tests {
         let mut m = Matcher::default();
         let empty = OrderBook::new();
         let mut bad = req("guest", "o-1", Side::Buy, 1, OrderKind::Market);
-        bad.symbol = "DOGE-USD".into();
+        bad.symbol = "NOPE-USD".into();
         assert_eq!(
             m.place(bad, &empty, None, 7).events,
             vec![rejected("guest", "o-1", "unknown_symbol")]

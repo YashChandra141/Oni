@@ -10,13 +10,14 @@ import {
 
 const press = (key: string, extra: Partial<ChartKeyEvent> = {}): ChartKeyEvent => ({ key, ...extra });
 
-describe("timeframe keys 1-5", () => {
+describe("timeframe keys 1-6", () => {
   const expected = [
     ["1", "1m"],
     ["2", "5m"],
     ["3", "15m"],
     ["4", "1h"],
-    ["5", "1d"],
+    ["5", "4h"],
+    ["6", "1d"],
   ] as const;
 
   test.each(expected)("key %p selects %p with chart focus", (key, timeframe) => {
@@ -29,7 +30,7 @@ describe("timeframe keys 1-5", () => {
 
   test("other digits do nothing", () => {
     expect(chartActionForKey(press("0"))).toBeNull();
-    expect(chartActionForKey(press("6"))).toBeNull();
+    expect(chartActionForKey(press("7"))).toBeNull();
   });
 });
 

@@ -29,16 +29,27 @@ describe("bundled keymap.json", () => {
   });
 
   // JSON.parse keeps only the last of two identical raw keys, so check the raw text too (Req 32.4).
-  test("raw file has no duplicate normalized key in any context", async () => {
+  test("raw file has no duplicate normalized key in any object", async () => {
     const text = await Bun.file(new URL("./keymap.json", import.meta.url)).text();
-    const blocks = [...text.matchAll(/"(\w+)"\s*:\s*\{([^{}]*)\}/g)];
-    expect(blocks.length).toBe(6);
-    for (const [, ctx, body] of blocks) {
-      const keys = [...(body ?? "").matchAll(/(?:^|,)\s*"([^"]+)"\s*:/g)].map((m) => normalizeKey(m[1] ?? ""));
-      expect(keys).not.toContain(null);
-      const dupes = keys.filter((k, i) => keys.indexOf(k) !== i);
-      expect({ ctx, dupes }).toEqual({ ctx, dupes: [] });
+    // Walk the text so repeated raw keys in one object are seen (JSON.parse keeps the last one).
+    const tokens = text.matchAll(/"((?:[^"\\]|\\.)*)"\s*:|[{}]|"(?:[^"\\]|\\.)*"/g);
+    const stack: string[][] = [];
+    const finished: string[][] = [];
+    for (const m of tokens) {
+      if (m[0] === "{") stack.push([]);
+      else if (m[0] === "}") finished.push(stack.pop() ?? []);
+      else if (m[1] !== undefined) stack[stack.length - 1]?.push(m[1]);
     }
+    expect(stack.length).toBe(0);
+    expect(finished.length).toBeGreaterThan(6);
+    for (const keys of finished) {
+      // Action names and "web"/"tui" do not normalize to a key, so only real key spellings count.
+      const normalized = keys.map((k) => normalizeKey(k) ?? `raw:${k}`);
+      const dupes = normalized.filter((k, i) => normalized.indexOf(k) !== i);
+      expect({ keys, dupes }).toEqual({ keys, dupes: [] });
+    }
+    // Per client and context, the loader rejects any duplicate normalized key (Req 32.4).
+    expect(loadKeymap(JSON.parse(text)).ok).toBe(true);
   });
 });
 
@@ -105,8 +116,11 @@ describe("loadKeymap validation", () => {
   });
 
   test("rejects non-string and unknown actions, naming context and key", () => {
-    expect(errorsOf({ version: 1, contexts: { global: { B: 7 } } })).toEqual([
-      `context "global": key "B" has unknown action 7`,
+    expect(errorsOf({ version: 1, contexts: { global: { "order.buy": 7 } } })).toEqual([
+      `context "global": action "order.buy" must list keys`,
+    ]);
+    expect(errorsOf({ version: 1, contexts: { global: { "order.buyy": ["B"] } } })).toEqual([
+      `context "global": unknown action "order.buyy"`,
     ]);
     expect(errorsOf({ version: 1, contexts: { global: { B: "order.buyy" } } })).toEqual([
       `context "global": key "B" has unknown action "order.buyy"`,
@@ -121,12 +135,24 @@ describe("loadKeymap validation", () => {
 
   // Req 32.4
   test("rejects a context that binds the same normalized key twice", () => {
+    // Legacy "<key>": "<action>" bindings apply to both clients, so each client reports it.
     expect(errorsOf({ version: 1, contexts: { global: { B: "order.buy", b: "order.sell" } } })).toEqual([
-      `context "global": key "b" duplicates "B" (both normalize to "B")`,
+      `context "global" (web): key "b" duplicates "B" (both normalize to "B")`,
+      `context "global" (tui): key "b" duplicates "B" (both normalize to "B")`,
     ]);
     expect(
-      errorsOf({ version: 1, contexts: { orders: { Up: "orders.up", ArrowUp: "orders.down" } } }),
-    ).toEqual([`context "orders": key "ArrowUp" duplicates "Up" (both normalize to "Up")`]);
+      errorsOf({
+        version: 1,
+        contexts: { orders: { "orders.up": { web: ["Up"] }, "orders.down": { web: ["ArrowUp"] } } },
+      }),
+    ).toEqual([`context "orders" (web): key "ArrowUp" duplicates "Up" (both normalize to "Up")`]);
+    // The same key may be bound once per client.
+    expect(
+      loadKeymap({
+        version: 1,
+        contexts: { global: { "order.buy": { web: ["B"] }, "order.sell": { tui: ["B"] } } },
+      }).ok,
+    ).toBe(true);
   });
 
   test("the same key in different contexts is allowed", () => {
@@ -143,7 +169,9 @@ describe("resolve", () => {
     expect(resolve(keymap, "book", "Enter")).toBe("book.prefill");
     expect(resolve(keymap, "dialog", "Enter")).toBe("dialog.confirm");
     expect(resolve(keymap, "book", "B")).toBe("order.buy");
-    expect(resolve(keymap, "chart", "1")).toBe("timeframe.1m");
+    // Digits are timeframes in the web view and pages in the TUI view.
+    expect(resolve(forClient(keymap, "web"), "chart", "1")).toBe("timeframe.1m");
+    expect(resolve(keymap, "chart", "1")).toBe("page.1");
     expect(resolve(keymap, "global", "Enter")).toBeNull();
     expect(resolve(keymap, "global", "Z")).toBeNull();
     expect(resolve(keymap, "global", "")).toBeNull();
@@ -166,7 +194,12 @@ describe("forClient", () => {
     expect(resolve(web, "global", "Q")).toBeNull();
     expect(resolve(web, "global", "P")).toBeNull();
     expect(resolve(web, "global", "B")).toBe("order.buy");
-    expect(web.contexts.global.size).toBe(keymap.contexts.global.size - 2);
+    const webActions = [...web.contexts.global.values()];
+    expect(webActions).not.toContain("app.quit");
+    expect(webActions).not.toContain("auth.pair");
+    expect([...keymap.contexts.global.values()]).toContain("app.quit");
+    expect(resolve(web, "global", "Alt+8")).toBe("page.8");
+    expect(resolve(web, "global", "6")).toBe("timeframe.1d");
     expect(forClient(keymap, "tui")).toBe(keymap);
   });
 });

@@ -131,7 +131,7 @@ describe("command_text", () => {
   test("a malformed command gets a parse_error with the position and creates no preview", () => {
     const { connect, send, previews } = setup();
     const ws = connect();
-    send(ws, { type: "command_text", request_id: "r1", text: "BUY XRP 1" });
+    send(ws, { type: "command_text", request_id: "r1", text: "BUY NOPE 1" });
     const msg = lastOf(ws);
     expect(msg).toMatchObject({ type: "parse_error", request_id: "r1", position: 4 });
     expect(previews.size).toBe(0);

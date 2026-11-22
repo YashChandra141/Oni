@@ -20,6 +20,7 @@
 //   (lib/indicatorData.ts, display-only tick-to-price conversion).
 
 import {
+  AreaSeries,
   CandlestickSeries,
   ColorType,
   CrosshairMode,
@@ -42,6 +43,11 @@ import {
   DEFAULT_QTY_DECIMALS,
   barsToCandles,
   barsToVolume,
+  barsToCloseLine,
+  venueHasVolume,
+  CHART_TYPES,
+  CHART_TYPE_LABELS,
+  type ChartType,
   formatDisplayNumber,
   chartSyncState,
   planChartSync,
@@ -76,6 +82,7 @@ import {
   panRange,
   zoomRange,
 } from "../lib/chartRange";
+import { toHeikinAshi } from "../lib/heikinAshi";
 import { candleKey, useTerminalStore } from "../lib/store";
 import { TIME_PLACEHOLDER, formatChartTime, tickMarkLabel } from "../lib/timeFormat";
 
@@ -110,6 +117,16 @@ function lineOptions(line: IndicatorLine, priceDecimals: number): LineSeriesPart
   return options;
 }
 
+/** The main price series; its kind follows the chart type. */
+type MainSeries =
+  | { readonly kind: "candles"; readonly series: ISeriesApi<"Candlestick"> }
+  | { readonly kind: "line"; readonly series: ISeriesApi<"Line"> }
+  | { readonly kind: "area"; readonly series: ISeriesApi<"Area"> };
+
+function coordinateToPrice(main: MainSeries, y: number): number | null {
+  return main.series.coordinateToPrice(y);
+}
+
 interface Readout {
   readonly time: string;
   readonly price: string;
@@ -123,21 +140,22 @@ interface Readout {
 }
 
 export default function ChartPanel() {
+  const venue = useTerminalStore((state) => state.selection.venue);
   const symbol = useTerminalStore((state) => state.selection.symbol);
   const timeframe = useTerminalStore((state) => state.selection.timeframe);
   const selectTimeframe = useTerminalStore((state) => state.selectTimeframe);
-  const storedBars = useTerminalStore((state) => state.candles[candleKey(symbol, timeframe)]);
+  const storedBars = useTerminalStore((state) => state.candles[candleKey(venue, symbol, timeframe)]);
   const bars = storedBars ?? NO_BARS;
   const snapshotCount =
-    useTerminalStore((state) => state.seriesVersion[candleKey(symbol, timeframe)]?.snapshot) ?? 0;
+    useTerminalStore((state) => state.seriesVersion[candleKey(venue, symbol, timeframe)]?.snapshot) ?? 0;
   const rewriteCount =
-    useTerminalStore((state) => state.seriesVersion[candleKey(symbol, timeframe)]?.rewrite) ?? 0;
+    useTerminalStore((state) => state.seriesVersion[candleKey(venue, symbol, timeframe)]?.rewrite) ?? 0;
   const priceDecimals =
     useTerminalStore((state) => state.instruments[symbol]?.price_decimals) ?? DEFAULT_PRICE_DECIMALS;
   const qtyDecimals =
     useTerminalStore((state) => state.instruments[symbol]?.qty_decimals) ?? DEFAULT_QTY_DECIMALS;
   const storedIndicators = useTerminalStore(
-    (state) => state.indicators[candleKey(symbol, timeframe)],
+    (state) => state.indicators[candleKey(venue, symbol, timeframe)],
   );
   const indicatorPoints = storedIndicators ?? NO_INDICATORS;
   const toggles = useTerminalStore((state) => state.indicatorToggles);
@@ -145,7 +163,18 @@ export default function ChartPanel() {
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const candleRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const mainRef = useRef<MainSeries | null>(null);
+  const [chartType, setChartType] = useState<ChartType>(() => {
+    // Initial state only: the Settings page stores its default under `oni:default-chart-type`.
+    if (typeof window === "undefined") return "candles";
+    try {
+      const saved = window.localStorage.getItem("oni:default-chart-type");
+      return CHART_TYPES.find((t) => t === saved) ?? "candles";
+    } catch {
+      return "candles";
+    }
+  });
+  const hasVolume = venueHasVolume(venue);
   const volumeRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   /** What the series currently holds; null before the first data and after a chart rebuild. */
   const appliedRef = useRef<ChartSyncState | null>(null);
@@ -225,14 +254,6 @@ export default function ChartPanel() {
       },
     });
 
-    const candles = chart.addSeries(CandlestickSeries, {
-      upColor: CHART_THEME.up,
-      downColor: CHART_THEME.down,
-      wickUpColor: CHART_THEME.up,
-      wickDownColor: CHART_THEME.down,
-      borderVisible: false,
-      priceFormat: priceFormatFor(decimalsRef.current.price),
-    });
     chart.priceScale("right").applyOptions({ scaleMargins: { top: 0.08, bottom: 0.25 } });
 
     // Volume on its own overlay price scale (id ""), in the bottom fifth of the pane.
@@ -251,8 +272,10 @@ export default function ChartPanel() {
         return;
       }
       const { price: priceDigits, qty: qtyDigits } = decimalsRef.current;
-      const cursorPrice = candles.coordinateToPrice(point.y);
-      const ohlc = readOhlc(param.seriesData.get(candles));
+      const main = mainRef.current;
+      if (main === null) return;
+      const cursorPrice = coordinateToPrice(main, point.y);
+      const ohlc = readOhlc(param.seriesData.get(main.series));
       const volumeValue = readValue(param.seriesData.get(volume));
       setReadout({
         time: formatChartTime(param.time),
@@ -280,7 +303,7 @@ export default function ChartPanel() {
     observer.observe(container);
 
     chartRef.current = chart;
-    candleRef.current = candles;
+    mainRef.current = null;
     volumeRef.current = volume;
     appliedRef.current = null;
     viewKeyRef.current = null;
@@ -293,7 +316,7 @@ export default function ChartPanel() {
       chart.unsubscribeCrosshairMove(onCrosshairMove);
       chart.remove();
       chartRef.current = null;
-      candleRef.current = null;
+      mainRef.current = null;
       volumeRef.current = null;
       appliedRef.current = null;
       linesRef.current = {};
@@ -301,52 +324,130 @@ export default function ChartPanel() {
     };
   }, []);
 
+  // Main price series follows the chart type; switching is a full set (appliedRef reset).
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (chart === null) return;
+    const priceFormat = priceFormatFor(decimalsRef.current.price);
+    let main: MainSeries;
+    if (chartType === "line") {
+      main = {
+        kind: "line",
+        series: chart.addSeries(LineSeries, { color: CHART_THEME.up, lineWidth: 2, priceFormat }),
+      };
+    } else if (chartType === "area") {
+      main = {
+        kind: "area",
+        series: chart.addSeries(AreaSeries, {
+          lineColor: CHART_THEME.up,
+          topColor: "rgba(34, 197, 94, 0.35)",
+          bottomColor: "rgba(34, 197, 94, 0)",
+          lineWidth: 2,
+          priceFormat,
+        }),
+      };
+    } else {
+      main = {
+        kind: "candles",
+        series: chart.addSeries(CandlestickSeries, {
+          upColor: CHART_THEME.up,
+          downColor: CHART_THEME.down,
+          wickUpColor: CHART_THEME.up,
+          wickDownColor: CHART_THEME.down,
+          borderVisible: false,
+          priceFormat,
+        }),
+      };
+    }
+    mainRef.current = main;
+    appliedRef.current = null;
+    return () => {
+      if (chartRef.current !== null) chartRef.current.removeSeries(main.series);
+      if (mainRef.current === main) mainRef.current = null;
+      appliedRef.current = null;
+    };
+  }, [chartType]);
+
   // Price format follows the instrument's decimals once `hello` arrives.
   useEffect(() => {
-    candleRef.current?.applyOptions({ priceFormat: priceFormatFor(priceDecimals) });
-  }, [priceDecimals]);
+    mainRef.current?.series.applyOptions({ priceFormat: priceFormatFor(priceDecimals) });
+  }, [priceDecimals, chartType]);
 
   // Feed bars to the chart: replace everything, or update the last bar for a live tick.
   useEffect(() => {
     const chart = chartRef.current;
-    const candleSeries = candleRef.current;
+    const main = mainRef.current;
     const volumeSeries = volumeRef.current;
-    if (chart === null || candleSeries === null || volumeSeries === null) return;
+    if (chart === null || main === null || volumeSeries === null) return;
 
-    const viewKey = `${symbol}|${timeframe}`;
+    const viewKey = `${venue}|${symbol}|${timeframe}`;
     if (viewKeyRef.current !== viewKey) {
       viewKeyRef.current = viewKey;
       needsFitRef.current = true;
     }
 
     const input = {
-      key: `${viewKey}|${priceDecimals}|${qtyDecimals}`,
+      key: `${viewKey}|${chartType}|${priceDecimals}|${qtyDecimals}|${hasVolume ? "v" : "n"}`,
       snapshot: snapshotCount,
       rewrite: rewriteCount,
       bars,
     };
     const prev = appliedRef.current;
     const plan = planChartSync(prev, input);
+    // Heikin-Ashi depends on earlier bars, so it is computed over all stored bars (BigInt ticks)
+    // and the tail is cut afterwards.
+    const shown: readonly Bar[] = chartType === "heikin" ? toHeikinAshi(bars) : bars;
+    const tail = (): readonly Bar[] => {
+      if (plan.kind !== "update") return shown;
+      const from = plan.bars[0]?.t;
+      return from === undefined ? shown : shown.filter((b) => b.t >= from);
+    };
 
     if (plan.kind === "update") {
       // Only the bars at or after the previous newest bar; ascending order is guaranteed.
-      for (const point of barsToCandles(plan.bars, priceDecimals)) candleSeries.update(point);
-      for (const point of barsToVolume(plan.bars, qtyDecimals)) volumeSeries.update(point);
+      const part = tail();
+      if (main.kind === "candles") {
+        for (const point of barsToCandles(part, priceDecimals)) main.series.update(point);
+      } else {
+        for (const point of barsToCloseLine(part, priceDecimals)) main.series.update(point);
+      }
+      if (hasVolume) {
+        for (const point of barsToVolume(plan.bars, qtyDecimals)) volumeSeries.update(point);
+      }
     } else {
       // Every snapshot (also a fresh one on the same key) repositions the view (Req 2.8).
       if (shouldReposition(prev, input)) needsFitRef.current = true;
-      const candles = barsToCandles(bars, priceDecimals);
-      candleSeries.setData(candles);
-      volumeSeries.setData(barsToVolume(bars, qtyDecimals));
-      if (needsFitRef.current && candles.length > 0) {
-        const range = initialVisibleRange(candles.length);
+      let count: number;
+      if (main.kind === "candles") {
+        const candles = barsToCandles(shown, priceDecimals);
+        main.series.setData(candles);
+        count = candles.length;
+      } else {
+        const points = barsToCloseLine(shown, priceDecimals);
+        main.series.setData(points);
+        count = points.length;
+      }
+      volumeSeries.setData(hasVolume ? barsToVolume(bars, qtyDecimals) : []);
+      if (needsFitRef.current && count > 0) {
+        const range = initialVisibleRange(count);
         if (range === null) chart.timeScale().fitContent();
         else chart.timeScale().setVisibleLogicalRange(range);
         needsFitRef.current = false;
       }
     }
     appliedRef.current = chartSyncState(input);
-  }, [bars, snapshotCount, rewriteCount, symbol, timeframe, priceDecimals, qtyDecimals]);
+  }, [
+    bars,
+    snapshotCount,
+    rewriteCount,
+    venue,
+    symbol,
+    timeframe,
+    priceDecimals,
+    qtyDecimals,
+    chartType,
+    hasVolume,
+  ]);
 
   // Indicator lines (Req 26.1-26.4): a toggled-off line has no series (removed, so no stale data
   // and no empty sub-pane); a toggled-on line gets a series and is fed like the candles.
@@ -355,7 +456,7 @@ export default function ChartPanel() {
     if (chart === null) return;
     const lines = linesRef.current;
     const input = {
-      key: `${symbol}|${timeframe}|${priceDecimals}`,
+      key: `${venue}|${symbol}|${timeframe}|${priceDecimals}`,
       snapshot: snapshotCount,
       rewrite: rewriteCount,
       bars,
@@ -415,7 +516,17 @@ export default function ChartPanel() {
       }
     }
     lineSyncRef.current = chartSyncState(input);
-  }, [indicatorPoints, bars, toggles, snapshotCount, rewriteCount, symbol, timeframe, priceDecimals]);
+  }, [
+    indicatorPoints,
+    bars,
+    toggles,
+    snapshotCount,
+    rewriteCount,
+    venue,
+    symbol,
+    timeframe,
+    priceDecimals,
+  ]);
 
   // Keyboard: timeframe digits always (outside text inputs); zoom and pan while the chart is
   // hovered or focused.
@@ -504,6 +615,26 @@ export default function ChartPanel() {
             {tf}
           </button>
         ))}
+        <div role="group" aria-label="Chart type" className="ml-2 flex items-center gap-1">
+          {CHART_TYPES.map((type) => (
+            <button
+              key={type}
+              type="button"
+              aria-pressed={type === chartType}
+              onClick={() => {
+                setChartType(type);
+              }}
+              className={`border px-2 py-0.5 ${
+                type === chartType
+                  ? "border-amber text-amber"
+                  : "border-crt-line text-phosphor-dim hover:text-phosphor"
+              }`}
+            >
+              {CHART_TYPE_LABELS[type]}
+            </button>
+          ))}
+        </div>
+        {!hasVolume && <span className="ml-2 text-phosphor-dim">no volume</span>}
         <span className="ml-auto text-phosphor-dim">{symbol}</span>
       </div>
       <div className="mb-1 flex flex-wrap items-center gap-1 text-xs">

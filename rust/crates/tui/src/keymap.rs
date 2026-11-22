@@ -116,6 +116,7 @@ actions! {
     Timeframe5m => "timeframe.5m",
     Timeframe15m => "timeframe.15m",
     Timeframe1h => "timeframe.1h",
+    Timeframe4h => "timeframe.4h",
     Timeframe1d => "timeframe.1d",
     SymbolNext => "symbol.next",
     SymbolPrev => "symbol.prev",
@@ -147,6 +148,20 @@ actions! {
     CommandBlur => "command.blur",
     DialogConfirm => "dialog.confirm",
     DialogCancel => "dialog.cancel",
+    VenueNext => "venue.next",
+    ProviderNext => "provider.next",
+    CopilotFocus => "copilot.focus",
+    Help => "help",
+    TimeframePrev => "timeframe.prev",
+    TimeframeNext => "timeframe.next",
+    Page1 => "page.1",
+    Page2 => "page.2",
+    Page3 => "page.3",
+    Page4 => "page.4",
+    Page5 => "page.5",
+    Page6 => "page.6",
+    Page7 => "page.7",
+    Page8 => "page.8",
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -425,6 +440,42 @@ impl<'de> Visitor<'de> for RawVisitor {
     }
 }
 
+/// The client this loader serves in the per-client keymap schema.
+const CLIENT: &str = "tui";
+
+/// The key list of one action for `client`: a shared array, or the `client` entry of a
+/// `{web, tui}` object (an absent entry means the action has no key here).
+fn client_keys(value: &Raw, client: &str) -> Result<Vec<String>, String> {
+    fn strings(v: &Value) -> Result<Vec<String>, String> {
+        let Value::Array(items) = v else {
+            return Err("must bind a list of keys".to_owned());
+        };
+        items
+            .iter()
+            .map(|i| match i {
+                Value::String(s) => Ok(s.clone()),
+                _ => Err("must bind a list of key strings".to_owned()),
+            })
+            .collect()
+    }
+    match value {
+        Raw::Scalar(v) => strings(v),
+        Raw::Object(fields) => {
+            let mut out = Vec::new();
+            for (name, v) in fields {
+                if name != "web" && name != "tui" {
+                    return Err(format!("has unknown client \"{name}\""));
+                }
+                let list = strings(&v.to_value())?;
+                if name == client {
+                    out.extend(list);
+                }
+            }
+            Ok(out)
+        }
+    }
+}
+
 /// Parse and validate keymap JSON text. Contexts may be omitted (treated as empty).
 ///
 /// Rejects a context that binds the same normalized key twice (Req 32.4), including two
@@ -486,21 +537,44 @@ pub fn load_keymap(text: &str) -> Result<Keymap, Vec<String>> {
             continue;
         }
         let table = &mut tables[ctx.index()];
-        let mut raw_by_normalized: HashMap<String, &str> = HashMap::new();
-        for (key, action) in pairs {
+        let mut raw_by_normalized: HashMap<String, String> = HashMap::new();
+        // Flatten both schemas into (key, action) pairs for this client.
+        let mut entries: Vec<(String, Action)> = Vec::new();
+        for (name, value) in pairs {
+            match value {
+                // Old form: `"key": "action"`.
+                Raw::Scalar(Value::String(s)) => match Action::parse(s) {
+                    Some(action) => entries.push((name.clone(), action)),
+                    None => errors.push(format!(
+                        "context \"{ctx_name}\": key \"{name}\" has unknown action {}",
+                        value.to_value()
+                    )),
+                },
+                // Per-client form: `"action": ["keys"]` or `"action": {"web": [...], "tui": [...]}`.
+                Raw::Scalar(Value::Array(_)) | Raw::Object(_) => {
+                    let Some(action) = Action::parse(name) else {
+                        errors.push(format!("context \"{ctx_name}\": unknown action \"{name}\""));
+                        continue;
+                    };
+                    let keys = match client_keys(value, CLIENT) {
+                        Ok(keys) => keys,
+                        Err(msg) => {
+                            errors.push(format!("context \"{ctx_name}\": action \"{name}\" {msg}"));
+                            continue;
+                        }
+                    };
+                    entries.extend(keys.into_iter().map(|k| (k, action)));
+                }
+                _ => errors.push(format!(
+                    "context \"{ctx_name}\": key \"{name}\" has unknown action {}",
+                    value.to_value()
+                )),
+            }
+        }
+        for (key, parsed) in &entries {
+            let key = key.as_str();
             let Some(norm) = normalize_key(key) else {
                 errors.push(format!("context \"{ctx_name}\": invalid key \"{key}\""));
-                continue;
-            };
-            let parsed = match action {
-                Raw::Scalar(Value::String(s)) => Action::parse(s),
-                _ => None,
-            };
-            let Some(parsed) = parsed else {
-                errors.push(format!(
-                    "context \"{ctx_name}\": key \"{key}\" has unknown action {}",
-                    action.to_value()
-                ));
                 continue;
             };
             if let Some(prev) = raw_by_normalized.get(&norm) {
@@ -509,8 +583,8 @@ pub fn load_keymap(text: &str) -> Result<Keymap, Vec<String>> {
                 ));
                 continue;
             }
-            raw_by_normalized.insert(norm.clone(), key);
-            table.insert(norm, parsed);
+            raw_by_normalized.insert(norm.clone(), key.to_owned());
+            table.insert(norm, *parsed);
         }
     }
     if errors.is_empty() {
@@ -586,7 +660,7 @@ mod tests {
             resolve(&keymap, Context::Dialog, "y"),
             Some(Action::DialogConfirm)
         );
-        assert_eq!(keymap.bindings(Context::Global).len(), 19);
+        assert_eq!(keymap.bindings(Context::Global).len(), 28);
     }
 
     #[test]
@@ -599,7 +673,7 @@ mod tests {
         let ts_actions: Vec<&str> = body[..end].split('"').skip(1).step_by(2).collect();
         let rust_actions: Vec<&str> = Action::ALL.iter().map(|a| a.name()).collect();
         assert_eq!(rust_actions, ts_actions);
-        assert_eq!(Action::ALL.len(), 35);
+        assert_eq!(Action::ALL.len(), 50);
     }
 
     #[test]
@@ -969,17 +1043,18 @@ mod tests {
 
     #[test]
     fn reports_every_error() {
-        let errors = errors_of(
+        let mut errors = errors_of(
             r#"{"version":1,"contexts":{"popup":{},"chart":{"Banana":"chart.zoom_in","+":"nope"}}}"#,
         );
-        assert_eq!(
-            errors,
-            [
-                r#"unknown context "popup""#,
-                r#"context "chart": invalid key "Banana""#,
-                r#"context "chart": key "+" has unknown action "nope""#,
-            ]
-        );
+        // Report order is not part of the contract; every error must be present.
+        errors.sort();
+        let mut expected = vec![
+            r#"unknown context "popup""#.to_string(),
+            r#"context "chart": invalid key "Banana""#.to_string(),
+            r#"context "chart": key "+" has unknown action "nope""#.to_string(),
+        ];
+        expected.sort();
+        assert_eq!(errors, expected);
     }
 
     #[test]
@@ -1017,10 +1092,7 @@ mod tests {
             Some(Action::DialogConfirm)
         );
         assert_eq!(resolve(&keymap, Context::Book, "B"), Some(Action::OrderBuy));
-        assert_eq!(
-            resolve(&keymap, Context::Chart, "1"),
-            Some(Action::Timeframe1m)
-        );
+        assert_eq!(resolve(&keymap, Context::Chart, "1"), Some(Action::Page1));
         assert_eq!(resolve(&keymap, Context::Global, "Enter"), None);
         assert_eq!(resolve(&keymap, Context::Global, "Z"), None);
         assert_eq!(resolve(&keymap, Context::Global, ""), None);

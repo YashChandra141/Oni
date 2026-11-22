@@ -256,8 +256,8 @@ describe("createTerminalSocket: subscriptions", () => {
     socket.subscribe("BTC-USD", "1m");
     socket.unsubscribe("SOL-USD", "1d");
     expect(socket.subscriptions()).toEqual([
-      { symbol: "BTC-USD", timeframe: "1m" },
-      { symbol: "ETH-USD", timeframe: "5m" },
+      { venue: "replay", symbol: "BTC-USD", timeframe: "1m" },
+      { venue: "replay", symbol: "ETH-USD", timeframe: "5m" },
     ]);
   });
 });

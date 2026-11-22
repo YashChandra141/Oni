@@ -199,9 +199,9 @@ describe("malformed input (Req 21.5)", () => {
   });
 
   test("unknown symbol", () => {
-    const e = err("BUY XRP 1");
+    const e = err("BUY NOPE 1");
     expect(e.position).toBe(4);
-    expect(e.message).toContain("XRP");
+    expect(e.message).toContain("NOPE");
   });
 
   test("bad order type word", () => {

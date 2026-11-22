@@ -9,6 +9,8 @@ pub mod coinbase;
 pub mod coinbase_parse;
 pub mod fixture;
 pub mod http;
+pub mod jupiter;
+pub mod raydium;
 pub mod replay;
 #[cfg(test)]
 mod safety_preservation_tests;
@@ -19,21 +21,30 @@ pub mod synth;
 pub(crate) mod test_ws;
 pub mod venue;
 
-use protocol::{Level, Price, Qty, Side, TimeMs};
+use protocol::{Level, Price, Qty, Side, TimeMs, Venue, VenueStatusKind};
 use serde::{Deserialize, Serialize};
 
-/// One market data message for one symbol.
+/// Serde helper: a `Replay` venue is left out of the JSON, so fixture lines stay unchanged.
+fn is_replay(venue: &Venue) -> bool {
+    *venue == Venue::Replay
+}
+
+/// One market data message for one symbol of one venue.
 ///
 /// Engine-internal: it appears only inside the engine and in fixture files, so it has no
 /// TypeScript export. It is internally tagged like the protocol messages, and prices and
 /// quantities are decimal strings, e.g.
 /// `{"type":"trade","symbol":"BTC-USD","price":"6400000","qty":"1000","side":"buy","ts":1}`.
-/// `ts` is the exchange time in epoch ms.
+/// `ts` is the exchange time in epoch ms. `venue` defaults to `replay` when absent, so fixture
+/// lines written before multi-venue support still parse, and it is written only when it is not
+/// `replay`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum MarketMsg {
     /// A trade print. `side` is the aggressor side.
     Trade {
+        #[serde(default, skip_serializing_if = "is_replay")]
+        venue: Venue,
         symbol: String,
         price: Price,
         qty: Qty,
@@ -42,6 +53,8 @@ pub enum MarketMsg {
     },
     /// Every price level of one symbol's book. It replaces the previous levels (Req 9.1).
     BookSnapshot {
+        #[serde(default, skip_serializing_if = "is_replay")]
+        venue: Venue,
         symbol: String,
         bids: Vec<Level>,
         asks: Vec<Level>,
@@ -50,21 +63,69 @@ pub enum MarketMsg {
     /// A change to one price level. `buy` is the bid side and `sell` the ask side. A zero `qty`
     /// removes the level (Req 9.2, 9.3).
     BookDelta {
+        #[serde(default, skip_serializing_if = "is_replay")]
+        venue: Venue,
         symbol: String,
         side: Side,
         price: Price,
         qty: Qty,
         ts: TimeMs,
     },
+    /// A DEX price observation (Jupiter or Raydium): a price with no depth. The DEX adapters
+    /// send this; turning it into candles and a Synthetic_Book is task 6.9.
+    PriceSample {
+        #[serde(default, skip_serializing_if = "is_replay")]
+        venue: Venue,
+        symbol: String,
+        price: Price,
+        ts: TimeMs,
+    },
+    /// A venue changed connection state (task 6.2). Never in fixtures.
+    Status {
+        #[serde(default, skip_serializing_if = "is_replay")]
+        venue: Venue,
+        status: VenueStatusKind,
+        ts: TimeMs,
+    },
+    /// The runtime's once-a-second wall-clock tick; the core derives staleness from it
+    /// (design D6). Never in fixtures.
+    Clock { ts: TimeMs },
 }
 
 impl MarketMsg {
-    /// The symbol the message is about.
+    /// The venue the message comes from. A `Clock` belongs to no venue and reports `Replay`.
+    pub fn venue(&self) -> Venue {
+        match self {
+            Self::Trade { venue, .. }
+            | Self::BookSnapshot { venue, .. }
+            | Self::BookDelta { venue, .. }
+            | Self::PriceSample { venue, .. }
+            | Self::Status { venue, .. } => *venue,
+            Self::Clock { .. } => Venue::Replay,
+        }
+    }
+
+    /// The same message tagged with `venue`.
+    pub fn with_venue(mut self, new_venue: Venue) -> Self {
+        match &mut self {
+            Self::Trade { venue, .. }
+            | Self::BookSnapshot { venue, .. }
+            | Self::BookDelta { venue, .. }
+            | Self::PriceSample { venue, .. }
+            | Self::Status { venue, .. } => *venue = new_venue,
+            Self::Clock { .. } => {}
+        }
+        self
+    }
+
+    /// The symbol the message is about; empty for `Status` and `Clock`.
     pub fn symbol(&self) -> &str {
         match self {
             Self::Trade { symbol, .. }
             | Self::BookSnapshot { symbol, .. }
-            | Self::BookDelta { symbol, .. } => symbol,
+            | Self::BookDelta { symbol, .. }
+            | Self::PriceSample { symbol, .. } => symbol,
+            Self::Status { .. } | Self::Clock { .. } => "",
         }
     }
 
@@ -73,9 +134,12 @@ impl MarketMsg {
     #[allow(dead_code)]
     pub fn ts(&self) -> TimeMs {
         match self {
-            Self::Trade { ts, .. } | Self::BookSnapshot { ts, .. } | Self::BookDelta { ts, .. } => {
-                *ts
-            }
+            Self::Trade { ts, .. }
+            | Self::BookSnapshot { ts, .. }
+            | Self::BookDelta { ts, .. }
+            | Self::PriceSample { ts, .. }
+            | Self::Status { ts, .. }
+            | Self::Clock { ts } => *ts,
         }
     }
 
@@ -83,7 +147,12 @@ impl MarketMsg {
     /// uses it to shift each loop of a fixture forward in market time.
     pub fn shifted(mut self, offset: TimeMs) -> Option<Self> {
         match &mut self {
-            Self::Trade { ts, .. } | Self::BookSnapshot { ts, .. } | Self::BookDelta { ts, .. } => {
+            Self::Trade { ts, .. }
+            | Self::BookSnapshot { ts, .. }
+            | Self::BookDelta { ts, .. }
+            | Self::PriceSample { ts, .. }
+            | Self::Status { ts, .. }
+            | Self::Clock { ts } => {
                 *ts = ts.checked_add(offset)?;
             }
         }
@@ -97,6 +166,7 @@ mod tests {
 
     fn trade() -> MarketMsg {
         MarketMsg::Trade {
+            venue: protocol::Venue::Replay,
             symbol: "BTC-USD".into(),
             price: Price(6_400_000),
             qty: Qty(1_000),
@@ -107,6 +177,7 @@ mod tests {
 
     fn snapshot() -> MarketMsg {
         MarketMsg::BookSnapshot {
+            venue: protocol::Venue::Replay,
             symbol: "ETH-USD".into(),
             bids: vec![Level {
                 price: Price(99),
@@ -119,6 +190,7 @@ mod tests {
 
     fn delta() -> MarketMsg {
         MarketMsg::BookDelta {
+            venue: protocol::Venue::Replay,
             symbol: "SOL-USD".into(),
             side: Side::Sell,
             price: Price(101),

@@ -3,6 +3,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { formatCommand } from "../commands/formatter.ts";
+import { INSTRUMENTS } from "../instruments.ts";
 import { LlmOrderParser, type LlmParseResult, intentToCommandText } from "./parser.ts";
 import { type LlmContext, type LlmProvider, LlmUnavailable } from "./provider.ts";
 
@@ -117,7 +118,7 @@ describe("LlmOrderParser", () => {
       "BUY BTC 1",
       { action: "place" },
       { ...NONE, action: "unclear" },
-      { ...NONE, action: "place", side: "buy", symbol: "DOGE-USD", amount: { absolute: "1" }, order_type: "market" },
+      { ...NONE, action: "place", side: "buy", symbol: "NOPE-USD", amount: { absolute: "1" }, order_type: "market" },
       { ...NONE, action: "place", side: "buy", symbol: "BTC-USD", amount: { absolute: "0.000000001" }, order_type: "market" },
       { ...NONE, action: "place", side: "buy", symbol: "BTC-USD", amount: { absolute: "1" }, order_type: "limit" },
       { ...NONE, action: "place", side: "buy", symbol: "BTC-USD", amount: { absolute: "1" }, order_type: "market", price: { absolute: "5" } },
@@ -141,7 +142,7 @@ describe("LlmOrderParser", () => {
     const seen: LlmContext[] = [];
     const p = parser(provider({ ...NONE, action: "unclear" }, seen), { positions: { "BTC-USD": 150_000_000n } });
     await p.parse("x", "w_alice");
-    expect(seen[0]?.symbols).toEqual(["BTC-USD", "ETH-USD", "SOL-USD"]);
+    expect(seen[0]?.symbols).toEqual(INSTRUMENTS.map((i) => i.symbol));
     expect(seen[0]?.positions["BTC-USD"]).toBe("1.5");
     expect(seen[0]?.lastPrices).toEqual({ "BTC-USD": "64000.00" });
   });

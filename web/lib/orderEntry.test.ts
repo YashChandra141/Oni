@@ -186,7 +186,18 @@ describe("P&L", () => {
 
 describe("messages", () => {
   test("builders produce the wire shapes", () => {
-    expect(commandTextMessage("r1", "FLAT")).toEqual({ type: "command_text", request_id: "r1", text: "FLAT" });
+    expect(commandTextMessage("r1", "FLAT")).toEqual({
+      type: "command_text",
+      request_id: "r1",
+      text: "FLAT",
+      venue: null,
+    });
+    expect(commandTextMessage("r1", "FLAT", "coinbase")).toEqual({
+      type: "command_text",
+      request_id: "r1",
+      text: "FLAT",
+      venue: "coinbase",
+    });
     expect(confirmMessage("r2", "p1")).toEqual({ type: "confirm", request_id: "r2", preview_id: "p1" });
     expect(discardMessage("p1")).toEqual({ type: "discard", preview_id: "p1" });
     expect(cancelMessage("r3", "o-1")).toEqual({ type: "cancel", request_id: "r3", order_id: "o-1" });

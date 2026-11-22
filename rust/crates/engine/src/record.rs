@@ -527,7 +527,10 @@ async fn run_adapter(
         Venue::Backpack => run_backpack(tx, errors, symbols).await,
         // No recorder for the DEX price feeds or for replay yet; the CLI only offers CEX venues.
         Venue::Jupiter | Venue::Raydium | Venue::Replay => {
-            warn!(venue = venue_name(venue), "no recorder adapter for this venue");
+            warn!(
+                venue = venue_name(venue),
+                "no recorder adapter for this venue"
+            );
         }
     }
 }
@@ -680,6 +683,7 @@ mod tests {
 
     fn trade(symbol: &str, price: i64, ts: TimeMs) -> MarketMsg {
         MarketMsg::Trade {
+            venue: protocol::Venue::Replay,
             symbol: symbol.into(),
             price: Price(price),
             qty: Qty(1_000),
@@ -690,6 +694,7 @@ mod tests {
 
     fn snapshot(symbol: &str, ts: TimeMs) -> MarketMsg {
         MarketMsg::BookSnapshot {
+            venue: protocol::Venue::Replay,
             symbol: symbol.into(),
             bids: vec![Level {
                 price: Price(99),
@@ -705,6 +710,7 @@ mod tests {
 
     fn delta(symbol: &str, qty: i64, ts: TimeMs) -> MarketMsg {
         MarketMsg::BookDelta {
+            venue: protocol::Venue::Replay,
             symbol: symbol.into(),
             side: Side::Sell,
             price: Price(101),
@@ -722,7 +728,7 @@ mod tests {
         assert!(recorder.record(trade("ETH-USD", 10, 2), 101).is_none());
         assert!(recorder.record(trade("SOL-USD", 10, 3), 102).is_some());
         assert!(recorder.record(snapshot("BTC-USD", 4), 103).is_some());
-        assert!(recorder.record(trade("DOGE-USD", 10, 5), 104).is_none());
+        assert!(recorder.record(trade("NOPE-USD", 10, 5), 104).is_none());
         assert_eq!(recorder.lines(), 3);
 
         let summary = recorder.finish();
@@ -784,6 +790,7 @@ mod tests {
         assert!(recorder.record(delta("BTC-USD", -1, 1), 10).is_none());
         assert!(recorder.record(trade("BTC-USD", 0, 1), 11).is_none());
         let huge = MarketMsg::BookSnapshot {
+            venue: protocol::Venue::Replay,
             symbol: "BTC-USD".into(),
             bids: (1..=4_000)
                 .map(|p| Level {
@@ -847,8 +854,8 @@ mod tests {
         assert_eq!(parse_symbol_arg("BTC-USD").unwrap(), "BTC-USD");
         assert_eq!(parse_symbol_arg("eth").unwrap(), "ETH-USD");
         assert_eq!(parse_symbol_arg(" sol-usd ").unwrap(), "SOL-USD");
-        let err = parse_symbol_arg("DOGE").unwrap_err();
-        assert!(err.contains("unknown symbol \"DOGE\""), "{err}");
+        let err = parse_symbol_arg("NOPE").unwrap_err();
+        assert!(err.contains("unknown symbol \"NOPE\""), "{err}");
         assert!(err.contains("BTC-USD, ETH-USD, SOL-USD"), "{err}");
         assert!(parse_symbol_arg("").is_err());
     }
@@ -861,7 +868,7 @@ mod tests {
             ["SOL-USD", "BTC-USD"]
         );
         assert!(matches!(
-            normalize_symbols(&list(&["DOGE-USD"])),
+            normalize_symbols(&list(&["NOPE-USD"])),
             Err(RecordError::Config(_))
         ));
         assert!(matches!(
@@ -1144,16 +1151,15 @@ mod tests {
         assert_eq!(stop, StopReason::ChannelClosed);
         writer.commit().unwrap();
 
-        // The clock ticks once per received message, including the filtered XRP-USD one (1_002).
+        // The clock ticks once per received message. XRP-USD is a v2 symbol, so it is kept.
         let expected: Vec<FixtureLine> = msgs
             .into_iter()
             .zip(1_000..)
-            .filter(|(msg, _)| msg.symbol() != "XRP-USD")
             .map(|(msg, recv)| FixtureLine { recv, msg })
             .collect();
         assert_eq!(read_fixture(&out).unwrap(), expected);
         let summary = recorder.finish();
-        assert_eq!((summary.lines, summary.filtered), (4, 1));
+        assert_eq!((summary.lines, summary.filtered), (5, 0));
     }
 
     // --- Mock WebSocket, both venues --------------------------------------------------------

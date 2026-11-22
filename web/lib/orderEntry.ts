@@ -2,7 +2,7 @@
 // 30, 31). No DOM and no store access. Price, Qty, and Money values are decimal strings of integer
 // counts; BigInt is used for every conversion and sum, never Number.
 
-import type { ClientMessage } from "../../shared/protocol/index";
+import type { ClientMessage, Venue } from "../../shared/protocol/index";
 import { formatUnits } from "./format";
 
 /** Fixed internal decimals (tech.md): 2 for prices, 8 for quantities. Used before `hello`. */
@@ -35,8 +35,12 @@ export function nextRequestId(): string {
   return `w${requestCounter.toString(36)}-${random}`;
 }
 
-export function commandTextMessage(requestId: string, text: string): ClientMessage {
-  return { type: "command_text", request_id: requestId, text };
+export function commandTextMessage(
+  requestId: string,
+  text: string,
+  venue: Venue | null = null,
+): ClientMessage {
+  return { type: "command_text", request_id: requestId, text, venue };
 }
 
 export function confirmMessage(requestId: string, previewId: string): ClientMessage {
@@ -161,6 +165,100 @@ export function ticketToCommandText(
   const price = formatUnits(ticket.price, decimals.priceDecimals);
   if (price === null) return { ok: false, error: "invalid limit price" };
   return { ok: true, text: `${head} LMT ${price}` };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Full order ticket (Task 14.6, Req 24)
+
+export type TicketKind = "limit" | "market" | "stop" | "twap";
+
+/** TWAP bounds, as the server's Command_Parser enforces them. */
+export const TWAP_MIN_SLICES = 2;
+export const TWAP_MAX_SLICES = 20;
+export const TWAP_MIN_INTERVAL_S = 5;
+export const TWAP_MAX_INTERVAL_S = 3_600;
+
+export const SLIDER_STEPS: readonly number[] = [0, 25, 50, 75, 100];
+
+export interface FullTicket {
+  readonly symbol: string;
+  readonly side: "buy" | "sell";
+  readonly kind: TicketKind;
+  /** Limit or stop price in ticks; ignored for market and TWAP. */
+  readonly price: string | null;
+  /** Quantity in lots. */
+  readonly qty: string | null;
+  readonly slices: string;
+  readonly intervalS: string;
+}
+
+/**
+ * Canonical command text of the ticket: `BUY BTC-USD 0.1 LMT 64000.00`, `SELL BTC-USD 0.1 STP
+ * 60000.00`, `BUY BTC-USD 0.1`, or `BUY BTC-USD 1 TWAP 4 60`.
+ */
+export function buildTicketCommand(ticket: FullTicket, decimals: InstrumentDecimals): TicketResult {
+  if (ticket.kind === "limit" || ticket.kind === "stop") {
+    if (ticket.price === null) return { ok: false, error: "enter a price" };
+    const base = ticketToCommandText(
+      { symbol: ticket.symbol, price: ticket.price, qty: ticket.qty },
+      ticket.side,
+      decimals,
+    );
+    if (!base.ok || ticket.kind === "limit") return base;
+    return { ok: true, text: base.text.replace(/ LMT /, " STP ") };
+  }
+  const base = ticketToCommandText({ symbol: ticket.symbol, price: null, qty: ticket.qty }, ticket.side, decimals);
+  if (!base.ok || ticket.kind === "market") return base;
+  if (!/^\d{1,2}$/.test(ticket.slices)) return { ok: false, error: "invalid slice count" };
+  const slices = Number(ticket.slices);
+  if (slices < TWAP_MIN_SLICES || slices > TWAP_MAX_SLICES) {
+    return { ok: false, error: `slices must be ${TWAP_MIN_SLICES} to ${TWAP_MAX_SLICES}` };
+  }
+  if (!/^\d{1,4}$/.test(ticket.intervalS)) return { ok: false, error: "invalid interval" };
+  const interval = Number(ticket.intervalS);
+  if (interval < TWAP_MIN_INTERVAL_S || interval > TWAP_MAX_INTERVAL_S) {
+    return { ok: false, error: `interval must be ${TWAP_MIN_INTERVAL_S} to ${TWAP_MAX_INTERVAL_S} seconds` };
+  }
+  return { ok: true, text: `${base.text} TWAP ${slices} ${interval}` };
+}
+
+/** Notional in Money (10^-10 USD) of `qty` lots at `price` ticks; null on bad input. */
+export function notionalMoney(
+  price: string | null,
+  qty: string | null,
+  decimals: InstrumentDecimals,
+): bigint | null {
+  if (price === null || qty === null || !INTEGER.test(price) || !INTEGER.test(qty)) return null;
+  const scale = MONEY_DECIMALS - decimals.priceDecimals - decimals.qtyDecimals;
+  if (scale < 0) return null;
+  return BigInt(price) * BigInt(qty) * 10n ** BigInt(scale);
+}
+
+/**
+ * Lots for a slider at `percent`: a buy takes percent of `freeBalance` (Money) at `price` ticks,
+ * a sell takes percent of the long `position` lots. Rounded down; null when it cannot be computed.
+ */
+export function sliderQty(
+  side: "buy" | "sell",
+  percent: number,
+  price: string | null,
+  freeBalance: string | undefined,
+  position: string | undefined,
+  decimals: InstrumentDecimals,
+): string | null {
+  if (!Number.isInteger(percent) || percent < 0 || percent > 100) return null;
+  const pct = BigInt(percent);
+  if (side === "sell") {
+    const held = position !== undefined && INTEGER.test(position) ? BigInt(position) : 0n;
+    return held > 0n ? ((held * pct) / 100n).toString() : "0";
+  }
+  const scale = MONEY_DECIMALS - decimals.priceDecimals - decimals.qtyDecimals;
+  if (scale < 0 || price === null || !POSITIVE_INTEGER.test(price)) return null;
+  if (freeBalance === undefined || !INTEGER.test(freeBalance)) return null;
+  const free = BigInt(freeBalance);
+  if (free <= 0n) return "0";
+  const perLot = BigInt(price) * 10n ** BigInt(scale);
+  return ((free * pct) / 100n / perLot).toString();
 }
 
 // ---------------------------------------------------------------------------------------------

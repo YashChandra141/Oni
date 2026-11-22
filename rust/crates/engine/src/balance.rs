@@ -246,7 +246,10 @@ mod tests {
 
     #[test]
     fn slipped_price_rounds_against_the_trader() {
-        assert_eq!(slipped_price(Price(1_000), Side::Buy, 100), Ok(Price(1_010)));
+        assert_eq!(
+            slipped_price(Price(1_000), Side::Buy, 100),
+            Ok(Price(1_010))
+        );
         assert_eq!(slipped_price(Price(1_000), Side::Sell, 100), Ok(Price(990)));
         // 101 × 1.01 = 102.01 rounds up; 101 × 0.99 = 99.99 rounds down.
         assert_eq!(slipped_price(Price(101), Side::Buy, 100), Ok(Price(103)));
@@ -343,13 +346,19 @@ mod tests {
         assert_eq!(big, Err(BalanceError::Overflow));
         let huge_basis = required_funds_at(btc(), Side::Buy, Qty(2), Price(1), -2, i128::MIN, 5);
         assert_eq!(huge_basis, Err(BalanceError::Overflow));
-        assert_eq!(BalanceError::Overflow.to_string(), "balance arithmetic overflow");
+        assert_eq!(
+            BalanceError::Overflow.to_string(),
+            "balance arithmetic overflow"
+        );
     }
 
     #[test]
     fn short_basis_sums_absolute_basis_of_shorts_only() {
         assert_eq!(short_basis([]), Ok(0));
-        assert_eq!(short_basis([(5, 500), (-2, -300), (-1, -50), (0, 0)]), Ok(350));
+        assert_eq!(
+            short_basis([(5, 500), (-2, -300), (-1, -50), (0, 0)]),
+            Ok(350)
+        );
         assert_eq!(
             short_basis([(-1, i128::MAX), (-1, -1)]),
             Err(BalanceError::Overflow)
@@ -405,7 +414,10 @@ mod tests {
             Ok(1_000 * MONEY_PER_USD)
         );
         assert!(config.with_starting_usd(100_000_000).is_ok());
-        assert_eq!(config.with_starting_usd(999), Err(BalanceError::InvalidInput));
+        assert_eq!(
+            config.with_starting_usd(999),
+            Err(BalanceError::InvalidInput)
+        );
         assert_eq!(
             config.with_starting_usd(100_000_001),
             Err(BalanceError::InvalidInput)
@@ -432,14 +444,25 @@ mod tests {
         let symbols = ["BTC-USD", "SOL-USD", "XRP-USD", "BONK-USD"];
         let refs = [1_i64, 7, 101, 12_345, 6_800_000];
         let qtys = [1_i64, 3, 10, 15, 100_001];
-        let positions: [(i64, i128); 5] = [(0, 0), (5, 500), (-3, -1_001), (-10, -10_000), (10, 9_000)];
+        let positions: [(i64, i128); 5] =
+            [(0, 0), (5, 500), (-3, -1_001), (-10, -10_000), (10, 9_000)];
         for sym in symbols {
-            let Some(inst) = protocol::instrument(sym) else { continue };
+            let Some(inst) = protocol::instrument(sym) else {
+                continue;
+            };
             for (i, &reference) in refs.iter().enumerate() {
                 for (j, &q) in qtys.iter().enumerate() {
                     let (pos, basis) = positions[(i + j) % positions.len()];
                     for side in [Side::Buy, Side::Sell] {
-                        let rf = required_funds(inst, side, Qty(q), Price(reference), pos, basis, &config);
+                        let rf = required_funds(
+                            inst,
+                            side,
+                            Qty(q),
+                            Price(reference),
+                            pos,
+                            basis,
+                            &config,
+                        );
                         required.push(json!({
                             "symbol": sym,
                             "side": if side == Side::Buy { "buy" } else { "sell" },
@@ -461,16 +484,25 @@ mod tests {
             required.push(json!({"symbol": "BTC-USD", "side": "buy", "qty": "0", "reference": "1",
                 "pos": "0", "basis": "0", "fee_bps": 5, "slippage_bps": 0, "expected": outcome(bad)}));
         }
-        let free: Vec<_> = [(1_000_i128, 100_i128, 300_i128), (1_000, 600, 0), (0, 0, 1), (5, 0, 0)]
-            .iter()
-            .map(|&(p, s, r)| {
-                json!({"paper": p.to_string(), "short_basis": s.to_string(),
+        let free: Vec<_> = [
+            (1_000_i128, 100_i128, 300_i128),
+            (1_000, 600, 0),
+            (0, 0, 1),
+            (5, 0, 0),
+        ]
+        .iter()
+        .map(|&(p, s, r)| {
+            json!({"paper": p.to_string(), "short_basis": s.to_string(),
                     "reserved": r.to_string(), "expected": outcome(free_balance(p, s, r))})
-            })
-            .collect();
+        })
+        .collect();
         let mut equities = Vec::new();
-        if let (Some(btc), Some(sol)) = (protocol::instrument("BTC-USD"), protocol::instrument("SOL-USD")) {
-            let cases: [(i128, Vec<(&str, i64, i64)>); 3] = [
+        if let (Some(btc), Some(sol)) = (
+            protocol::instrument("BTC-USD"),
+            protocol::instrument("SOL-USD"),
+        ) {
+            type Case<'a> = (i128, Vec<(&'a str, i64, i64)>);
+            let cases: [Case; 3] = [
                 (1_000, vec![]),
                 (1_000_000, vec![("BTC-USD", 10, 5), ("SOL-USD", 20, -1)]),
                 (0, vec![("BTC-USD", 6_800_000, -3)]),
@@ -488,7 +520,8 @@ mod tests {
             }
         }
         let doc = json!({"required_funds": required, "free_balance": free, "equity": equities});
-        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../shared/balance-vectors.json");
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../../shared/balance-vectors.json");
         let text = serde_json::to_string_pretty(&doc).unwrap_or_default();
         assert!(!text.is_empty());
         std::fs::write(path, text + "\n").unwrap();

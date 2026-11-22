@@ -68,11 +68,19 @@ pub enum NetEvent {
     /// The WebSocket is open; subscriptions have been queued for resend.
     Connected,
     /// A decoded message from the server.
-    Message(ServerMessage),
+    Message(Box<ServerMessage>),
     /// A frame that was not a valid [`ServerMessage`]; it was skipped.
     BadFrame { error: String },
     /// The connection attempt failed or the open connection was lost.
     Disconnected { reason: String },
+}
+
+#[cfg(test)]
+impl NetEvent {
+    /// Test constructor: a boxed [`NetEvent::Message`].
+    pub fn msg(message: ServerMessage) -> Self {
+        Self::Message(Box::new(message))
+    }
 }
 
 /// Reconnect delays: 250 ms, doubling, capped at 10 s (Req 33.2). Pure; no clock.
@@ -110,22 +118,28 @@ impl Default for Backoff {
 /// One market-data subscription.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Subscription {
+    pub venue: protocol::Venue,
     pub symbol: String,
     pub timeframe: Timeframe,
 }
 
 impl Subscription {
+    /// A subscription on the `replay` venue; the app moves it with a venue switch (Task 16.3).
     pub fn new(symbol: impl Into<String>, timeframe: Timeframe) -> Self {
+        Self::on(protocol::Venue::Replay, symbol, timeframe)
+    }
+
+    pub fn on(venue: protocol::Venue, symbol: impl Into<String>, timeframe: Timeframe) -> Self {
         Self {
+            venue,
             symbol: symbol.into(),
             timeframe,
         }
     }
 
     fn to_message(&self) -> ClientMessage {
-        // Task 16.3 makes the TUI venue-aware; until then it subscribes to `replay`.
         ClientMessage::Subscribe {
-            venue: protocol::Venue::Replay,
+            venue: self.venue,
             symbol: self.symbol.clone(),
             timeframe: self.timeframe,
         }
@@ -151,15 +165,20 @@ impl SubscriptionSet {
     pub fn observe(&mut self, message: &ClientMessage) {
         match message {
             ClientMessage::Subscribe {
-                symbol, timeframe, ..
+                venue,
+                symbol,
+                timeframe,
             } => {
-                self.insert(Subscription::new(symbol.clone(), *timeframe));
+                self.insert(Subscription::on(*venue, symbol.clone(), *timeframe));
             }
             ClientMessage::Unsubscribe {
-                symbol, timeframe, ..
+                venue,
+                symbol,
+                timeframe,
             } => {
-                self.subs
-                    .retain(|s| !(s.symbol == *symbol && s.timeframe == *timeframe));
+                self.subs.retain(|s| {
+                    !(s.venue == *venue && s.symbol == *symbol && s.timeframe == *timeframe)
+                });
             }
             _ => {}
         }
@@ -325,7 +344,7 @@ impl Client {
                                         self.attempt = 0;
                                         authenticate = true;
                                     }
-                                    NetEvent::Message(message)
+                                    NetEvent::Message(Box::new(message))
                                 }
                                 Err(err) => NetEvent::BadFrame {
                                     error: shorten(&err.to_string()),
@@ -514,6 +533,10 @@ mod tests {
         encode_line(&hello).unwrap().trim_end().to_owned()
     }
 
+    fn is_hello(message: &ServerMessage) -> bool {
+        matches!(message, ServerMessage::Hello { .. })
+    }
+
     /// The next non-ping client message the test server receives.
     async fn next_client_message(ws: &mut WebSocketStream<TcpStream>) -> ClientMessage {
         loop {
@@ -574,7 +597,7 @@ mod tests {
             assert!(matches!(bad, NetEvent::BadFrame { .. }), "{bad:?}");
             let hello = events.recv().await.unwrap();
             assert!(
-                matches!(hello, NetEvent::Message(ServerMessage::Hello { .. })),
+                matches!(&hello, NetEvent::Message(m) if is_hello(m)),
                 "{hello:?}"
             );
 
@@ -641,9 +664,10 @@ mod tests {
                     sub("BTC-USD", Timeframe::M1)
                 );
                 ws.send(Message::text(hello_text())).await.unwrap();
-                wait_for(&mut events, |e| {
-                    matches!(e, NetEvent::Message(ServerMessage::Hello { .. }))
-                })
+                wait_for(
+                    &mut events,
+                    |e| matches!(e, NetEvent::Message(m) if is_hello(m)),
+                )
                 .await;
                 match token {
                     Some(token) => {

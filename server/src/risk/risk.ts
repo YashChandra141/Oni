@@ -3,8 +3,10 @@
 //
 // Rules run in this order and the first failure wins:
 //   1 kill_switch      2 rate_limit      3 max_open_orders
-//   4 price_band       5 max_order_value 6 max_position
+//   4 price_band       5 max_order_value 6 max_position   7 insufficient_balance
 
+import { instrumentBySymbol } from "../instruments.ts";
+import { BalanceError, DEFAULT_FEE_BPS, DEFAULT_SLIPPAGE_BPS, requiredFunds } from "./balance.ts";
 import { notionalMoney, type RiskLimits } from "./limits.ts";
 
 export type RejectReason =
@@ -13,7 +15,8 @@ export type RejectReason =
   | "max_open_orders"
   | "price_band"
   | "max_order_value"
-  | "max_position";
+  | "max_position"
+  | "insufficient_balance";
 
 export type RiskOrderKind =
   | { readonly type: "market" }
@@ -48,6 +51,22 @@ export interface RiskContext {
   readonly rate: RateWindow;
   /** Current time, ms. */
   readonly now: number;
+  /**
+   * Cached engine balance of the order's account (Req 16.5). Absent or null before the first
+   * Balance event: the check is skipped and the engine's own check (Req 16.7) is the backstop.
+   */
+  readonly balance?: RiskBalance | null;
+}
+
+export interface RiskBalance {
+  /** Free_Balance from the latest Balance event, Money units. */
+  readonly freeBalance: bigint;
+  /** Average entry price of the order's account in the symbol, ticks; null when flat or unknown. */
+  readonly avgEntry?: bigint | null;
+  /** Fee rate in basis points. Defaults to DEFAULT_FEE_BPS. */
+  readonly feeBps?: bigint;
+  /** Slippage allowance in basis points. Defaults to DEFAULT_SLIPPAGE_BPS. */
+  readonly slippageBps?: bigint;
 }
 
 export type RiskResult =
@@ -154,6 +173,35 @@ export function checkOrder(order: RiskOrder, ctx: RiskContext): RiskResult {
   const resulting = abs(ctx.positionLots + signed);
   if (resulting > maxPosition && resulting >= abs(ctx.positionLots)) {
     return { ok: false, reason: "max_position", rate };
+  }
+
+  // 7. balance (Req 16.5): Free_Balance − Required_Funds must stay at or above zero.
+  if (ctx.balance !== undefined && ctx.balance !== null) {
+    const inst = instrumentBySymbol(order.symbol);
+    if (inst === undefined) throw new RangeError(`unknown symbol ${order.symbol}`);
+    const bal = ctx.balance;
+    const pos = ctx.positionLots;
+    // Signed cost basis, rebuilt from the cached average entry (or the reference price).
+    const entry = bal.avgEntry ?? reference;
+    const basis = pos === 0n ? 0n : (pos < 0n ? -1n : 1n) * notionalMoney(order.symbol, entry, abs(pos));
+    let required: bigint;
+    try {
+      required = requiredFunds({
+        instrument: inst,
+        side: order.side,
+        qty: order.qty,
+        pos,
+        basis,
+        feeBps: bal.feeBps ?? BigInt(DEFAULT_FEE_BPS),
+        reference,
+        slippageBps: bal.slippageBps ?? BigInt(DEFAULT_SLIPPAGE_BPS),
+      });
+    } catch (err) {
+      // Arithmetic overflow means the order is far beyond any balance. Fail closed.
+      if (err instanceof BalanceError) return { ok: false, reason: "insufficient_balance", rate };
+      throw err;
+    }
+    if (bal.freeBalance - required < 0n) return { ok: false, reason: "insufficient_balance", rate };
   }
 
   return { ok: true, rate };

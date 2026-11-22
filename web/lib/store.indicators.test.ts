@@ -81,18 +81,18 @@ describe("indicators events", () => {
   test("are stored by symbol|timeframe", () => {
     let state = applyServerMessage(initialState(), indicators("BTC-USD", "1m", 60_000, { ema: 1.5, rsi: 50 }));
     state = applyServerMessage(state, indicators("ETH-USD", "5m", 300_000, { atr: 7 }));
-    expect(state.indicators[candleKey("BTC-USD", "1m")]).toEqual([
+    expect(state.indicators[candleKey("replay", "BTC-USD", "1m")]).toEqual([
       { t: 60_000, values: { ...EMPTY, ema: 1.5, rsi: 50 } },
     ]);
-    expect(times(state.indicators[candleKey("ETH-USD", "5m")])).toEqual([300_000]);
-    expect(state.indicators[candleKey("BTC-USD", "5m")]).toBeUndefined();
+    expect(times(state.indicators[candleKey("replay", "ETH-USD", "5m")])).toEqual([300_000]);
+    expect(state.indicators[candleKey("replay", "BTC-USD", "5m")]).toBeUndefined();
   });
 
   test("an update for the forming bar replaces its values", () => {
     let state = applyServerMessage(initialState(), indicators("BTC-USD", "1m", 60_000, { ema: 1 }));
     state = applyServerMessage(state, indicators("BTC-USD", "1m", 60_000, { ema: 2 }));
     state = applyServerMessage(state, indicators("BTC-USD", "1m", 120_000, { ema: 3 }));
-    const list = state.indicators[candleKey("BTC-USD", "1m")];
+    const list = state.indicators[candleKey("replay", "BTC-USD", "1m")];
     expect(list?.map((p) => p.values.ema)).toEqual([2, 3]);
   });
 
@@ -147,7 +147,7 @@ describe("indicator toggles", () => {
 describe("Property 1: indicator points align to candle open times (web store)", () => {
   const TF_MS = { "1m": 60_000, "5m": 300_000 } as const;
   const bucketStartMs = (ts: number, tf: "1m" | "5m"): number => Math.floor(ts / TF_MS[tf]) * TF_MS[tf];
-  const KEY = candleKey("BTC-USD", "1m");
+  const KEY = candleKey("replay", "BTC-USD", "1m");
 
   test("three Indicators events inside one minute leave one point at the minute start", () => {
     let state = initialState();
@@ -169,7 +169,7 @@ describe("Property 1: indicator points align to candle open times (web store)", 
           stamps.forEach((ts, i) => {
             state = applyServerMessage(state, indicators("BTC-USD", tf, ts, { ema: i }));
           });
-          const list = state.indicators[candleKey("BTC-USD", tf)] ?? [];
+          const list = state.indicators[candleKey("replay", "BTC-USD", tf)] ?? [];
           const lastWins = new Map<number, number>();
           stamps.forEach((ts, i) => lastWins.set(bucketStartMs(ts, tf), i));
           const buckets = [...lastWins.keys()].sort((a, b) => a - b).slice(-MAX_INDICATOR_POINTS);
@@ -216,7 +216,7 @@ describe("Property 1: indicator points align to candle open times (web store)", 
 // a candle snapshot replaces the bars but leaves the old indicator points in the store.
 describe("Property 4: a candle snapshot replaces stored indicator points (web store)", () => {
   const MIN = 60_000;
-  const KEY = candleKey("BTC-USD", "1m");
+  const KEY = candleKey("replay", "BTC-USD", "1m");
   const snapshotFrom = (startMin: number, count: number): ServerMessage =>
     ({
       type: "event",
@@ -285,7 +285,7 @@ describe("Property 1 (all timeframes): indicator points align to candle open tim
           stamps.forEach((ts, i) => {
             state = applyServerMessage(state, ev(tf, ts, i));
           });
-          const list = state.indicators[candleKey("BTC-USD", tf)] ?? [];
+          const list = state.indicators[candleKey("replay", "BTC-USD", tf)] ?? [];
           const lastWins = new Map<number, number>();
           stamps.forEach((ts, i) => lastWins.set(bucketStartMs(ts, tf), i));
           const expected = [...lastWins.keys()].sort((a, b) => a - b).slice(-MAX_INDICATOR_POINTS);

@@ -710,7 +710,7 @@ mod tests {
             assert_eq!(a.apply_fill(&bad), Err(AccountError::InvalidFill));
         }
         let mut unknown = fill(Side::Buy, 100, 1, 0);
-        unknown.symbol = "DOGE-USD".into();
+        unknown.symbol = "NOPE-USD".into();
         assert_eq!(a.apply_fill(&unknown), Err(AccountError::UnknownSymbol));
         assert_eq!(a, PaperAccount::default());
         assert_eq!(
@@ -884,7 +884,7 @@ mod tests {
             Err(AccountError::InvalidFill)
         );
         assert_eq!(
-            a.reserve_order(&oid("o2"), "DOGE-USD", Side::Buy, Qty(1), Price(100)),
+            a.reserve_order(&oid("o2"), "NOPE-USD", Side::Buy, Qty(1), Price(100)),
             Err(AccountError::UnknownSymbol)
         );
         assert_eq!(a.reservation_count(), 1);

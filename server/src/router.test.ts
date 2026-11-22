@@ -208,7 +208,7 @@ describe("submit: expired session (Req 46.5)", () => {
 
 describe("submit: invalid orders", () => {
   const bad: [string, SubmitOrder][] = [
-    ["unknown symbol", { ...limitBuy(), symbol: "DOGE-USD" }],
+    ["unknown symbol", { ...limitBuy(), symbol: "NOPE-USD" }],
     ["short symbol", { ...limitBuy(), symbol: "BTC" }],
     ["zero qty", limitBuy(6_400_000n, 0n)],
     ["negative qty", limitBuy(6_400_000n, -1n)],

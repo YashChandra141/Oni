@@ -117,6 +117,9 @@ pub fn venue_name(venue: Venue) -> &'static str {
     match venue {
         Venue::Backpack => "Backpack (USDC)",
         Venue::Coinbase => "Coinbase",
+        Venue::Jupiter => "Jupiter",
+        Venue::Raydium => "Raydium",
+        Venue::Replay => "Replay",
     }
 }
 
@@ -163,15 +166,17 @@ mod tests {
     #[test]
     fn symbols_come_from_hello_else_the_defaults() {
         assert_eq!(watchlist_symbols(&[]), ["BTC-USD", "ETH-USD", "SOL-USD"]);
-        assert_eq!(
-            watchlist_symbols(&InstrumentInfo::all()),
-            ["BTC-USD", "ETH-USD", "SOL-USD"]
-        );
+        let all = InstrumentInfo::all();
+        let expected: Vec<String> = all.iter().map(|i| i.symbol.clone()).collect();
+        assert_eq!(watchlist_symbols(&all), expected);
+        assert_eq!(expected.len(), 10);
         let sol = InstrumentInfo {
             symbol: "SOL-USD".into(),
             short: "SOL".into(),
             price_decimals: 2,
             qty_decimals: 8,
+            reference_price: "150.00".into(),
+            venues: vec![Venue::Coinbase],
         };
         let btc = InstrumentInfo {
             symbol: "BTC-USD".into(),
@@ -199,8 +204,8 @@ mod tests {
     #[test]
     fn unknown_current_and_empty_lists() {
         let l = list();
-        assert_eq!(next_symbol("DOGE-USD", &l), "BTC-USD");
-        assert_eq!(prev_symbol("DOGE-USD", &l), "SOL-USD");
+        assert_eq!(next_symbol("NOPE-USD", &l), "BTC-USD");
+        assert_eq!(prev_symbol("NOPE-USD", &l), "SOL-USD");
         assert_eq!(next_symbol("BTC-USD", &[]), "BTC-USD");
         assert_eq!(prev_symbol("BTC-USD", &[]), "BTC-USD");
         let one = vec!["ETH-USD".to_owned()];
@@ -274,7 +279,7 @@ mod tests {
         assert!(is_watch_key("BTC-USD", Timeframe::M1));
         assert!(is_watch_key("SOL-USD", Timeframe::M1));
         assert!(!is_watch_key("BTC-USD", Timeframe::M5));
-        assert!(!is_watch_key("DOGE-USD", Timeframe::M1));
+        assert!(!is_watch_key("NOPE-USD", Timeframe::M1));
     }
 
     #[test]

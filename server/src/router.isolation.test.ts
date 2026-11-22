@@ -87,9 +87,12 @@ describe("single order path (Req 18.1, 18.3)", () => {
     const ws = sources.find((s) => s.path === "gateway/ws.ts")?.text ?? "";
     expect(ws).not.toMatch(SENDER_PATTERN);
     expect(ws).not.toMatch(ORDER_COMMAND_PATTERN);
-    // It may only call sendControl for subscriptions.
+    // It may only call sendControl for market-data subscriptions (candles and the 24 h ticker).
     const calls = [...ws.matchAll(/sendControl\(\{\s*type:\s*"([a-z_]+)"/g)].map((m) => m[1] ?? "");
-    for (const type of calls) expect(["subscribe", "unsubscribe"]).toContain(type);
+    expect(calls.length).toBeGreaterThan(0);
+    for (const type of calls) {
+      expect(["subscribe", "unsubscribe", "subscribe_ticker", "unsubscribe_ticker"]).toContain(type);
+    }
   });
 
   test("the patterns catch what they should", () => {

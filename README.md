@@ -193,6 +193,123 @@ Copy `server/.env.example` to `server/.env` (gitignored). For wallet sign-in:
 
 Never commit `.env` or paste a real secret or token into the repository.
 
+## Oni v2 features
+
+### Symbols and exchanges
+
+Ten symbols: `BTC-USD`, `ETH-USD`, `SOL-USD`, `BNB-USD`, `XRP-USD`, `DOGE-USD`, `JUP-USD`,
+`WIF-USD`, `BONK-USD`, `PEPE-USD`.
+
+| Exchange | Kind | Data used |
+|---|---|---|
+| Backpack | CEX | Public WebSocket and REST market data |
+| Coinbase | CEX | Public WebSocket and REST market data |
+| Jupiter | DEX | `GET api.jup.ag/price/v3`, prices only |
+| Raydium | DEX | `GET api-v3.raydium.io/mint/price` and `/pools/info/mint`, prices and pool TVL only |
+
+All four are read-only public price data. Paper orders on Jupiter and Raydium fill against a
+**simulated book** built around the DEX price. No transaction is ever built, signed, or sent, no
+authenticated endpoint is called, and no real order is placed. Binance and Bybit show as disabled
+chips only.
+
+`LIVE_VENUES` (comma list of `coinbase,backpack,jupiter,raydium`, default all four) picks the live
+feeds when `DATA_MODE=live`. It is ignored in replay mode. `LIVE_VENUE` with one value still works
+as an alias. An optional `JUPITER_API_KEY` raises the Jupiter data rate limit and is sent only to the
+Jupiter Price API.
+
+### AI providers and the Copilot
+
+| Provider | Env vars | Notes |
+|---|---|---|
+| OpenAI | `OPENAI_API_KEY`, `OPENAI_MODEL` | |
+| Claude (Anthropic) | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` | |
+| NVIDIA NIM | `NVIDIA_API_KEY`, `NVIDIA_MODEL`, `NVIDIA_BASE_URL` | |
+| Ollama (local) | `OLLAMA_BASE_URL`, `OLLAMA_MODEL` | Run `ollama pull gemma4`. Default URL `http://localhost:11434`. A hosted server cannot reach your local Ollama. |
+
+`LLM_PROVIDER` (`ollama`, `openai`, `anthropic`, `nvidia`) sets the default. When unset, the first
+available provider in that order is used. An unknown value stops the server at start. Keys come
+only from environment variables.
+
+The **AI Copilot** (web page and TUI panel) offers Analyze, Place trade, Create strategy, and Scan
+opportunities. It only suggests: a trade becomes an order preview, and **you confirm every order**.
+No AI component places an order. Headlines and other external text are treated as untrusted data.
+
+Limits: `AI_RATE_PER_MIN` (default 6 per connection, else `ai_rate_limit`) and `AI_DAILY_CAP`
+(default 500 provider calls per UTC day across OpenAI, Anthropic, and NVIDIA, else
+`ai_daily_cap`). Ollama is not counted against the daily cap.
+
+### News
+
+- **NewsAPI**: local development only (its terms do not allow production use). Needs `NEWS_API_KEY`.
+- **CryptoPanic**: for the hosted deploy. Needs `CRYPTOPANIC_API_KEY` and `CRYPTOPANIC_PLAN`
+  (`developer` by default; the Developer plan delays news by about 24 hours). Without a key the news
+  panel can be unavailable.
+
+`NEWS_PROVIDER` is `newsapi`, `cryptopanic`, or `none`. Default: `newsapi` outside production with
+`NEWS_API_KEY` set, `cryptopanic` in production with `CRYPTOPANIC_API_KEY` set, otherwise `none`.
+`NEWS_TTL_SECONDS` sets the server cache time. Never log or commit the keys.
+
+### Paper balance
+
+Each account starts with `STARTING_BALANCE` USD (default 100000, integer from 1,000 to 100,000,000)
+and resets with the engine. An order that would leave the free balance below zero is rejected with
+`insufficient_balance`. There is no margin, liquidation, or borrowing cost.
+
+### TWAP orders
+
+```
+BUY|SELL <symbol> <quantity> TWAP <slices> <seconds>
+BUY ETH 2 TWAP 10 60
+```
+
+`slices` is 2 to 20 and `seconds` is 5 to 3600. You confirm one preview, then the server sends one
+market child order per slice at equal intervals, the first at once. Every child passes the risk
+checks. Remaining children are cancelled on disconnect, account change, engine restart, a rejected
+child, the kill switch, or cancel. At most 3 active TWAP orders per account.
+
+### Latency targets
+
+p95 targets in the benchmark: engine emit to socket write 25 ms, command text to preview 50 ms,
+confirm to order ack 100 ms, engine line to loopback client 50 ms.
+
+```sh
+bun run bench:latency   # starts server and engine in replay mode, prints p50 and p95
+```
+
+### Web pages and exchange tabs
+
+Pages: `/dashboard`, `/trade`, `/markets`, `/portfolio`, `/strategies`, `/backtest`, `/copilot`,
+`/logs`, `/settings`, and `/pair` (TUI pairing). Exchange chips filter by venue: All, CEX, DEX,
+Backpack, Coinbase, Jupiter, Raydium. The bottom tabs are Positions, Orders, Balances, P&L, and
+Strategies.
+
+### TUI keys
+
+| Key | Action |
+|---|---|
+| `1` to `8` | Focus Chart, Book, Trades, Positions, Orders, Watchlist, News, AI Copilot |
+| `<` / `>` | Previous / next timeframe |
+| `v` | Choose venue |
+| `m` | Choose AI provider |
+| `a` | Open the AI Copilot |
+| `P` | Pair with the web UI |
+| `F1` | Help |
+
+The mouse works on every panel. The shared bindings are in `shared/keymap.json`.
+
+### Regenerate the demo fixture
+
+```sh
+cargo run --manifest-path rust/Cargo.toml -p engine -- synth --out fixtures/demo.jsonl
+```
+
+This writes the deterministic ten-symbol replay fixture.
+
+### Activity log and `.env`
+
+Orders, fills, and rejections live in memory for the current engine run only. `.env` files are
+gitignored. Copy `server/.env.example` (names only) and fill in your own values locally.
+
 ## Downloads (terminal UI)
 
 Each tagged release (`v*`) on the GitHub Releases page has these files:

@@ -34,9 +34,9 @@
 // - CommandText, Confirm, and Discard use the CommandBar set with `setCommandBar` (Task 12.1):
 //   CommandText → `Preview` or `ParseError` (`?` text → LLM_Order_Parser → `Preview` or `ParseError`, or `Notice ai_disabled` without a key, Req 23);
 //   the preview's venue is the message's venue or the default, checked against the hello list.
-// - Protocol v3 stubs answer `Notice ai_disabled` "<feature>: not implemented yet": ticker
-//   subscriptions (Task 3.5), CancelTwap (Task 8.4), SetProvider/AiRequest/AiCancel (Task 10.6),
-//   and Subscribe/UnsubscribeNews (Task 11.4).
+// - Copilot (`setAi`, Task 10.6): SetProvider → Providers; AiRequest → Analysis, ScanResult,
+//   StrategyDraft, or AiError, through AiLimiter and abortable with AiCancel. A trade idea becomes
+//   an Order_Preview (needs Confirm); the AI never submits an order.
 //   Confirm → `PreviewStore.take` for this connection and its current account, then the Router;
 //   Discard → `PreviewStore.discard`. Without a CommandBar they are refused.
 // - `sendTo(connectionId, message)` and `onConnectionClosed(listener)` serve the Router wiring
@@ -56,29 +56,41 @@ import {
   type AccountId,
   type ClientMessage,
   type Event,
-  type NoticeKind,
   type ServerMessage,
   type Timeframe,
   type Venue,
+  VenueSchema,
   parseClientMessage,
 } from "../protocol.ts";
 import { formatCommand } from "../commands/formatter.ts";
 import { type ParsedCommand, parseCommand } from "../commands/parser.ts";
 import type { PreviewStore } from "../commands/previews.ts";
+import { AiError, analyze, mapAnalystError } from "../ai/analyst.ts";
+import { type AiLimiter, toAiErrorReason } from "../ai/limits.ts";
+import { draftStrategy, scan } from "../ai/scan.ts";
+import { type MarketSnapshot, buildMarketSnapshot } from "../ai/snapshot.ts";
+import type { JsonLlmProvider, LlmProviderId } from "../llm/provider.ts";
 import { LLM_DISABLED_MESSAGE, type LlmOrderParser } from "../llm/parser.ts";
+import type { ProviderRegistry } from "../llm/registry.ts";
+import type { NewsCache, NewsState } from "../news/cache.ts";
+import type { AccountState } from "../state/account.ts";
 import type { OrderOrigin, Router } from "../router.ts";
 import { MarketState } from "../state/market.ts";
 import { type SubscriptionKey, SubscriptionRegistry } from "./clients.ts";
+import { type BatchEvent, type BatcherTimer, EventBatcher, coalesceKey, defaultTimer } from "./batcher.ts";
+import { latency, nowUs } from "../latency/histogram.ts";
 import {
   NOTICES_TOPIC,
   PendingRequests,
+  TopicMembers,
   accountTopic,
   candlesTopic,
   marketTopic,
   routeAccountEvent,
+  tickerTopic,
 } from "./routing.ts";
 
-export { NOTICES_TOPIC, accountTopic, candlesTopic, marketTopic };
+export { NOTICES_TOPIC, accountTopic, candlesTopic, marketTopic, tickerTopic };
 
 /** Wire protocol version sent in `Hello` (`PROTOCOL_VERSION` in rust/crates/protocol/src/lib.rs). */
 export const PROTOCOL_VERSION = 3;
@@ -140,10 +152,35 @@ export interface ClientData {
 /** The part of Bun's `ServerWebSocket` the gateway uses. Tests pass a fake. */
 export interface GatewaySocket {
   readonly data: ClientData;
-  send(data: string): unknown;
+  send(data: string, compress?: boolean): unknown;
   subscribe(topic: string): void;
   unsubscribe(topic: string): void;
+  /** Bytes queued in the socket (Bun `getBufferedAmount`). Absent in simple fakes. */
+  getBufferedAmount?(): number;
+  /** Closes the socket (Bun `close`). */
+  close?(code?: number, reason?: string): void;
 }
+
+/** Above this many buffered bytes, coalescible updates are held back (Req 34.8). */
+export const SLOW_CLIENT_BYTES = 1024 * 1024;
+/** Above this many buffered bytes the socket is closed with 1013 (Req 34.9). */
+export const CLOSE_CLIENT_BYTES = 4 * 1024 * 1024;
+/** Minimum gap between `slow_client` notices to one connection. */
+export const SLOW_NOTICE_INTERVAL_MS = 10_000;
+
+/** Per-connection outbound state: its batcher and slow-client bookkeeping. */
+interface Outbound {
+  readonly batcher: EventBatcher;
+  /** Newest held coalescible event per key while the socket is slow. */
+  readonly held: Map<string, BatchEvent>;
+  /** Receipt times (µs) of events queued since the last send. */
+  firstReceiptUs: number | null;
+  lastSlowNoticeMs: number;
+  /** Confirm times (µs) awaiting an OrderAck. */
+  readonly confirms: number[];
+}
+
+const MAX_PENDING_CONFIRMS = 32;
 
 /** Publishes to every socket subscribed to a topic. In production this is the Bun server. */
 export interface Publisher {
@@ -178,6 +215,9 @@ export type AccountChangeListener = (
 /** The Router surface the gateway calls for Cancel, CancelAll, FlattenAll, and ResetAccount. */
 export type GatewayRouter = Pick<Router, "cancel" | "cancelAll" | "flattenAll" | "resetAccount">;
 
+/** The Router surface the gateway calls for TWAP start (on Confirm) and CancelTwap. */
+export type GatewayTwap = Pick<Router, "startTwap" | "cancelTwap">;
+
 /**
  * What the command bar needs (Task 12.1): the preview store, the account positions that `%`
  * amounts resolve against, and the Router calls a confirmed preview makes. Set with
@@ -194,6 +234,35 @@ export interface CommandBar {
    * reach the Router only through Confirm.
    */
   readonly llm?: Pick<LlmOrderParser, "parse">;
+}
+
+/** Copilot wiring (Task 10.6): providers, limits, and the account state snapshots read. */
+export interface AiDeps {
+  readonly registry: Pick<ProviderRegistry, "info" | "get" | "defaultId" | "refresh">;
+  readonly limiter: Pick<AiLimiter, "acquire" | "release" | "forget">;
+  readonly accounts: Pick<AccountState, "positions" | "balance">;
+}
+
+type AiErrorReason = Extract<ServerMessage, { type: "ai_error" }>["reason"];
+type AiRequestMsg = Extract<ClientMessage, { type: "ai_request" }>;
+
+const SCAN_SNAPSHOT_CANDLES = 50;
+const SCAN_SNAPSHOT_BOOK_LEVELS = 5;
+const SCAN_SNAPSHOT_NEWS = 3;
+const AI_NEWS_ITEMS = 10;
+
+function aiReasonOf(error: AiError): AiErrorReason {
+  switch (error.code) {
+    case "validation_error":
+      return "validation_error";
+    case "timeout":
+      return "timeout";
+    case "cancelled":
+      return "canceled";
+    case "refused":
+    case "provider_unavailable":
+      return "provider_error";
+  }
 }
 
 /** Called when a connection closes, with its connection id. */
@@ -214,6 +283,8 @@ export interface GatewayOptions {
   readonly tokens?: TokenVerifier;
   /** Epoch milliseconds. Defaults to `Date.now`. */
   readonly now?: () => number;
+  /** Timer of every connection's event batcher (Req 34). Tests inject one that flushes at once. */
+  readonly batcherTimer?: BatcherTimer;
 }
 
 const consoleLogger: Logger = {
@@ -221,6 +292,17 @@ const consoleLogger: Logger = {
   warn: (line) => console.warn(line),
   error: (line) => console.error(line),
 };
+
+const NEWS_TOPIC = "news";
+
+function newsMessageOf(state: NewsState): ServerMessage {
+  return {
+    type: "news",
+    available: state.available,
+    items: state.items.map((i) => ({ ...i, symbols: [...i.symbols] })),
+    updated_at: state.updatedAt,
+  };
+}
 
 function encode(message: ServerMessage): string {
   return JSON.stringify(message);
@@ -273,6 +355,7 @@ export class Gateway {
   readonly #randomUUID: () => string;
   readonly #tokens: TokenVerifier | null;
   readonly #now: () => number;
+  readonly #batcherTimer: BatcherTimer;
   readonly #unlisten: (() => void)[] = [];
   /** connection id → socket, for `{ toConnection }` routing and downgrades. */
   readonly #sockets = new Map<string, GatewaySocket>();
@@ -282,9 +365,22 @@ export class Gateway {
   readonly #closedListeners = new Set<ConnectionClosedListener>();
   /** Connections with a plain-English order in flight. */
   readonly #llmBusy = new Set<string>();
+  /** `<venue>|<symbol>` → connection ids with an active ticker subscription. */
+  readonly #tickerClients = new Map<string, Set<string>>();
+  /** connection id → selected provider (SetProvider). */
+  readonly #selected = new Map<string, LlmProviderId>();
+  /** `<connection>|<request_id>` → abort controller of an in-flight AI request. */
+  readonly #aiRuns = new Map<string, AbortController>();
+  /** connection id → its batcher and slow-client state. */
+  readonly #out = new Map<string, Outbound>();
+  readonly #members = new TopicMembers();
+  #ai: AiDeps | null = null;
   #publisher: Publisher | null = null;
   #router: GatewayRouter | null = null;
   #commandBar: CommandBar | null = null;
+  #twap: GatewayTwap | null = null;
+  #news: NewsCache | null = null;
+  #newsUnlisten: (() => void) | null = null;
 
   constructor(options: GatewayOptions) {
     this.#supervisor = options.supervisor;
@@ -295,6 +391,7 @@ export class Gateway {
     this.#randomUUID = options.randomUUID ?? (() => crypto.randomUUID());
     this.#tokens = options.tokens ?? null;
     this.#now = options.now ?? Date.now;
+    this.#batcherTimer = options.batcherTimer ?? defaultTimer;
     this.pendingRequests = new PendingRequests({ now: this.#now });
 
     // Req 15.4: the supervisor resends these after every engine start.
@@ -306,6 +403,16 @@ export class Gateway {
       // void (Req 15.7). Subscriptions stay: the supervisor resends them and the new engine
       // answers with fresh snapshots.
       this.#supervisor.onClearAccount(() => this.market.clear()),
+      // The supervisor resends candle subscriptions itself; ticker subscriptions are resent here.
+      this.#supervisor.onSessionStart(() => {
+        for (const key of this.#tickerClients.keys()) {
+          const sep = key.indexOf("|");
+          const venue = VenueSchema.safeParse(key.slice(0, sep));
+          if (venue.success) {
+            this.#supervisor.sendControl({ type: "subscribe_ticker", venue: venue.data, symbol: key.slice(sep + 1) });
+          }
+        }
+      }),
     );
   }
 
@@ -317,6 +424,32 @@ export class Gateway {
   /** Sets the Router that handles order actions. Without one they are refused. */
   setRouter(router: GatewayRouter | null): void {
     this.#router = router;
+  }
+
+  /** Sets the Router surface for TWAP start and cancel. Without it they are refused. */
+  setTwap(twap: GatewayTwap | null): void {
+    this.#twap = twap;
+  }
+
+  /** Enables the Copilot (SetProvider, AiRequest, AiCancel). Without it AI requests answer `ai_disabled`. */
+  setAi(ai: AiDeps | null): void {
+    this.#ai = ai;
+  }
+
+  /** Sets the news cache. Refreshes are published to every `SubscribeNews` connection. */
+  setNews(news: NewsCache | null): void {
+    this.#newsUnlisten?.();
+    this.#newsUnlisten = null;
+    this.#news = news;
+    if (news !== null) {
+      this.#newsUnlisten = news.onUpdate((state) => {
+        this.#publish(NEWS_TOPIC, encode(newsMessageOf(state)));
+      });
+    }
+  }
+
+  #newsMessage(): ServerMessage {
+    return newsMessageOf(this.#news?.state() ?? { available: false, items: [], updatedAt: null });
   }
 
   /** Enables CommandText, Confirm, and Discard. Without it they are refused. */
@@ -346,6 +479,8 @@ export class Gateway {
     this.#publisher = null;
     this.#router = null;
     this.#commandBar = null;
+    this.#twap = null;
+    this.setNews(null);
   }
 
   /**
@@ -383,8 +518,9 @@ export class Gateway {
     const clientId = this.#clientId(ws);
     ws.data.session = GUEST_SESSION;
     this.#sockets.set(clientId, ws);
-    ws.subscribe(accountTopic(GUEST_ACCOUNT_ID)); // Req 46.1
-    ws.subscribe(NOTICES_TOPIC); // Req 17.9
+    this.#out.set(clientId, this.#makeOutbound(ws, clientId));
+    this.#sub(ws, accountTopic(GUEST_ACCOUNT_ID)); // Req 46.1
+    this.#sub(ws, NOTICES_TOPIC); // Req 17.9
     const liveVenues: Venue[] = this.#config.dataMode === "live" ? [this.#config.liveVenue] : [];
     ws.send(
       encode({
@@ -393,15 +529,17 @@ export class Gateway {
         data_mode: this.#config.dataMode,
         // Protocol v3: the live venues (empty in replay mode) replace the single `venue`.
         live_venues: liveVenues,
-        // Real statuses come from engine VenueStatus events (Task 7.x); until then "connecting".
-        venue_status: liveVenues.map((venue) => ({ venue, status: "connecting" as const })),
+        // Latest status from engine VenueStatus events; "connecting" until the first one.
+        venue_status: liveVenues.map((venue) => ({
+          venue,
+          status: this.market.venueStatus(venue) ?? ("connecting" as const),
+        })),
         default_venue: defaultVenueOf(this.#config),
         starting_balance: DEFAULT_STARTING_BALANCE,
         engine_running: this.#supervisor.running,
         instruments: INSTRUMENTS.map((i) => ({ ...i, venues: [...i.venues] })),
-        // Provider_Registry arrives in Task 10.x, news in Task 11.4.
-        providers: [],
-        news_enabled: false,
+        providers: this.#providerInfos(),
+        news_enabled: this.#news?.enabled ?? false,
       }),
     );
     // Req 1.8, 46.1: tell the client which Paper_Account it is on.
@@ -435,8 +573,16 @@ export class Gateway {
     const clientId = ws.data.clientId;
     if (clientId === undefined) return;
     this.#sockets.delete(clientId);
+    this.#out.get(clientId)?.batcher.close();
+    this.#out.delete(clientId);
+    this.#members.removeAll(clientId);
     this.#unindexJti(clientId, ws.data.session?.jti ?? null);
     this.pendingRequests.dropConnection(clientId);
+    this.#selected.delete(clientId);
+    for (const [key, controller] of this.#aiRuns) {
+      if (key.startsWith(`${clientId}|`)) controller.abort();
+    }
+    this.#ai?.limiter.forget(clientId);
     for (const listener of [...this.#closedListeners]) {
       try {
         listener(clientId);
@@ -446,6 +592,11 @@ export class Gateway {
     }
     // Bun drops the socket's topic subscriptions itself; only the engine side needs work.
     for (const key of this.registry.removeClient(clientId)) this.#release(key);
+    for (const key of [...this.#tickerClients.keys()]) {
+      const sep = key.indexOf("|");
+      const venue = VenueSchema.safeParse(key.slice(0, sep));
+      if (venue.success) this.#releaseTicker(clientId, key, venue.data, key.slice(sep + 1));
+    }
     this.#log.info(`[gateway] client ${clientId} disconnected`);
   }
 
@@ -492,8 +643,8 @@ export class Gateway {
     const prev = ws.data.session ?? GUEST_SESSION;
     this.#unindexJti(connectionId, prev.jti);
     if (prev.accountId !== next.accountId) {
-      ws.unsubscribe(accountTopic(prev.accountId));
-      ws.subscribe(accountTopic(next.accountId));
+      this.#unsub(ws, accountTopic(prev.accountId));
+      this.#sub(ws, accountTopic(next.accountId));
     }
     ws.data.session = next;
     if (next.jti !== null) {
@@ -565,25 +716,50 @@ export class Gateway {
         if (venue !== null) this.#unsubscribe(ws, clientId, venue, msg.symbol, msg.timeframe);
         return;
       }
-      // Stub until Task 3.5 (ticker subscriptions).
-      case "subscribe_ticker":
-      case "unsubscribe_ticker":
-        this.#notImplemented(ws, "ticker subscriptions");
+      case "subscribe_ticker": {
+        const venue = this.#resolveVenue(ws, msg.venue);
+        if (venue !== null) this.#subscribeTicker(ws, clientId, venue, msg.symbol);
         return;
-      // Stub until Task 8.4 (TWAP scheduler).
-      case "cancel_twap":
-        this.#notImplemented(ws, "TWAP");
+      }
+      case "unsubscribe_ticker": {
+        const venue = this.#resolveVenue(ws, msg.venue);
+        if (venue !== null) this.#unsubscribeTicker(ws, clientId, venue, msg.symbol);
         return;
-      // Stub until Task 10.6 (Provider_Registry and AI_Analyst over the gateway).
+      }
+      // Cancels one TWAP of the session's account only (Req 17.7).
+      case "cancel_twap": {
+        const twap = this.#twap;
+        if (twap === null) {
+          ws.send(errorMessage("internal", ORDER_ENTRY_UNAVAILABLE));
+          return;
+        }
+        const origin: OrderOrigin = { connectionId: clientId, session: ws.data.session ?? GUEST_SESSION, source: "web" };
+        try {
+          const result = twap.cancelTwap(msg.twap_id, origin);
+          if (!result.ok) ws.send(errorMessage("invalid_command", `cancel twap rejected: ${result.reason}`));
+        } catch {
+          this.#log.error(`[gateway] client ${clientId} cancel twap failed unexpectedly`);
+          ws.send(errorMessage("internal", "cancel twap failed"));
+        }
+        return;
+      }
       case "set_provider":
-      case "ai_request":
-      case "ai_cancel":
-        this.#notImplemented(ws, "AI Copilot", "ai_disabled");
+        this.#setProvider(ws, clientId, msg.provider);
         return;
-      // Stub until Task 11.4 (news over the gateway).
+      case "ai_request": {
+        const venue = this.#resolveVenue(ws, msg.venue);
+        if (venue !== null) this.#aiRequest(ws, clientId, msg, venue);
+        return;
+      }
+      case "ai_cancel":
+        this.#aiRuns.get(`${clientId}|${msg.request_id}`)?.abort();
+        return;
       case "subscribe_news":
+        this.#sub(ws, NEWS_TOPIC);
+        ws.send(encode(this.#newsMessage()));
+        return;
       case "unsubscribe_news":
-        this.#notImplemented(ws, "news");
+        this.#unsub(ws, NEWS_TOPIC);
         return;
       case "ping":
         ws.send(encode({ type: "pong", id: msg.id }));
@@ -636,6 +812,7 @@ export class Gateway {
     text: string,
     venue: Venue,
   ): void {
+    const startedUs = nowUs();
     if (text.trimStart().startsWith("?")) {
       this.#llmText(ws, clientId, bar, requestId, text.trimStart().slice(1), venue);
       return;
@@ -655,6 +832,7 @@ export class Gateway {
     }
     const preview = bar.previews.create(clientId, accountId, result.command, formatCommand(result.command), venue);
     ws.send(encode({ type: "preview", request_id: requestId, preview }));
+    latency.command_to_preview.record(nowUs() - startedUs);
   }
 
   /**
@@ -682,9 +860,10 @@ export class Gateway {
       return;
     }
     const accountId = (ws.data.session ?? GUEST_SESSION).accountId;
+    const startedUs = nowUs();
     this.#llmBusy.add(clientId);
     llm
-      .parse(text, accountId)
+      .parse(text, accountId, this.#selected.get(clientId))
       .then((result) => {
         if (this.#sockets.get(clientId) !== ws) return; // closed while waiting
         if ((ws.data.session ?? GUEST_SESSION).accountId !== accountId) {
@@ -705,6 +884,7 @@ export class Gateway {
           venue,
         );
         ws.send(encode({ type: "preview", request_id: requestId, preview }));
+        latency.command_to_preview.record(nowUs() - startedUs);
       })
       .catch(() => {
         this.#log.error(`[gateway] client ${clientId} plain-English order failed unexpectedly`);
@@ -728,6 +908,11 @@ export class Gateway {
       return;
     }
     const origin: OrderOrigin = { connectionId: clientId, session, source: "web" };
+    const confirms = this.#out.get(clientId)?.confirms;
+    if (confirms !== undefined) {
+      confirms.push(nowUs());
+      if (confirms.length > MAX_PENDING_CONFIRMS) confirms.shift();
+    }
     try {
       this.#runConfirmed(ws, taken.command, taken.venue, bar.router, origin);
     } catch {
@@ -762,7 +947,58 @@ export class Gateway {
         if (!result.ok) ws.send(errorMessage("invalid_command", `flatten all rejected: ${result.reason}`));
         return;
       }
+      case "twap": {
+        // A confirmed preview authorizes the children of this plan only (trading-safety rule 3).
+        const twap = this.#twap;
+        if (twap === null) {
+          ws.send(errorMessage("internal", ORDER_ENTRY_UNAVAILABLE));
+          return;
+        }
+        const result = twap.startTwap(
+          {
+            symbol: command.symbol,
+            side: command.side,
+            venue,
+            totalQty: command.totalQty,
+            slices: command.slices,
+            intervalS: command.intervalS,
+          },
+          origin,
+        );
+        if (!result.ok) ws.send(errorMessage("invalid_command", `twap rejected: ${result.reason}`));
+        return;
+      }
     }
+  }
+
+  /** Publishes a TWAP status to every connection on the owning account (Req 17.9). */
+  publishTwapStatus(status: {
+    readonly id: string;
+    readonly accountId: AccountId;
+    readonly symbol: string;
+    readonly side: "buy" | "sell";
+    readonly venue: string;
+    readonly slices: number;
+    readonly sent: number;
+    readonly state: "running" | "completed" | "canceled" | "failed";
+    readonly reason: string | null;
+  }): void {
+    const venue = VenueSchema.safeParse(status.venue);
+    if (!venue.success) return;
+    this.#publish(
+      accountTopic(status.accountId),
+      encode({
+        type: "twap",
+        twap_id: status.id,
+        symbol: status.symbol,
+        side: status.side,
+        venue: venue.data,
+        slices: status.slices,
+        sent: status.sent,
+        status: status.state === "running" ? "active" : status.state === "completed" ? "done" : "canceled",
+        reason: status.reason,
+      }),
+    );
   }
 
   /**
@@ -776,13 +1012,245 @@ export class Gateway {
     return null;
   }
 
-  /**
-   * Typed reply of a feature whose task has not landed yet. NoticeKind has no generic kind, so
-   * every stub uses `ai_disabled` (the AI stub's natural kind, and harmless while Hello lists
-   * no providers); the message names the feature. Each caller names the task that replaces it.
-   */
-  #notImplemented(ws: GatewaySocket, feature: string, kind: NoticeKind = "ai_disabled"): void {
-    ws.send(encode({ type: "notice", kind, message: `${feature}: ${NOT_IMPLEMENTED_MESSAGE}` }));
+  // -------------------------------------------------------------------------------------------
+  // Copilot (Task 10.6). The AI only suggests: a trade idea becomes an Order_Preview for this
+  // connection and needs Confirm; nothing here reaches the Router (trading-safety rules 2 to 4).
+  // -------------------------------------------------------------------------------------------
+
+  #providerInfos(): { id: LlmProviderId; model: string; reason: string | null }[] {
+    return (this.#ai?.registry.info() ?? []).map((p) => ({
+      id: p.id,
+      model: p.model,
+      reason: p.available ? null : "not available",
+    }));
+  }
+
+  #providersMessage(clientId: string): ServerMessage {
+    const registry = this.#ai?.registry;
+    const selected = this.#selected.get(clientId) ?? null;
+    return {
+      type: "providers",
+      available: this.#providerInfos(),
+      default: registry?.defaultId() ?? null,
+      selected: selected !== null && registry?.get(selected) !== undefined ? selected : null,
+    };
+  }
+
+  #setProvider(ws: GatewaySocket, clientId: string, provider: LlmProviderId): void {
+    const ai = this.#ai;
+    if (ai === null) {
+      ws.send(encode({ type: "notice", kind: "ai_disabled", message: "AI Copilot is not configured on this server." }));
+      return;
+    }
+    ai.registry
+      .refresh()
+      .catch(() => undefined)
+      .then(() => {
+        if (this.#sockets.get(clientId) !== ws) return;
+        if (ai.registry.get(provider) !== undefined) this.#selected.set(clientId, provider);
+        else this.#selected.delete(clientId);
+        ws.send(encode(this.#providersMessage(clientId)));
+      })
+      .catch(() => {
+        this.#log.error(`[gateway] client ${clientId} set provider failed unexpectedly`);
+      });
+  }
+
+  #aiError(ws: GatewaySocket, requestId: string, reason: AiErrorReason, message: string): void {
+    ws.send(encode({ type: "ai_error", request_id: requestId, reason, message }));
+  }
+
+  /** The connection's selected provider if available, else the default; undefined when none. */
+  #resolveProvider(ai: AiDeps, clientId: string): JsonLlmProvider | undefined {
+    const selected = this.#selected.get(clientId);
+    const chosen = selected !== undefined && ai.registry.get(selected) !== undefined ? selected : ai.registry.defaultId();
+    return chosen === null ? undefined : ai.registry.get(chosen);
+  }
+
+  #snapshotFor(
+    ai: AiDeps,
+    accountId: AccountId,
+    symbol: string,
+    venue: Venue,
+    timeframe: Timeframe,
+    reduced: boolean,
+  ): MarketSnapshot {
+    const news = this.#news?.top(AI_NEWS_ITEMS) ?? [];
+    const snap = buildMarketSnapshot({
+      symbol,
+      venue,
+      timeframe,
+      accountId,
+      now: this.#now(),
+      market: this.market,
+      account: ai.accounts,
+      news,
+    });
+    if (!reduced) return snap;
+    return {
+      ...snap,
+      candles: snap.candles.slice(-SCAN_SNAPSHOT_CANDLES),
+      book: {
+        ...snap.book,
+        bids: snap.book.bids.slice(0, SCAN_SNAPSHOT_BOOK_LEVELS),
+        asks: snap.book.asks.slice(0, SCAN_SNAPSHOT_BOOK_LEVELS),
+      },
+      news: snap.news.slice(0, SCAN_SNAPSHOT_NEWS),
+    };
+  }
+
+  #aiRequest(ws: GatewaySocket, clientId: string, msg: AiRequestMsg, venue: Venue): void {
+    const ai = this.#ai;
+    const requestId = msg.request_id;
+    if (ai === null) {
+      this.#aiError(ws, requestId, "ai_disabled", "AI Copilot is not configured on this server.");
+      return;
+    }
+    const key = `${clientId}|${requestId}`;
+    if (this.#aiRuns.has(key)) {
+      this.#aiError(ws, requestId, "validation_error", "A request with this id is already running.");
+      return;
+    }
+    const controller = new AbortController();
+    this.#aiRuns.set(key, controller);
+    const accountId = (ws.data.session ?? GUEST_SESSION).accountId;
+    this.#runAi(ws, clientId, ai, msg, venue, accountId, controller)
+      .catch((error: unknown) => {
+        if (this.#sockets.get(clientId) !== ws) return;
+        if (error instanceof AiError) {
+          this.#aiError(ws, requestId, aiReasonOf(error), error.message);
+        } else {
+          this.#log.error(`[gateway] client ${clientId} AI request failed unexpectedly`);
+          this.#aiError(ws, requestId, "provider_error", "The AI request failed.");
+        }
+      })
+      .finally(() => {
+        this.#aiRuns.delete(key);
+      });
+  }
+
+  async #runAi(
+    ws: GatewaySocket,
+    clientId: string,
+    ai: AiDeps,
+    msg: AiRequestMsg,
+    venue: Venue,
+    accountId: AccountId,
+    controller: AbortController,
+  ): Promise<void> {
+    const requestId = msg.request_id;
+    const signal = controller.signal;
+    await ai.registry.refresh().catch(() => undefined);
+    const provider = this.#resolveProvider(ai, clientId);
+    if (provider === undefined) {
+      this.#aiError(ws, requestId, "ai_disabled", "No AI provider is available.");
+      return;
+    }
+    const symbols =
+      msg.action === "scan"
+        ? INSTRUMENTS.filter((i) => i.venues.includes(venue)).map((i) => i.symbol)
+        : [msg.symbol];
+    if (msg.action !== "scan" && msg.action !== "create_strategy" && instrumentBySymbol(msg.symbol) === undefined) {
+      this.#aiError(ws, requestId, "validation_error", "Unknown symbol.");
+      return;
+    }
+    // Ollama is local and free (0 daily units); a scan costs one unit per symbol.
+    const units = provider.id === "ollama" ? 0 : msg.action === "scan" ? symbols.length : 1;
+    const acquired = ai.limiter.acquire(clientId, accountId, units);
+    if (!acquired.ok) {
+      const reason = toAiErrorReason(acquired.reason);
+      this.#aiError(ws, requestId, reason, reason === "ai_daily_cap" ? "Daily AI limit reached." : "Too many AI requests. Wait a moment.");
+      return;
+    }
+    try {
+      const userText = msg.text.trim() === "" ? undefined : msg.text;
+      const text = userText === undefined ? {} : { userText };
+      let reply: ServerMessage;
+      if (msg.action === "scan") {
+        const snapshots = symbols.map((s) => this.#snapshotFor(ai, accountId, s, venue, msg.timeframe, true));
+        const items = await scan({ provider, snapshots, signal });
+        reply = {
+          type: "scan_result",
+          request_id: requestId,
+          items: items.map((i) => ({
+            symbol: i.symbol,
+            bias: i.bias,
+            confidence_bps: i.confidence_bps,
+            summary: i.summary,
+          })),
+        };
+      } else if (msg.action === "create_strategy") {
+        const known = instrumentBySymbol(msg.symbol) !== undefined;
+        const snapshot = known ? this.#snapshotFor(ai, accountId, msg.symbol, venue, msg.timeframe, true) : undefined;
+        const draft = await draftStrategy({
+          provider,
+          signal,
+          ...text,
+          ...(snapshot === undefined ? {} : { snapshot }),
+        });
+        reply = { type: "strategy_draft", request_id: requestId, text: draft };
+      } else {
+        const snapshot = this.#snapshotFor(ai, accountId, msg.symbol, venue, msg.timeframe, false);
+        const news = (this.#news?.top(AI_NEWS_ITEMS) ?? []).map((n) => n.title);
+        const result = await analyze({ provider, snapshot, news, signal, ...text });
+        reply = this.#analysisMessage(clientId, accountId, venue, requestId, msg.symbol, result);
+      }
+      if (signal.aborted) throw new AiError("cancelled", "The request was cancelled");
+      if (this.#sockets.get(clientId) !== ws) return;
+      if ((ws.data.session ?? GUEST_SESSION).accountId !== accountId) {
+        throw new AiError("cancelled", "Your account changed while the request ran.");
+      }
+      // The preview was stored for the account at request time, which is still current.
+      ws.send(encode(reply));
+    } catch (error) {
+      throw error instanceof AiError ? error : mapAnalystError(error, signal);
+    } finally {
+      ai.limiter.release(clientId);
+    }
+  }
+
+  /** Builds the Analysis reply. A trade idea goes through the normal command parser into a preview. */
+  #analysisMessage(
+    clientId: string,
+    accountId: AccountId,
+    venue: Venue,
+    requestId: string,
+    symbol: string,
+    result: Awaited<ReturnType<typeof analyze>>,
+  ): ServerMessage {
+    const bar = this.#commandBar;
+    let preview: Extract<ServerMessage, { type: "preview" }>["preview"] | null = null;
+    let previewError: { message: string; position: number } | null = null;
+    if (result.commandText !== null && bar !== null) {
+      const parsed = parseCommand(result.commandText, {
+        positionLots: (s) => bar.accounts.positionLots(accountId, s),
+      });
+      if (parsed.ok) {
+        preview = bar.previews.create(clientId, accountId, parsed.command, formatCommand(parsed.command), venue);
+      } else {
+        previewError = { message: parsed.error.message, position: parsed.error.position };
+      }
+    }
+    const action = preview?.action;
+    return {
+      type: "analysis",
+      request_id: requestId,
+      provider: result.provider,
+      model: result.model,
+      analysis: {
+        symbol,
+        summary: result.analysis.summary,
+        bias: result.analysis.bias,
+        confidence_bps: Math.round(result.analysis.confidence * 10_000),
+        rationale: [...result.analysis.rationale],
+        suggested_order:
+          action !== undefined && action.type === "place"
+            ? { side: action.side, qty: action.qty, kind: action.kind }
+            : null,
+      },
+      preview,
+      preview_error: previewError,
+    };
   }
 
   /** Runs one Router action for this connection and reports a failure to it. */
@@ -815,8 +1283,8 @@ export class Gateway {
     }
     const { first } = this.registry.subscribe(clientId, venue, symbol, timeframe);
     // Bun topic subscriptions are idempotent, so a repeated subscribe is harmless.
-    ws.subscribe(candlesTopic(venue, symbol, timeframe));
-    ws.subscribe(marketTopic(venue, symbol));
+    this.#sub(ws, candlesTopic(venue, symbol, timeframe));
+    this.#sub(ws, marketTopic(venue, symbol));
     if (first) {
       // The engine answers with a history snapshot, published to the candles topic and cached.
       // While the engine is down this returns false; the supervisor resends on start (Req 15.4).
@@ -827,6 +1295,40 @@ export class Gateway {
     // on its way and reaches this client through the topic.
     const snapshot = this.market.snapshot(symbol, timeframe, venue);
     if (snapshot !== null) ws.send(encode({ type: "event", event: snapshot }));
+  }
+
+  #subscribeTicker(ws: GatewaySocket, clientId: string, venue: Venue, symbol: string): void {
+    if (instrumentBySymbol(symbol) === undefined) {
+      const known = INSTRUMENTS.map((i) => i.symbol).join(", ");
+      ws.send(errorMessage("unknown_symbol", `unknown symbol; expected one of ${known}`));
+      return;
+    }
+    const key = `${venue}|${symbol}`;
+    let clients = this.#tickerClients.get(key);
+    const first = clients === undefined;
+    if (clients === undefined) {
+      clients = new Set();
+      this.#tickerClients.set(key, clients);
+    }
+    clients.add(clientId);
+    this.#sub(ws, tickerTopic(venue, symbol));
+    // The engine starts the ticker stream on the first subscriber only.
+    if (first) this.#supervisor.sendControl({ type: "subscribe_ticker", venue, symbol });
+  }
+
+  #unsubscribeTicker(ws: GatewaySocket, clientId: string, venue: Venue, symbol: string): void {
+    const key = `${venue}|${symbol}`;
+    if (!this.#tickerClients.get(key)?.has(clientId)) return;
+    this.#unsub(ws, tickerTopic(venue, symbol));
+    this.#releaseTicker(clientId, key, venue, symbol);
+  }
+
+  #releaseTicker(clientId: string, key: string, venue: Venue, symbol: string): void {
+    const clients = this.#tickerClients.get(key);
+    if (clients === undefined || !clients.delete(clientId)) return;
+    if (clients.size > 0) return;
+    this.#tickerClients.delete(key);
+    this.#supervisor.sendControl({ type: "unsubscribe_ticker", venue, symbol });
   }
 
   /** A key lost its last subscriber: stop the engine stream and drop its now-stale candles. */
@@ -843,9 +1345,9 @@ export class Gateway {
   #unsubscribe(ws: GatewaySocket, clientId: string, venue: Venue, symbol: string, timeframe: Timeframe): void {
     if (!this.registry.isSubscribed(clientId, venue, symbol, timeframe)) return;
     const dropped = this.registry.unsubscribe(clientId, venue, symbol, timeframe);
-    ws.unsubscribe(candlesTopic(venue, symbol, timeframe));
+    this.#unsub(ws, candlesTopic(venue, symbol, timeframe));
     // market:<venue>:<symbol> is shared by every timeframe of the pair: keep it while any remain.
-    if (!this.registry.clientHasSymbol(clientId, venue, symbol)) ws.unsubscribe(marketTopic(venue, symbol));
+    if (!this.registry.clientHasSymbol(clientId, venue, symbol)) this.#unsub(ws, marketTopic(venue, symbol));
     for (const key of dropped) this.#release(key);
   }
 
@@ -875,12 +1377,96 @@ export class Gateway {
       }
     }
     const route = routeAccountEvent(event, { requester });
-    const data = encode({ type: "event", event });
+    const receiptUs = nowUs();
+    const item = event as unknown as BatchEvent;
     if ("topic" in route) {
-      this.#publish(route.topic, data);
+      for (const id of this.#members.of(route.topic)) {
+        this.#deliver(id, item, receiptUs);
+        if (event.type === "order_ack" && event.status === "accepted") this.#recordConfirmToAck(id, receiptUs);
+      }
     } else if ("toConnection" in route) {
-      this.#sockets.get(route.toConnection)?.send(data);
+      this.#deliver(route.toConnection, item, receiptUs);
+      this.#out.get(route.toConnection)?.confirms.shift();
     }
+  }
+
+  #makeOutbound(ws: GatewaySocket, clientId: string): Outbound {
+    const out: Outbound = {
+      held: new Map(),
+      firstReceiptUs: null,
+      lastSlowNoticeMs: Number.NEGATIVE_INFINITY,
+      confirms: [],
+      batcher: new EventBatcher(
+        {
+          send: (json, compress) => {
+            ws.send(json, compress);
+            if (out.firstReceiptUs !== null) {
+              latency.receipt_to_client.record(nowUs() - out.firstReceiptUs);
+              out.firstReceiptUs = null;
+            }
+            if ((ws.getBufferedAmount?.() ?? 0) > CLOSE_CLIENT_BYTES) this.#closeSlow(ws, clientId);
+          },
+        },
+        this.#batcherTimer,
+      ),
+    };
+    return out;
+  }
+
+  #closeSlow(ws: GatewaySocket, clientId: string): void {
+    this.#log.warn(`[gateway] client ${clientId} closed: send buffer over ${CLOSE_CLIENT_BYTES} bytes`);
+    ws.close?.(1013, "try again later");
+  }
+
+  /**
+   * Queues one engine event on a connection's batcher. Above 1 MB buffered, coalescible events
+   * are held (newest per key) and a `slow_client` notice is sent at most every 10 s; above 4 MB
+   * the socket closes with 1013 (Req 34.8, 34.9). Held events go out once the buffer drains.
+   */
+  #deliver(connectionId: string, event: BatchEvent, receiptUs: number): void {
+    const ws = this.#sockets.get(connectionId);
+    const out = this.#out.get(connectionId);
+    if (ws === undefined || out === undefined) return;
+    const buffered = ws.getBufferedAmount?.() ?? 0;
+    if (buffered > CLOSE_CLIENT_BYTES) {
+      this.#closeSlow(ws, connectionId);
+      return;
+    }
+    const key = coalesceKey(event);
+    if (buffered > SLOW_CLIENT_BYTES) {
+      const nowMs = this.#now();
+      if (nowMs - out.lastSlowNoticeMs >= SLOW_NOTICE_INTERVAL_MS) {
+        out.lastSlowNoticeMs = nowMs;
+        ws.send(encode({ type: "notice", kind: "slow_client", message: "Connection is slow; some updates were dropped." }));
+      }
+      if (key !== null) {
+        out.held.delete(key);
+        out.held.set(key, event);
+        return;
+      }
+    } else if (out.held.size > 0) {
+      for (const held of out.held.values()) out.batcher.push(held);
+      out.held.clear();
+    }
+    out.firstReceiptUs ??= receiptUs;
+    out.batcher.push(event);
+  }
+
+  #recordConfirmToAck(connectionId: string, atUs: number): void {
+    const started = this.#out.get(connectionId)?.confirms.shift();
+    if (started !== undefined) latency.confirm_to_ack.record(atUs - started);
+  }
+
+  #sub(ws: GatewaySocket, topic: string): void {
+    ws.subscribe(topic);
+    const id = ws.data.clientId;
+    if (id !== undefined) this.#members.add(topic, id);
+  }
+
+  #unsub(ws: GatewaySocket, topic: string): void {
+    ws.unsubscribe(topic);
+    const id = ws.data.clientId;
+    if (id !== undefined) this.#members.remove(topic, id);
   }
 
   /** Engine lifecycle notices go to every connection on the notices topic (Req 17.9). */

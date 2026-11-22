@@ -34,7 +34,7 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use protocol::{Bar, Price, Qty, TimeMs, Timeframe};
+use protocol::{Bar, Price, Qty, TimeMs, Timeframe, Venue};
 
 /// Bars kept per (symbol, timeframe), and the most a snapshot carries (Req 8.7).
 pub const MAX_BARS: usize = 500;
@@ -77,6 +77,87 @@ pub struct HistoryMerge {
     pub added: usize,
     /// Venue bars dropped as misaligned or inconsistent.
     pub invalid: usize,
+}
+
+/// One [`CandleBuilder`] per venue, so the same symbol on two venues keeps separate bars
+/// (design "multi-venue engine": state is keyed by (venue, symbol)).
+#[derive(Debug, Default)]
+pub struct VenueCandles {
+    by_venue: BTreeMap<Venue, CandleBuilder>,
+}
+
+impl VenueCandles {
+    /// [`CandleBuilder::on_trade`] on the venue's builder.
+    pub fn on_trade(
+        &mut self,
+        venue: Venue,
+        symbol: &str,
+        price: Price,
+        qty: Qty,
+        ts: TimeMs,
+    ) -> Vec<(Timeframe, Bar)> {
+        self.by_venue
+            .entry(venue)
+            .or_default()
+            .on_trade(symbol, price, qty, ts)
+    }
+
+    /// [`CandleBuilder::on_sample`] on the venue's builder.
+    pub fn on_sample(
+        &mut self,
+        venue: Venue,
+        symbol: &str,
+        price: Price,
+        ts: TimeMs,
+    ) -> Vec<(Timeframe, Bar)> {
+        self.by_venue
+            .entry(venue)
+            .or_default()
+            .on_sample(symbol, price, ts)
+    }
+
+    /// The kept bars of (`venue`, `symbol`, `tf`), oldest first. Empty if none.
+    pub fn bars_for(&self, venue: Venue, symbol: &str, tf: Timeframe) -> Vec<Bar> {
+        self.by_venue
+            .get(&venue)
+            .map(|b| b.bars(symbol, tf))
+            .unwrap_or_default()
+    }
+
+    /// [`CandleBuilder::merge_history`] on the venue's builder.
+    pub fn merge_history(
+        &mut self,
+        venue: Venue,
+        symbol: &str,
+        tf: Timeframe,
+        bars: &[Bar],
+        market_now: Option<TimeMs>,
+    ) -> HistoryMerge {
+        self.by_venue
+            .entry(venue)
+            .or_default()
+            .merge_history(symbol, tf, bars, market_now)
+    }
+
+    /// Dropped-trade counts of one venue.
+    pub fn dropped_for(&self, venue: Venue) -> Dropped {
+        self.by_venue
+            .get(&venue)
+            .map(CandleBuilder::dropped)
+            .unwrap_or_default()
+    }
+
+    /// Test shorthand: [`Self::bars_for`] on the `Replay` venue.
+    #[cfg(test)]
+    pub fn bars(&self, symbol: &str, tf: Timeframe) -> Vec<Bar> {
+        self.bars_for(Venue::Replay, symbol, tf)
+    }
+
+    /// Test shorthand: [`Self::dropped_for`] on the `Replay` venue.
+    #[cfg(test)]
+    pub fn dropped(&self) -> Dropped {
+        self.dropped_for(Venue::Replay)
+    }
 }
 
 /// A venue bar is usable when it is aligned to `tf`, has `0 < low <= open, close <= high`, and
@@ -155,7 +236,21 @@ impl CandleBuilder {
         qty: Qty,
         ts: TimeMs,
     ) -> Vec<(Timeframe, Bar)> {
-        if price.0 <= 0 || qty.0 <= 0 {
+        if qty.0 <= 0 {
+            self.dropped.invalid = self.dropped.invalid.saturating_add(1);
+            return Vec::new();
+        }
+        self.apply(symbol, price, qty, ts)
+    }
+
+    /// A DEX price sample: updates the bars like a trade of quantity zero, so volume stays
+    /// zero (Req 13.1, 13.8).
+    pub fn on_sample(&mut self, symbol: &str, price: Price, ts: TimeMs) -> Vec<(Timeframe, Bar)> {
+        self.apply(symbol, price, Qty(0), ts)
+    }
+
+    fn apply(&mut self, symbol: &str, price: Price, qty: Qty, ts: TimeMs) -> Vec<(Timeframe, Bar)> {
+        if price.0 <= 0 || qty.0 < 0 {
             self.dropped.invalid = self.dropped.invalid.saturating_add(1);
             return Vec::new();
         }

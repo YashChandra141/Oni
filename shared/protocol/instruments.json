@@ -1,0 +1,123 @@
+[
+  {
+    "symbol": "BTC-USD",
+    "short": "BTC",
+    "price_decimals": 2,
+    "qty_decimals": 8,
+    "reference_price": "59400",
+    "venues": [
+      "coinbase",
+      "backpack",
+      "jupiter",
+      "raydium"
+    ]
+  },
+  {
+    "symbol": "ETH-USD",
+    "short": "ETH",
+    "price_decimals": 2,
+    "qty_decimals": 8,
+    "reference_price": "1640",
+    "venues": [
+      "coinbase",
+      "backpack",
+      "jupiter",
+      "raydium"
+    ]
+  },
+  {
+    "symbol": "SOL-USD",
+    "short": "SOL",
+    "price_decimals": 2,
+    "qty_decimals": 8,
+    "reference_price": "68.7",
+    "venues": [
+      "coinbase",
+      "backpack",
+      "jupiter",
+      "raydium"
+    ]
+  },
+  {
+    "symbol": "BNB-USD",
+    "short": "BNB",
+    "price_decimals": 2,
+    "qty_decimals": 8,
+    "reference_price": "547",
+    "venues": [
+      "coinbase",
+      "backpack"
+    ]
+  },
+  {
+    "symbol": "XRP-USD",
+    "short": "XRP",
+    "price_decimals": 4,
+    "qty_decimals": 6,
+    "reference_price": "0.913",
+    "venues": [
+      "coinbase",
+      "backpack"
+    ]
+  },
+  {
+    "symbol": "DOGE-USD",
+    "short": "DOGE",
+    "price_decimals": 6,
+    "qty_decimals": 4,
+    "reference_price": "0.0538",
+    "venues": [
+      "coinbase",
+      "backpack"
+    ]
+  },
+  {
+    "symbol": "JUP-USD",
+    "short": "JUP",
+    "price_decimals": 6,
+    "qty_decimals": 4,
+    "reference_price": "0.221",
+    "venues": [
+      "backpack",
+      "jupiter",
+      "raydium"
+    ]
+  },
+  {
+    "symbol": "WIF-USD",
+    "short": "WIF",
+    "price_decimals": 6,
+    "qty_decimals": 4,
+    "reference_price": "0.12",
+    "venues": [
+      "coinbase",
+      "backpack",
+      "jupiter",
+      "raydium"
+    ]
+  },
+  {
+    "symbol": "BONK-USD",
+    "short": "BONK",
+    "price_decimals": 10,
+    "qty_decimals": 0,
+    "reference_price": "0.00000207",
+    "venues": [
+      "coinbase",
+      "backpack",
+      "jupiter",
+      "raydium"
+    ]
+  },
+  {
+    "symbol": "PEPE-USD",
+    "short": "PEPE",
+    "price_decimals": 10,
+    "qty_decimals": 0,
+    "reference_price": "0.00000339",
+    "venues": [
+      "coinbase",
+      "backpack"
+    ]
+  }
+]

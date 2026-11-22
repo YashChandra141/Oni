@@ -23,6 +23,11 @@ pub enum PanelId {
     Positions,
     Orders,
     CommandBar,
+    Menu,
+    News,
+    Copilot,
+    Config,
+    KeyBar,
 }
 
 /// Which side of the order book a level is on.
@@ -62,6 +67,18 @@ pub enum HitTarget {
     DialogConfirm,
     /// The Discard or Cancel button of the preview or confirm dialog (Req 22.3).
     DialogCancel,
+    /// A left menu row `[n] Name` (Req 30.1).
+    MenuItem(crate::app::Page),
+    /// The `[q] Quit` row of the menu.
+    MenuQuit,
+    /// The venue chip of the header: a click opens the venue picker (Task 16.3).
+    VenueChip,
+    /// The provider chip of the header: a click opens the provider picker (Task 16.3).
+    ProviderChip,
+    /// A row of the open picker, by index.
+    PickerRow(usize),
+    /// The area outside the open picker: a click closes it.
+    PickerBackdrop,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

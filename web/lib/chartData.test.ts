@@ -176,28 +176,29 @@ describe("barsToVolume", () => {
 
 describe("timeframes", () => {
   test("labels are in button order", () => {
-    expect([...timeframeLabels]).toEqual(["1m", "5m", "15m", "1h", "1d"]);
+    expect([...timeframeLabels]).toEqual(["1m", "5m", "15m", "1h", "4h", "1d"]);
   });
 
-  test("keys 1 to 5 select the timeframe at that position (Req 25.3)", () => {
-    expect(["1", "2", "3", "4", "5"].map((k) => timeframeFromKey(k))).toEqual([
+  test("keys 1 to 6 select the timeframe at that position (Req 25.3)", () => {
+    expect(["1", "2", "3", "4", "5", "6"].map((k) => timeframeFromKey(k))).toEqual([
       "1m",
       "5m",
       "15m",
       "1h",
+      "4h",
       "1d",
     ]);
   });
 
   test("other keys select nothing", () => {
-    for (const key of ["0", "6", "9", "a", "", "11", "+", "Enter"]) {
+    for (const key of ["0", "7", "9", "a", "", "11", "+", "Enter"]) {
       expect(timeframeFromKey(key)).toBeNull();
     }
   });
 
-  test("isTimeframe accepts exactly the five labels", () => {
+  test("isTimeframe accepts exactly the six labels", () => {
     for (const tf of timeframeLabels) expect(isTimeframe(tf)).toBe(true);
-    for (const other of ["1s", "4h", "1M", "", "1m "]) expect(isTimeframe(other)).toBe(false);
+    for (const other of ["1s", "2h", "1M", "", "1m "]) expect(isTimeframe(other)).toBe(false);
   });
 });
 
@@ -383,7 +384,7 @@ describe("Property 5: incremental chart updates equal a full setData", () => {
   const SYMBOL = "BTC-USD";
   const PRICE_DECIMALS = 2;
   const QTY_DECIMALS = 8;
-  const STORE_KEY = candleKey(SYMBOL, "1m");
+  const STORE_KEY = candleKey("replay", SYMBOL, "1m");
   const NULLS: IndicatorValues = {
     ema: null,
     sma: null,
@@ -499,12 +500,12 @@ describe("Property 5: incremental chart updates equal a full setData", () => {
   const candleMessage = (snapshot: boolean, bars: Bar[], indicators?: unknown): ServerMessage =>
     ({
       type: "event",
-      event: { type: "candle", symbol: SYMBOL, timeframe: "1m", snapshot, bars, indicators },
+      event: { type: "candle", venue: "replay", symbol: SYMBOL, timeframe: "1m", snapshot, bars, indicators },
     }) as unknown as ServerMessage;
 
   const indicatorsMessage = (ts: number, ema: number | null): ServerMessage => ({
     type: "event",
-    event: { type: "indicators", symbol: SYMBOL, timeframe: "1m", ts, values: { ...NULLS, ema } },
+    event: { type: "indicators", venue: "replay", symbol: SYMBOL, timeframe: "1m", ts, values: { ...NULLS, ema } },
   });
 
   /** The store messages one op produces, given the current stored bars. */

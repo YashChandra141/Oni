@@ -29,7 +29,8 @@
 // - `stop()` cancels a pending restart, kills the process, and resolves after it has exited.
 
 import { redactSecrets, type Config, type SecretSource } from "../config.ts";
-import { CommandSchema, parseEventLine, type Command, type Event, type Timeframe, type Venue } from "../protocol.ts";
+import { latency, nowUs } from "../latency/histogram.ts";
+import { CommandSchema, parseWireEventLine, type Command, type Event, type Timeframe, type Venue } from "../protocol.ts";
 import { Backoff } from "./backoff.ts";
 import { createEngineStdoutSplitter, LineSplitter, MAX_EVENT_LINE_BYTES } from "./lines.ts";
 
@@ -112,6 +113,19 @@ export interface EngineSpawnRequest {
   readonly fixturesDir: string;
   /** Live venue, passed as `--venue`. The engine uses it only in live mode (Req 44.1). */
   readonly venue: "coinbase" | "backpack";
+  /** Live venues, passed as `--venues`. */
+  readonly venues?: readonly string[];
+  readonly startingBalance?: number;
+  readonly balanceSlippageBps?: number;
+  readonly dexLevels?: number;
+  readonly dexSpreadBps?: number;
+  readonly dexStepBps?: number;
+  readonly dexLevelNotional?: number;
+  readonly dexMaxDeviationPct?: number;
+  readonly jupiterPollMs?: number;
+  readonly raydiumPollMs?: number;
+  /** Secret. Goes only into the child environment, never the arguments. */
+  readonly jupiterApiKey?: string;
 }
 
 /** Starts an engine process. May throw (for example when ENGINE_PATH does not exist). */
@@ -138,6 +152,21 @@ export interface EngineSubscription {
 export type SubscriptionProvider = () => Iterable<EngineSubscription>;
 
 export type SupervisorConfig = Pick<Config, "enginePath" | "dataMode" | "liveVenue" | "replayFixture" | "replaySpeed"> &
+  Partial<
+    Pick<
+      Config,
+      | "liveVenues"
+      | "startingBalance"
+      | "balanceSlippageBps"
+      | "dexLevels"
+      | "dexSpreadBps"
+      | "dexStepBps"
+      | "dexLevelNotional"
+      | "dexMaxDeviationPct"
+      | "jupiterPollMs"
+      | "raydiumPollMs"
+    >
+  > &
   SecretSource;
 
 export interface EngineSupervisorOptions {
@@ -167,7 +196,7 @@ export interface EngineSupervisorOptions {
 
 /** The engine command line from design §3: `engine run --mode <mode> --fixtures <dir> --venue <venue>`. */
 export function engineArgv(request: EngineSpawnRequest): string[] {
-  return [
+  const argv = [
     request.enginePath,
     "run",
     "--mode",
@@ -177,10 +206,37 @@ export function engineArgv(request: EngineSpawnRequest): string[] {
     "--venue",
     request.venue,
   ];
+  if (request.venues !== undefined && request.venues.length > 0) argv.push("--venues", request.venues.join(","));
+  const numeric: readonly (readonly [string, number | undefined])[] = [
+    ["--starting-balance", request.startingBalance],
+    ["--balance-slippage-bps", request.balanceSlippageBps],
+    ["--dex-levels", request.dexLevels],
+    ["--dex-spread-bps", request.dexSpreadBps],
+    ["--dex-step-bps", request.dexStepBps],
+    ["--dex-level-notional", request.dexLevelNotional],
+    ["--dex-max-deviation-pct", request.dexMaxDeviationPct],
+    ["--jupiter-poll-ms", request.jupiterPollMs],
+    ["--raydium-poll-ms", request.raydiumPollMs],
+  ];
+  for (const [flag, value] of numeric) if (value !== undefined) argv.push(flag, String(value));
+  return argv;
 }
 
-/** Variables the engine never needs. They are removed from its environment (least privilege). */
-export const ENGINE_ENV_DENYLIST = ["OPENAI_API_KEY"] as const;
+/**
+ * Variables the engine never needs. They are removed from its environment (least privilege).
+ * JUPITER_API_KEY is deliberately absent: the engine sends it to the Jupiter Price API only.
+ */
+export const ENGINE_ENV_DENYLIST = [
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "NVIDIA_API_KEY",
+  "NEWS_API_KEY",
+  "CRYPTOPANIC_API_KEY",
+  "SESSION_SECRET",
+  "TERMINAL_TOKEN",
+  "NVIDIA_BASE_URL",
+  "OLLAMA_BASE_URL",
+] as const;
 
 /** The server environment without secrets, for the engine child process (trading-safety rule 6). */
 export function engineEnv(source: Readonly<Record<string, string | undefined>> = process.env): Record<string, string> {
@@ -197,7 +253,10 @@ export const spawnEngineProcess: SpawnEngine = (request) => {
     stdin: "pipe",
     stdout: "pipe",
     stderr: "pipe",
-    env: engineEnv(),
+    env: {
+      ...engineEnv(),
+      ...(request.jupiterApiKey === undefined ? {} : { JUPITER_API_KEY: request.jupiterApiKey }),
+    },
   });
   return {
     pid: proc.pid,
@@ -404,6 +463,7 @@ export class EngineSupervisor {
       mode: this.#config.dataMode,
       fixturesDir: this.#fixturesDir,
       venue: this.#config.liveVenue,
+      ...optionalFields(this.#config),
     };
     let proc: EngineProcess;
     try {
@@ -561,7 +621,11 @@ export class EngineSupervisor {
   #handleStdoutLine(line: string, generation: number): void {
     // Late output from an engine that has already been replaced is dropped.
     if (generation !== this.#generation) return;
-    const result = parseEventLine(line);
+    const receivedUs = nowUs();
+    const result = parseWireEventLine(line);
+    if (result.ok && typeof result.value.emit_us === "number") {
+      latency.emit_to_write.record(receivedUs - result.value.emit_us);
+    }
     if (!result.ok) {
       const shown = JSON.stringify(truncate(this.#redact(line), MAX_LOGGED_LINE_CHARS));
       this.#log.warn(`[engine] dropped an invalid stdout line (${result.code}: ${result.message}): ${shown}`);
@@ -612,6 +676,25 @@ export class EngineSupervisor {
     return redactSecrets(text, this.#config);
   }
 }
+
+/** Spawn-request fields taken from the config, only for values that are set. */
+function optionalFields(c: SupervisorConfig): Partial<Mutable<EngineSpawnRequest>> {
+  const out: Partial<Mutable<EngineSpawnRequest>> = {};
+  if (c.liveVenues !== undefined) out.venues = c.liveVenues;
+  if (c.startingBalance !== undefined) out.startingBalance = c.startingBalance;
+  if (c.balanceSlippageBps !== undefined) out.balanceSlippageBps = c.balanceSlippageBps;
+  if (c.dexLevels !== undefined) out.dexLevels = c.dexLevels;
+  if (c.dexSpreadBps !== undefined) out.dexSpreadBps = c.dexSpreadBps;
+  if (c.dexStepBps !== undefined) out.dexStepBps = c.dexStepBps;
+  if (c.dexLevelNotional !== undefined) out.dexLevelNotional = c.dexLevelNotional;
+  if (c.dexMaxDeviationPct !== undefined) out.dexMaxDeviationPct = c.dexMaxDeviationPct;
+  if (c.jupiterPollMs !== undefined) out.jupiterPollMs = c.jupiterPollMs;
+  if (c.raydiumPollMs !== undefined) out.raydiumPollMs = c.raydiumPollMs;
+  if (c.jupiterApiKey !== undefined) out.jupiterApiKey = c.jupiterApiKey;
+  return out;
+}
+
+type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
 function subscribe<T>(set: Set<Listener<T>>, listener: Listener<T>): () => void {
   set.add(listener);

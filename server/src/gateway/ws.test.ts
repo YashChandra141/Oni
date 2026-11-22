@@ -4,7 +4,7 @@ import { isOrderCommand } from "../engine/supervisor.ts";
 import { INSTRUMENTS } from "../instruments.ts";
 import { type Event, type ServerMessage, ServerMessageSchema } from "../protocol.ts";
 import type { ActionResult, OrderOrigin, RouterRejectReason } from "../router.ts";
-import { FakePublisher, FakeSocket, FakeSupervisor, memoryLogger } from "./testing.ts";
+import { FakePublisher, FakeSocket, FakeSupervisor, eventsOf, immediateTimer, memoryLogger } from "./testing.ts";
 import { type GatewayRouter, DEFAULT_STARTING_BALANCE, Gateway, MAX_INBOUND_BYTES, NOTICES_TOPIC, PROTOCOL_VERSION, accountTopic, candlesTopic, marketTopic } from "./ws.ts";
 
 const ACCOUNT_TOPIC = accountTopic("guest");
@@ -26,6 +26,7 @@ function setup(
     config: { dataMode: options.dataMode ?? "replay", liveVenue: options.liveVenue ?? "backpack" },
     logger,
     randomUUID: () => `client-${++n}`,
+    batcherTimer: immediateTimer,
   });
   gateway.setPublisher(publisher);
   const connect = (): FakeSocket => {
@@ -139,35 +140,21 @@ describe("venue handling and v3 stubs", () => {
     }
   });
 
-  test("ticker, TWAP, AI, and news requests answer a typed 'not implemented yet' Notice", () => {
-    const { supervisor, connect, send } = setup();
+  test("without AI wiring, SetProvider and AiRequest answer ai_disabled", () => {
+    const { connect, send } = setup();
     const ws = connect();
-    const requests: [unknown, string][] = [
-      [{ type: "subscribe_ticker", symbol: "BTC-USD", venue: "replay" }, "ticker subscriptions"],
-      [{ type: "unsubscribe_ticker", symbol: "BTC-USD", venue: "replay" }, "ticker subscriptions"],
-      [{ type: "cancel_twap", request_id: "r1", twap_id: "t1" }, "TWAP"],
-      [{ type: "set_provider", provider: "ollama" }, "AI Copilot"],
-      [
-        {
-          type: "ai_request",
-          request_id: "r2",
-          action: "analyze",
-          text: "",
-          symbol: "BTC-USD",
-          timeframe: "1h",
-          venue: "replay",
-        },
-        "AI Copilot",
-      ],
-      [{ type: "ai_cancel", request_id: "r2" }, "AI Copilot"],
-      [{ type: "subscribe_news" }, "news"],
-      [{ type: "unsubscribe_news" }, "news"],
-    ];
-    for (const [msg, feature] of requests) {
-      send(ws, msg);
-      expect(ws.last()).toEqual({ type: "notice", kind: "ai_disabled", message: `${feature}: not implemented yet` });
-    }
-    expect(supervisor.sent).toEqual([]);
+    send(ws, { type: "set_provider", provider: "ollama" });
+    expect(ws.last()).toMatchObject({ type: "notice", kind: "ai_disabled" });
+    send(ws, {
+      type: "ai_request",
+      request_id: "r2",
+      action: "analyze",
+      text: "",
+      symbol: "BTC-USD",
+      timeframe: "1h",
+      venue: "replay",
+    });
+    expect(ws.last()).toMatchObject({ type: "ai_error", request_id: "r2", reason: "ai_disabled" });
   });
 
   test("an AI prompt over 1,000 characters fails validation", () => {
@@ -216,21 +203,22 @@ describe("validation (Req 17.3, 17.4)", () => {
 
 describe("subscriptions", () => {
   test("first subscriber sends Subscribe once; a later one gets the cached snapshot", () => {
-    const { supervisor, publisher, connect, send } = setup();
+    const { supervisor, connect, send } = setup();
     const a = connect();
     send(a, SUB);
     expect(supervisor.sent).toEqual([SUB]);
     expect(a.topics.has(candlesTopic("replay", "BTC-USD", "1m"))).toBe(true);
     expect(a.topics.has(marketTopic("replay", "BTC-USD"))).toBe(true);
 
-    supervisor.emitEvent(SNAPSHOT); // the engine's history answer, published to the topic
-    expect(a.last()).toEqual({ type: "event", event: SNAPSHOT });
+    supervisor.emitEvent(SNAPSHOT); // the engine's history answer, delivered to the topic's members
+    expect(a.last()).toEqual({ type: "event_batch", events: [SNAPSHOT] });
 
+    // A later subscriber gets the cached snapshot as a single event, not a second broadcast.
     const b = connect();
     send(b, SUB);
     expect(supervisor.sent).toEqual([SUB]); // still once
     expect(b.last()).toEqual({ type: "event", event: SNAPSHOT });
-    expect(publisher.published.filter((p) => p.topic === candlesTopic("replay", "BTC-USD", "1m"))).toHaveLength(1);
+    expect(eventsOf(a)).toEqual([SNAPSHOT]);
 
     send(b, SUB); // duplicate: idempotent, engine not asked again
     expect(supervisor.sent).toEqual([SUB]);
@@ -423,11 +411,18 @@ describe("engine events → topics (Req 17.6, 17.7)", () => {
   ];
 
   for (const [event, topic] of cases) {
-    test(`${event.type} goes to ${topic} wrapped as ServerMessage::Event`, () => {
-      const { supervisor, publisher, connect, send } = setup();
-      send(connect(), SUB); // so the candle snapshot is cacheable; routing does not depend on it
+    test(`${event.type} reaches the members of ${topic} inside an event_batch`, () => {
+      const { supervisor, connect, send } = setup();
+      const member = connect();
+      const outsider = connect();
+      // Join the topic through a subscribe, as a client does (account topics need no subscribe).
+      const [kind, , symbol, timeframe] = topic.split(":");
+      if (kind === "candles") send(member, { ...SUB, symbol, timeframe });
+      else if (kind === "market") send(member, { ...SUB, symbol });
+      expect(member.topics.has(topic)).toBe(true);
       supervisor.emitEvent(event);
-      expect(publisher.published).toEqual([{ topic, message: { type: "event", event } }]);
+      expect(member.messages().slice(2)).toEqual([{ type: "event_batch", events: [event] }]);
+      if (kind !== "account") expect(outsider.messages().map((m) => m.type)).toEqual(["hello", "session"]);
     });
   }
 
@@ -443,7 +438,7 @@ describe("engine events → topics (Req 17.6, 17.7)", () => {
   });
 
   test("OrderRejected with no known requester goes to the account topic (Req 17.10)", () => {
-    const { supervisor, publisher, connect } = setup();
+    const { supervisor, connect } = setup();
     const ws = connect();
     const event: Event = {
       type: "order_rejected",
@@ -453,8 +448,7 @@ describe("engine events → topics (Req 17.6, 17.7)", () => {
       reason: "unknown order",
     };
     supervisor.emitEvent(event);
-    expect(publisher.published).toEqual([{ topic: ACCOUNT_TOPIC, message: { type: "event", event } }]);
-    expect(ws.last()).toEqual({ type: "event", event });
+    expect(ws.last()).toEqual({ type: "event_batch", events: [event] });
   });
 
   test("notices go to every client on the notices topic", () => {
@@ -471,15 +465,16 @@ describe("engine events → topics (Req 17.6, 17.7)", () => {
     const b = connect();
     send(a, SUB);
     supervisor.emitEvent(TRADE("BTC-USD", "1", "1", "sell", 1));
-    expect(a.last()?.type).toBe("event");
+    expect(a.last()?.type).toBe("event_batch");
     expect(b.messages().map((m) => m.type)).toEqual(["hello", "session"]);
   });
 
   test("dispose detaches the supervisor listeners", () => {
-    const { supervisor, publisher, gateway } = setup();
+    const { supervisor, connect, gateway } = setup();
+    const ws = connect();
     gateway.dispose();
     supervisor.emitEvent({ type: "order_ack", account_id: "guest", venue: "replay", order_id: "o1", status: "accepted" });
-    expect(publisher.published).toEqual([]);
+    expect(ws.messages().map((m) => m.type)).toEqual(["hello", "session"]);
   });
 });
 

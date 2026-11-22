@@ -57,7 +57,10 @@ fn with_ts(mut msg: MarketMsg, new_ts: TimeMs) -> MarketMsg {
     match &mut msg {
         MarketMsg::Trade { ts, .. }
         | MarketMsg::BookSnapshot { ts, .. }
-        | MarketMsg::BookDelta { ts, .. } => *ts = new_ts,
+        | MarketMsg::BookDelta { ts, .. }
+        | MarketMsg::PriceSample { ts, .. }
+        | MarketMsg::Status { ts, .. }
+        | MarketMsg::Clock { ts } => *ts = new_ts,
     }
     msg
 }
@@ -250,6 +253,7 @@ proptest! {
         for (price, qty, gap) in steps {
             ts += gap;
             let events = engine.on_market(MarketMsg::Trade {
+                venue: protocol::Venue::Replay,
                 symbol: symbol.clone(),
                 price: protocol::Price(price),
                 qty: protocol::Qty(qty),
@@ -274,6 +278,7 @@ fn bug_indicators_ts_concrete_trade_at_61234() {
         timeframe: Timeframe::M1,
     });
     let events = engine.on_market(MarketMsg::Trade {
+        venue: protocol::Venue::Replay,
         symbol: "BTC-USD".into(),
         price: protocol::Price(6_400_000),
         qty: protocol::Qty(1),
@@ -301,6 +306,7 @@ fn bug_subscribe_answer_has_indicator_history() {
     // One trade per minute for 30 minutes, no subscription yet.
     for minute in 0..30_i64 {
         let _ = engine.on_market(MarketMsg::Trade {
+            venue: protocol::Venue::Replay,
             symbol: "BTC-USD".into(),
             price: protocol::Price(6_400_000 + minute * 100),
             qty: protocol::Qty(1),
@@ -454,6 +460,7 @@ proptest! {
             ts += gap;
             trades.push((protocol::Price(price), protocol::Qty(qty), ts));
             let events = engine.on_market(MarketMsg::Trade {
+                venue: protocol::Venue::Replay,
                 symbol: symbol.clone(),
                 price: protocol::Price(price),
                 qty: protocol::Qty(qty),
@@ -609,26 +616,38 @@ proptest! {
                 prop_assert_eq!(warmed.candles.bars(symbol, tf), played.candles.bars(symbol, tf));
                 let key = (symbol.to_owned(), tf);
                 let history = |e: &Engine| {
-                    e.indicators
-                        .get(&key)
+                    e.indicators_get(&key)
                         .map(|i| i.history().iter().copied().collect::<Vec<_>>())
                 };
                 prop_assert_eq!(history(&warmed), history(&played));
             }
             prop_assert_eq!(
-                warmed.books.get(symbol).map(|s| &s.book),
-                played.books.get(symbol).map(|s| &s.book)
+                warmed.pair(protocol::Venue::Replay, symbol).map(|s| &s.book.book),
+                played.pair(protocol::Venue::Replay, symbol).map(|s| &s.book.book)
             );
         }
         // Full indicator state (Debug covers every field, f64 included).
-        prop_assert_eq!(format!("{:?}", warmed.indicators), format!("{:?}", played.indicators));
-        prop_assert_eq!(&warmed.last_price, &played.last_price);
+        let all_indicators = |e: &Engine| {
+            format!(
+                "{:?}",
+                e.pairs.iter().map(|(k, p)| (k, &p.indicators)).collect::<Vec<_>>()
+            )
+        };
+        prop_assert_eq!(all_indicators(&warmed), all_indicators(&played));
+        prop_assert_eq!(&warmed.mark_price, &played.mark_price);
         prop_assert_eq!(warmed.now, played.now);
 
         // Snapshot events equal the played engine's subscribe answers, in key order.
         if k > 0 {
             let mut expected = Vec::new();
-            for (symbol, timeframes) in &played.subscriptions.clone() {
+            let mut subs: std::collections::BTreeMap<String, std::collections::BTreeSet<Timeframe>> =
+                std::collections::BTreeMap::new();
+            for ((_, symbol), pair) in &played.pairs {
+                subs.entry(symbol.clone())
+                    .or_default()
+                    .extend(pair.subscriptions.iter().copied());
+            }
+            for (symbol, timeframes) in &subs {
                 for &tf in timeframes {
                     expected.extend(played.on_command(Command::Subscribe {
                         venue: Venue::Replay,
@@ -698,6 +717,7 @@ mod backfill_merge {
             let mut reference = CandleBuilder::default();
             for &(price, qty, ts) in &trades {
                 let _ = engine.on_market(MarketMsg::Trade {
+                    venue: protocol::Venue::Replay,
                     symbol: SYM.into(),
                     price,
                     qty,
@@ -716,8 +736,7 @@ mod backfill_merge {
 
             let before_ring = engine.candles.bars(SYM, tf);
             let history_of = |e: &Engine| {
-                e.indicators
-                    .get(&key)
+                e.indicators_get(&key)
                     .map(|i| i.history().iter().copied().collect::<Vec<_>>())
             };
             let before_history = history_of(&engine);
@@ -753,7 +772,7 @@ mod backfill_merge {
                     Some(fresh.history().iter().copied().collect::<Vec<_>>())
                 );
                 prop_assert_eq!(
-                    format!("{:?}", engine.indicators.get(&key)),
+                    format!("{:?}", engine.indicators_get(&key)),
                     format!("{:?}", Some(&fresh))
                 );
                 // The subscribed key gets the merged ring as a snapshot.
@@ -766,11 +785,11 @@ mod backfill_merge {
             }
 
             // At most one effective on_history: a second call, and a later failure, change nothing.
-            let indicators_after = format!("{:?}", engine.indicators.get(&key));
+            let indicators_after = format!("{:?}", engine.indicators_get(&key));
             let again = engine.on_history(SYM, tf, &venue);
             prop_assert!(again.is_empty());
             prop_assert_eq!(&engine.candles.bars(SYM, tf), &ring);
-            prop_assert_eq!(format!("{:?}", engine.indicators.get(&key)), indicators_after);
+            prop_assert_eq!(format!("{:?}", engine.indicators_get(&key)), indicators_after);
             let events = engine.on_history_failed(SYM, tf, "late failure");
             prop_assert!(
                 matches!(events.as_slice(), [Event::Error { .. }]),
@@ -783,6 +802,7 @@ mod backfill_merge {
             // P4 after the merge: trades around the merged ring keep every bar valid.
             for (k, price, qty) in later {
                 let events = engine.on_market(MarketMsg::Trade {
+                    venue: protocol::Venue::Replay,
                     symbol: SYM.into(),
                     price: Price(price),
                     qty: Qty(qty),
@@ -851,6 +871,7 @@ mod snapshot_history {
 
     fn trade(price: i64, qty: i64, ts: TimeMs) -> MarketMsg {
         MarketMsg::Trade {
+            venue: protocol::Venue::Replay,
             symbol: SYM.into(),
             price: Price(price),
             qty: Qty(qty),
@@ -952,8 +973,7 @@ mod snapshot_history {
             prop_assert!(points.windows(2).all(|w| w[0].t < w[1].t), "not ascending");
             let bar_times: BTreeSet<TimeMs> = bars.iter().map(|b: &Bar| b.t).collect();
             let history: BTreeMap<TimeMs, IndicatorValues> = engine
-                .indicators
-                .get(&key)
+                .indicators_get(&key)
                 .map(|i| i.history().iter().map(|p| (p.t, p.values)).collect())
                 .unwrap_or_default();
             for point in points {

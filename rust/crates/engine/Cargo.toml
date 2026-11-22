@@ -15,7 +15,7 @@ clap = { version = "4.6.7", features = ["derive"] }
 protocol = { version = "0.1.0", path = "../protocol" }
 serde = { version = "1.0.229", features = ["derive"] }
 # Same features as the protocol crate, so both crates parse JSON identically.
-serde_json = { version = "1.0.154", features = ["float_roundtrip"] }
+serde_json = { version = "1.0.154", features = ["float_roundtrip", "raw_value"] }
 tokio = { version = "1.54.1", features = ["rt", "macros", "io-std", "io-util", "time", "sync", "net"] }
 # Live feed (Task 7.4). Versions and features match crates/tui and rust/Cargo.lock.
 futures-util = "0.3.34"

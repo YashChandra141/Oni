@@ -22,12 +22,14 @@ mod brand;
 mod chart_model;
 mod chart_widget;
 mod cli;
+mod copilot;
 mod frame_limiter;
 mod hitmap;
 mod http;
 mod indicator_model;
 mod indicator_widget;
 mod keymap;
+mod latency;
 mod line_editor;
 mod mouse;
 mod net;
@@ -55,7 +57,7 @@ use ratatui::backend::CrosstermBackend;
 use tokio::sync::mpsc;
 use tokio::time::{self, MissedTickBehavior};
 
-use crate::app::App;
+use crate::app::{App, PickerKind};
 use crate::auth::TokenStore;
 use crate::book_model::BookCursor;
 use crate::cli::Cli;
@@ -186,6 +188,7 @@ async fn run_async(server: &str, keymap: &Keymap, guest: bool) -> io::Result<()>
                     if is_hard_exit(&key)
                         || (!app.pairing.is_open()
                             && !order_input::blocks_global_keys(&app)
+                            && !copilot::captures_text(&app)
                             && is_quit(keymap, &key)) =>
                 {
                     break;
@@ -202,6 +205,68 @@ async fn run_async(server: &str, keymap: &Keymap, guest: bool) -> io::Result<()>
                     {
                         start_pairing(&mut app, &mut pairing_task, &mut pairing_id, &pair_tx);
                         limiter.mark_dirty();
+                    }
+                }
+                // An open venue or provider picker is modal for the keys (Task 16.3).
+                Some(Ok(Event::Key(key)))
+                    if app.picker.is_some() && key.kind != KeyEventKind::Release =>
+                {
+                    app.now_ms = wall_ms();
+                    if let Some((changed, messages)) = apply_picker_key(&mut app, keymap, &key) {
+                        for message in messages {
+                            let _ = net_tx.try_send(message);
+                        }
+                        if changed {
+                            limiter.mark_dirty();
+                        }
+                    }
+                }
+                // `copilot.focus` (keymap, default `C`) focuses the Copilot input line.
+                Some(Ok(Event::Key(key)))
+                    if key.kind == KeyEventKind::Press
+                        && (app.page == app::Page::Copilot || app.page == app::Page::News)
+                        && app.focus == Focus::Chart
+                        && !app.account.dialog_open()
+                        && !app.help_open
+                        && !app.copilot.focused
+                        && global_action(keymap, &key) == Some(Action::CopilotFocus) =>
+                {
+                    app.copilot.focused = true;
+                    limiter.mark_dirty();
+                }
+                // News and Copilot keys (Task 16.4): the Copilot input line takes every key while
+                // focused; `t` previews the trade idea, Enter/`y` act on news.
+                Some(Ok(Event::Key(key)))
+                    if key.kind == KeyEventKind::Press
+                        && (app.page == app::Page::Copilot || app.page == app::Page::News)
+                        && app.focus == Focus::Chart
+                        && !app.account.dialog_open()
+                        && !app.help_open
+                        && (app.copilot.focused
+                            || matches!(
+                                key.code,
+                                KeyCode::Char('t' | 'T' | 'y' | 'Y' | 'j' | 'k')
+                                    | KeyCode::Up
+                                    | KeyCode::Down
+                                    | KeyCode::Enter
+                                    | KeyCode::Esc
+                            ))
+                        && !is_hard_exit(&key) =>
+                {
+                    app.now_ms = wall_ms();
+                    if let Some(outcome) = copilot::handle_key(&mut app, &key) {
+                        for message in outcome.messages {
+                            let _ = net_tx.try_send(message);
+                        }
+                        if let Some(sequence) = outcome.osc52 {
+                            use std::io::Write;
+                            let mut out = io::stdout();
+                            let _ = out.write_all(sequence.as_bytes());
+                            let _ = out.flush();
+                        }
+                        if outcome.changed {
+                            limiter.mark_dirty();
+                        }
                     }
                 }
                 // Order entry (Task 12.4): B, S, F, X, `:`, the dialog keys, the command bar, the
@@ -231,9 +296,59 @@ async fn run_async(server: &str, keymap: &Keymap, guest: bool) -> io::Result<()>
                     app.book_cursor = None;
                     limiter.mark_dirty();
                 }
+                // `venue.next` and `provider.next` open the pickers (Task 16.3).
+                Some(Ok(Event::Key(key)))
+                    if !app.pairing.is_open()
+                        && matches!(
+                            global_action(keymap, &key),
+                            Some(Action::VenueNext | Action::ProviderNext)
+                        )
+                        && key.kind == KeyEventKind::Press =>
+                {
+                    if let Some((changed, _)) = apply_picker_key(&mut app, keymap, &key)
+                        && changed
+                    {
+                        limiter.mark_dirty();
+                    }
+                }
                 // `P` (`auth.pair`) opens the pairing dialog (Req 48.1).
                 Some(Ok(Event::Key(key))) if pairing::is_pair_key(keymap, &key) => {
                     start_pairing(&mut app, &mut pairing_task, &mut pairing_id, &pair_tx);
+                    limiter.mark_dirty();
+                }
+                // Menu keys: 1 to 8 switch page, `<` and `>` move the timeframe, F1 toggles
+                // help, Esc closes it (Req 30.1).
+                Some(Ok(Event::Key(key)))
+                    if key.kind == KeyEventKind::Press
+                        && !app.pairing.is_open()
+                        && menu_key_kind(&app, keymap, &key).is_some() =>
+                {
+                    let (changed, messages) = match menu_key_kind(&app, keymap, &key) {
+                        Some(kind) => apply_menu_key(&mut app, kind),
+                        None => (false, Vec::new()),
+                    };
+                    for message in messages {
+                        let _ = net_tx.try_send(message);
+                    }
+                    if changed {
+                        limiter.mark_dirty();
+                    }
+                }
+                // `l` switches the chart between candles and a line (Task 16.9).
+                Some(Ok(Event::Key(key)))
+                    if key.kind == KeyEventKind::Press
+                        && key.code == KeyCode::Char('l')
+                        && !key.modifiers.intersects(
+                            crossterm::event::KeyModifiers::CONTROL
+                                | crossterm::event::KeyModifiers::ALT,
+                        )
+                        && !app.pairing.is_open()
+                        && !app.help_open
+                        && !app.copilot.focused
+                        && app.picker.is_none()
+                        && order_input::effective_focus(&app) != order_input::Focus::Ticket =>
+                {
+                    app.chart_line = !app.chart_line;
                     limiter.mark_dirty();
                 }
                 Some(Ok(Event::Key(key))) if key.kind == KeyEventKind::Press => {
@@ -269,6 +384,9 @@ async fn run_async(server: &str, keymap: &Keymap, guest: bool) -> io::Result<()>
                 // The mouse is ignored while the pairing dialog is open.
                 Some(Ok(Event::Mouse(mouse))) if !app.pairing.is_open() => {
                     if let Some(action) = mouse_action(&hits, &mut drag, mouse) {
+                        if action == MouseAction::Quit {
+                            break;
+                        }
                         app.now_ms = wall_ms();
                         let (changed, messages) = apply_mouse_action(&mut app, action);
                         for message in messages {
@@ -296,8 +414,18 @@ async fn run_async(server: &str, keymap: &Keymap, guest: bool) -> io::Result<()>
                     }
                     // The reducers read the clock from the app (preview deadlines, rejections).
                     app.now_ms = wall_ms();
+                    // Task 16.4: ask for the news list on every (re)connect.
+                    if matches!(event, net::NetEvent::Connected) {
+                        let _ = net_tx.try_send(ClientMessage::SubscribeNews);
+                    }
                     if app::update(&mut app, event) {
                         limiter.mark_dirty();
+                    }
+                    // A `hello` that moved the Active_Venue: resubscribe on the new venue.
+                    if let Some(old) = app.venue_switched_from.take() {
+                        for message in venue_switch_messages(&app, old) {
+                            let _ = net_tx.try_send(message);
+                        }
                     }
                 }
                 None => net_open = false,
@@ -332,6 +460,10 @@ async fn run_async(server: &str, keymap: &Keymap, guest: bool) -> io::Result<()>
                 // line needs a redraw even though no event arrived.
                 if app.tick(wall_ms()) {
                     limiter.mark_dirty();
+                }
+                // Task 16.10: a ping every 2 s feeds the header latency.
+                if let Some(ping) = app.latency_ping(wall_ms()) {
+                    let _ = net_tx.try_send(ping);
                 }
                 if limiter.should_draw(now) {
                     terminal.draw(|frame| ui::draw(frame, &app, &mut hits))?;
@@ -387,6 +519,7 @@ fn apply_chart_action(app: &mut App, action: Action) -> (bool, Vec<ClientMessage
         Action::Timeframe5m => Timeframe::M5,
         Action::Timeframe15m => Timeframe::M15,
         Action::Timeframe1h => Timeframe::H1,
+        Action::Timeframe4h => Timeframe::H4,
         Action::Timeframe1d => Timeframe::D1,
         Action::ChartZoomIn => {
             app.chart_view.zoom_in();
@@ -507,19 +640,100 @@ fn watchlist_subscriptions() -> Vec<Subscription> {
 fn chart_key_messages(app: &App, old_symbol: &str, old_timeframe: Timeframe) -> Vec<ClientMessage> {
     let mut messages = Vec::with_capacity(2);
     if !is_watch_key(old_symbol, old_timeframe) {
-        // Task 16.3 makes the TUI venue-aware; until then it subscribes to `replay`.
         messages.push(ClientMessage::Unsubscribe {
-            venue: protocol::Venue::Replay,
+            venue: app.active_venue,
             symbol: old_symbol.to_owned(),
             timeframe: old_timeframe,
         });
     }
     messages.push(ClientMessage::Subscribe {
-        venue: protocol::Venue::Replay,
+        venue: app.active_venue,
         symbol: app.symbol.clone(),
         timeframe: app.timeframe,
     });
     messages
+}
+
+/// The (symbol, timeframe) keys a venue holds: the watchlist at 1m plus the chart key.
+fn venue_keys(app: &App) -> Vec<(String, Timeframe)> {
+    let mut keys: Vec<(String, Timeframe)> = DEFAULT_WATCHLIST
+        .iter()
+        .map(|symbol| ((*symbol).to_owned(), WATCH_TIMEFRAME))
+        .collect();
+    let chart = (app.symbol.clone(), app.timeframe);
+    if !keys.contains(&chart) {
+        keys.push(chart);
+    }
+    keys
+}
+
+/// The messages that move every subscription from venue `old` to the app's Active_Venue.
+fn venue_switch_messages(app: &App, old: protocol::Venue) -> Vec<ClientMessage> {
+    let keys = venue_keys(app);
+    let mut messages = Vec::with_capacity(keys.len() * 2);
+    for (symbol, timeframe) in &keys {
+        messages.push(ClientMessage::Unsubscribe {
+            venue: old,
+            symbol: symbol.clone(),
+            timeframe: *timeframe,
+        });
+    }
+    for (symbol, timeframe) in keys {
+        messages.push(ClientMessage::Subscribe {
+            venue: app.active_venue,
+            symbol,
+            timeframe,
+        });
+    }
+    messages
+}
+
+/// Opens the venue or provider picker; with a picker open, handles the keys that move,
+/// choose, and close it. Returns `None` when `key` is not a picker key.
+fn apply_picker_key(
+    app: &mut App,
+    keymap: &Keymap,
+    key: &KeyEvent,
+) -> Option<(bool, Vec<ClientMessage>)> {
+    if key.kind != KeyEventKind::Press
+        || key
+            .modifiers
+            .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+    {
+        return None;
+    }
+    if let Some(picker) = app.picker {
+        let changed = match key.code {
+            KeyCode::Up | KeyCode::Char('k') => app.move_picker(false),
+            KeyCode::Down | KeyCode::Char('j') => app.move_picker(true),
+            KeyCode::Esc => {
+                app.picker = None;
+                true
+            }
+            KeyCode::Enter => return Some(choose_picker_row(app, picker.cursor)),
+            // The picker is modal: every other key is swallowed.
+            _ => false,
+        };
+        return Some((changed, Vec::new()));
+    }
+    let kind = match global_action(keymap, key) {
+        Some(Action::VenueNext) => PickerKind::Venue,
+        Some(Action::ProviderNext) => PickerKind::Provider,
+        _ => return None,
+    };
+    Some((app.open_picker(kind), Vec::new()))
+}
+
+/// Chooses a picker row (key Enter or a click): resubscribes on a venue change and sends
+/// `SetProvider` on a provider choice.
+fn choose_picker_row(app: &mut App, index: usize) -> (bool, Vec<ClientMessage>) {
+    let (changed, switched, message) = app.choose_picker_row(index);
+    let mut messages = Vec::new();
+    if let Some((old, _)) = switched {
+        messages.extend(venue_switch_messages(app, old));
+    }
+    messages.extend(message);
+    (changed, messages)
 }
 
 /// Switches the chart timeframe and returns the subscription messages.
@@ -569,6 +783,21 @@ fn apply_symbol_action(app: &mut App, action: Action) -> (bool, Vec<ClientMessag
 fn apply_mouse_action(app: &mut App, action: MouseAction) -> (bool, Vec<ClientMessage>) {
     // Order entry clicks (✕, ticket buttons, dialog buttons, panel focus). While a dialog is
     // open it takes every action, so the dialog is modal for the mouse too (Task 12.4).
+    // The venue and provider pickers (Task 16.3). An open picker takes every mouse action.
+    match action {
+        MouseAction::OpenPicker(kind) if app.picker.is_none() => {
+            return (app.open_picker(kind), Vec::new());
+        }
+        MouseAction::PickerRow(index) if app.picker.is_some() => {
+            return choose_picker_row(app, index);
+        }
+        MouseAction::ClosePicker if app.picker.is_some() => {
+            app.picker = None;
+            return (true, Vec::new());
+        }
+        _ if app.picker.is_some() => return (false, Vec::new()),
+        _ => {}
+    }
     let now = app.now_ms;
     if let Some(outcome) = order_input::apply_order_mouse(app, &action, now) {
         return (outcome.changed, outcome.messages);
@@ -579,6 +808,7 @@ fn apply_mouse_action(app: &mut App, action: MouseAction) -> (bool, Vec<ClientMe
         MouseAction::PanBack(cols) => app.chart_view.pan_back_by(cols, app.candles.len()),
         MouseAction::PanForward(cols) => app.chart_view.pan_forward_by(cols),
         MouseAction::SelectTimeframe(timeframe) => return select_timeframe(app, timeframe),
+        MouseAction::SelectPage(page) => return (app.select_page(page), Vec::new()),
         MouseAction::SelectSymbol(symbol) => return select_symbol(app, &symbol),
         MouseAction::ToggleIndicator(indicator) => {
             app.toggles.toggle(indicator);
@@ -613,9 +843,80 @@ fn apply_mouse_action(app: &mut App, action: MouseAction) -> (bool, Vec<ClientMe
         | MouseAction::FocusCommand
         | MouseAction::FocusOrders
         | MouseAction::DialogConfirm
-        | MouseAction::DialogCancel => return (false, Vec::new()),
+        | MouseAction::DialogCancel
+        | MouseAction::OpenPicker(_)
+        | MouseAction::PickerRow(_)
+        | MouseAction::ClosePicker
+        | MouseAction::Quit => return (false, Vec::new()),
     }
     (true, Vec::new())
+}
+
+/// A key of the left menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MenuKey {
+    Page(crate::app::Page),
+    TimeframePrev,
+    TimeframeNext,
+    Help,
+    CloseHelp,
+}
+
+/// Decides whether `key` is a menu key. Pure.
+fn menu_key_kind(app: &App, keymap: &Keymap, key: &KeyEvent) -> Option<MenuKey> {
+    if key.code == KeyCode::Esc && app.help_open {
+        return Some(MenuKey::CloseHelp);
+    }
+    let digit = match global_action(keymap, key)? {
+        Action::Help => return Some(MenuKey::Help),
+        Action::TimeframePrev => return Some(MenuKey::TimeframePrev),
+        Action::TimeframeNext => return Some(MenuKey::TimeframeNext),
+        Action::Page1 => '1',
+        Action::Page2 => '2',
+        Action::Page3 => '3',
+        Action::Page4 => '4',
+        Action::Page5 => '5',
+        Action::Page6 => '6',
+        Action::Page7 => '7',
+        Action::Page8 => '8',
+        _ => return None,
+    };
+    crate::app::Page::from_digit(digit).map(MenuKey::Page)
+}
+
+/// The `global` keymap action bound to a key press, if any.
+fn global_action(keymap: &Keymap, key: &KeyEvent) -> Option<Action> {
+    resolve(keymap, Context::Global, &chord_from_crossterm(key)?)
+}
+
+/// Applies a menu key. Timeframe moves step through the timeframe buttons.
+fn apply_menu_key(app: &mut App, kind: MenuKey) -> (bool, Vec<ClientMessage>) {
+    match kind {
+        MenuKey::Page(page) => (app.select_page(page), Vec::new()),
+        MenuKey::Help => {
+            app.help_open = !app.help_open;
+            (true, Vec::new())
+        }
+        MenuKey::CloseHelp => {
+            app.help_open = false;
+            (true, Vec::new())
+        }
+        MenuKey::TimeframePrev | MenuKey::TimeframeNext => {
+            let frames = crate::ui::TIMEFRAMES;
+            let Some(index) = frames.iter().position(|t| *t == app.timeframe) else {
+                return (false, Vec::new());
+            };
+            let next = if kind == MenuKey::TimeframeNext {
+                (index + 1).min(frames.len() - 1)
+            } else {
+                index.saturating_sub(1)
+            };
+            match frames.get(next) {
+                Some(timeframe) => select_timeframe(app, *timeframe),
+                None => (false, Vec::new()),
+            }
+        }
+    }
 }
 
 /// The wall clock in epoch milliseconds. The reducers never read the clock themselves: the loop
@@ -855,7 +1156,7 @@ mod tests {
             apply_mouse_action(&mut app, MouseAction::SelectSymbol("SOL-USD".into()));
         assert!(!changed && messages.is_empty());
         let (changed, _) =
-            apply_mouse_action(&mut app, MouseAction::SelectSymbol("DOGE-USD".into()));
+            apply_mouse_action(&mut app, MouseAction::SelectSymbol("NOPE-USD".into()));
         assert!(!changed);
         assert_eq!(app.symbol, "SOL-USD");
     }
@@ -1123,7 +1424,7 @@ mod order_routing_tests {
         app.account.command_sent("r1");
         app::update(
             &mut app,
-            NetEvent::Message(ServerMessage::Preview {
+            NetEvent::msg(ServerMessage::Preview {
                 request_id: "r1".into(),
                 preview: OrderPreview {
                     preview_id: "p1".into(),

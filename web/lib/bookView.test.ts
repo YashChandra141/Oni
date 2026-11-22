@@ -2,7 +2,7 @@
 import { describe, expect, test } from "bun:test";
 import fc from "fast-check";
 import type { ServerMessage } from "../../shared/protocol/index";
-import { applyServerMessage, initialState, type TapeEntry, type TerminalState } from "./store";
+import { applyServerMessage, initialState, pairKey, type TapeEntry, type TerminalState } from "./store";
 import {
   TAPE_ROWS,
   bookKeyAction,
@@ -117,7 +117,7 @@ describe("Property 7: bounded tape with stable keys", () => {
 
   /** The rows TradesTape renders for the selected symbol, with their keys. */
   function shownRows(state: TerminalState): { entry: TapeEntry; key: string }[] {
-    return state.tape
+    return (state.tape[pairKey(state.selection.venue, state.selection.symbol)] ?? [])
       .filter((t) => t.symbol === state.selection.symbol)
       .slice(0, TAPE_ROWS)
       .map((entry, index) => ({ entry, key: rowKey(entry, index) }));
@@ -126,7 +126,7 @@ describe("Property 7: bounded tape with stable keys", () => {
   const tradeMsg = (symbol: string, ts: number, price: number): ServerMessage =>
     ({
       type: "event",
-      event: { type: "trade", symbol, price: String(price), qty: "1000000", side: "buy", ts },
+      event: { type: "trade", venue: "replay", symbol, price: String(price), qty: "1000000", side: "buy", ts },
     }) as ServerMessage;
 
   const symbols = ["BTC-USD", "ETH-USD"];
@@ -184,8 +184,10 @@ describe("Property 7 (fix check): tapeRows is bounded with stable ids", () => {
   const trade = (symbol: string, ts: number): ServerMessage =>
     ({
       type: "event",
-      event: { type: "trade", symbol, price: "6400000", qty: "1000000", side: "buy", ts },
+      event: { type: "trade", venue: "replay", symbol, price: "6400000", qty: "1000000", side: "buy", ts },
     }) as ServerMessage;
+  const tapeOf = (state: TerminalState, symbol: string): readonly TapeEntry[] =>
+    state.tape[pairKey("replay", symbol)] ?? [];
 
   test("store holds at most 200 newest first, ids unique, decreasing, stable; rows <= 50", () => {
     fc.assert(
@@ -200,17 +202,20 @@ describe("Property 7 (fix check): tapeRows is bounded with stable ids", () => {
           for (const symbol of seq) {
             ts += 1;
             state = applyServerMessage(state, trade(symbol, ts));
-            expect(state.tape.length).toBeLessThanOrEqual(200);
-            for (let i = 0; i < state.tape.length; i += 1) {
-              const entry = state.tape[i]!;
-              if (i > 0) expect(state.tape[i - 1]!.id).toBeGreaterThan(entry.id);
-              const prior = seen.get(entry.id);
-              if (prior !== undefined) expect(prior).toBe(entry);
-              seen.set(entry.id, entry);
+            for (const sym of syms) {
+              const list = tapeOf(state, sym);
+              expect(list.length).toBeLessThanOrEqual(200);
+              for (let i = 0; i < list.length; i += 1) {
+                const entry = list[i]!;
+                if (i > 0) expect(list[i - 1]!.id).toBeGreaterThan(entry.id);
+                const prior = seen.get(entry.id);
+                if (prior !== undefined) expect(prior).toBe(entry);
+                seen.set(entry.id, entry);
+              }
             }
-            expect(state.tape[0]!.ts).toBe(ts);
+            expect(tapeOf(state, symbol)[0]!.ts).toBe(ts);
           }
-          const previous = tapeRows(state.tape, selected);
+          const previous = tapeRows(tapeOf(state, selected), selected);
           expect(previous.length).toBeLessThanOrEqual(TAPE_ROWS);
           expect(previous.every((e) => e.symbol === selected)).toBe(true);
 
@@ -219,12 +224,12 @@ describe("Property 7 (fix check): tapeRows is bounded with stable ids", () => {
           state = applyServerMessage(state, trade(extraSymbol, ts));
           ts += 1;
           state = applyServerMessage(state, trade(selected, ts));
-          const created = state.tape[0]!;
-          const after = tapeRows(state.tape, selected);
+          const created = tapeOf(state, selected)[0]!;
+          const after = tapeRows(tapeOf(state, selected), selected);
           const alsoOther = extraSymbol === selected ? 1 : 0;
           // The extra trade of the selected symbol (if same) sits right below `created`.
           const expected = (
-            alsoOther === 1 ? [created, state.tape[1]!, ...previous] : [created, ...previous]
+            alsoOther === 1 ? [created, tapeOf(state, selected)[1]!, ...previous] : [created, ...previous]
           )
             .slice(0, TAPE_ROWS)
             .map((e) => e.id);

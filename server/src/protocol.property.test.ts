@@ -116,16 +116,20 @@ describe("i64 decimal strings (properties)", () => {
 const ACCOUNT_ID_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_".split("");
 const ORDER_ID_CHARS = [...ACCOUNT_ID_CHARS, "-"];
 
-const TIMEFRAMES = ["1m", "5m", "15m", "1h", "1d"] as const;
+const TIMEFRAMES = ["1m", "5m", "15m", "1h", "4h", "1d"] as const;
 const SIDES = ["buy", "sell"] as const;
 const ORDER_STATUSES = ["accepted", "canceled", "filled"] as const;
 const DATA_MODES = ["replay", "live"] as const;
-const VENUES = ["coinbase", "backpack"] as const;
+const VENUES = ["coinbase", "backpack", "jupiter", "raydium", "replay"] as const;
+const VENUE_STATUS_KINDS = ["connected", "connecting", "stale", "down", "disabled"] as const;
+const PROVIDER_IDS = ["openai", "anthropic", "nvidia", "ollama"] as const;
 const NOTICE_KINDS = [
   "account_reset",
   "engine_down",
   "engine_up",
-  "llm_disabled",
+  "ai_disabled",
+  "slow_client",
+  "provider_changed",
   "auth_failed",
   "session_expired",
   "signed_out",
@@ -193,6 +197,9 @@ const u64Arb = fc.integer({ min: 0, max: Number.MAX_SAFE_INTEGER });
 const textArb = fc.string({ unit: "binary", maxLength: 40 });
 const sideArb = fc.constantFrom(...SIDES);
 const timeframeArb = fc.constantFrom(...TIMEFRAMES);
+const venueArb = fc.constantFrom(...VENUES);
+const providerIdArb = fc.constantFrom(...PROVIDER_IDS);
+const i32Arb = fc.integer({ min: -0x8000_0000, max: 0x7fff_ffff });
 
 const orderKindArb = fc.oneof(
   fc.constant({ type: "market" as const }),
@@ -205,6 +212,7 @@ const accountCommandArb = fc.oneof(
   fc.record({
     type: fc.constant("place_order" as const),
     account_id: accountIdArb,
+    venue: venueArb,
     order_id: orderIdArb,
     symbol: textArb,
     side: sideArb,
@@ -221,18 +229,21 @@ const accountEventArb = fc.oneof(
   fc.record({
     type: fc.constant("order_ack" as const),
     account_id: accountIdArb,
+    venue: venueArb,
     order_id: orderIdArb,
     status: fc.constantFrom(...ORDER_STATUSES),
   }),
   fc.record({
     type: fc.constant("order_rejected" as const),
     account_id: accountIdArb,
+    venue: venueArb,
     order_id: orderIdArb,
     reason: textArb,
   }),
   fc.record({
     type: fc.constant("fill" as const),
     account_id: accountIdArb,
+    venue: venueArb,
     order_id: orderIdArb,
     symbol: textArb,
     side: sideArb,
@@ -260,10 +271,42 @@ const eventArb = fc.oneof(
   fc.record({ type: fc.constant("pong" as const), id: u64Arb }),
   fc.record({
     type: fc.constant("trade" as const),
+    venue: venueArb,
     symbol: textArb,
     price: i64TextArb,
     qty: i64TextArb,
     side: sideArb,
+    synthetic: fc.boolean(),
+    ts: timeMsArb,
+  }),
+  fc.record({
+    type: fc.constant("ticker24h" as const),
+    symbol: textArb,
+    venue: venueArb,
+    ticker: fc.record({
+      open: i64TextArb,
+      high: i64TextArb,
+      low: i64TextArb,
+      last: i64TextArb,
+      volume: fc.option(i64TextArb, { nil: null }),
+      change_bps: i32Arb,
+      partial: fc.boolean(),
+    }),
+    synthetic: fc.boolean(),
+    ts: timeMsArb,
+  }),
+  fc.record({
+    type: fc.constant("venue_status" as const),
+    venue: venueArb,
+    status: fc.constantFrom(...VENUE_STATUS_KINDS),
+    ts: timeMsArb,
+  }),
+  fc.record({
+    type: fc.constant("balance" as const),
+    account_id: accountIdArb,
+    paper_balance: i64TextArb,
+    free_balance: i64TextArb,
+    equity: i64TextArb,
     ts: timeMsArb,
   }),
   fc.record({ type: fc.constant("error" as const), code: fc.constantFrom(...ERROR_CODES), message: textArb }),
@@ -271,9 +314,30 @@ const eventArb = fc.oneof(
 
 /** Every ClientMessage variant (Req 1.7). */
 const clientMessageArb = fc.oneof(
-  fc.record({ type: fc.constant("subscribe" as const), symbol: textArb, timeframe: timeframeArb }),
-  fc.record({ type: fc.constant("unsubscribe" as const), symbol: textArb, timeframe: timeframeArb }),
-  fc.record({ type: fc.constant("command_text" as const), request_id: textArb, text: textArb }),
+  fc.record({ type: fc.constant("subscribe" as const), venue: venueArb, symbol: textArb, timeframe: timeframeArb }),
+  fc.record({ type: fc.constant("unsubscribe" as const), venue: venueArb, symbol: textArb, timeframe: timeframeArb }),
+  fc.record({ type: fc.constant("subscribe_ticker" as const), symbol: textArb, venue: venueArb }),
+  fc.record({ type: fc.constant("unsubscribe_ticker" as const), symbol: textArb, venue: venueArb }),
+  fc.record({
+    type: fc.constant("command_text" as const),
+    request_id: textArb,
+    text: textArb,
+    venue: fc.option(venueArb, { nil: null }),
+  }),
+  fc.record({ type: fc.constant("cancel_twap" as const), request_id: textArb, twap_id: textArb }),
+  fc.record({ type: fc.constant("set_provider" as const), provider: providerIdArb }),
+  fc.record({
+    type: fc.constant("ai_request" as const),
+    request_id: textArb,
+    action: fc.constantFrom(...(["analyze", "ask", "create_strategy", "scan"] as const)),
+    text: fc.string({ maxLength: 100 }),
+    symbol: textArb,
+    timeframe: timeframeArb,
+    venue: venueArb,
+  }),
+  fc.record({ type: fc.constant("ai_cancel" as const), request_id: textArb }),
+  fc.constant({ type: "subscribe_news" as const }),
+  fc.constant({ type: "unsubscribe_news" as const }),
   fc.record({ type: fc.constant("confirm" as const), request_id: textArb, preview_id: textArb }),
   fc.record({ type: fc.constant("discard" as const), preview_id: textArb }),
   fc.record({ type: fc.constant("cancel" as const), request_id: textArb, order_id: orderIdArb }),
@@ -288,9 +352,19 @@ const previewActionArb = fc.oneof(
   fc.record({
     type: fc.constant("place" as const),
     symbol: textArb,
+    venue: venueArb,
     side: sideArb,
     qty: i64TextArb,
     kind: orderKindArb,
+  }),
+  fc.record({
+    type: fc.constant("twap" as const),
+    symbol: textArb,
+    side: sideArb,
+    venue: venueArb,
+    total_qty: i64TextArb,
+    slices: u32Arb,
+    interval_s: u32Arb,
   }),
   fc.constant({ type: "cancel_all" as const }),
   fc.constant({ type: "flatten_all" as const }),
@@ -301,6 +375,14 @@ const instrumentInfoArb = fc.record({
   short: textArb,
   price_decimals: u32Arb,
   qty_decimals: u32Arb,
+  reference_price: i64TextArb,
+  venues: fc.array(venueArb, { maxLength: 5 }),
+});
+
+const providerInfoArb = fc.record({
+  id: providerIdArb,
+  model: textArb,
+  reason: fc.option(textArb, { nil: null }),
 });
 
 /** Every ServerMessage variant (Req 1.8, 1.11). `session` has both address forms. */
@@ -309,9 +391,34 @@ const serverMessageArb = fc.oneof(
     type: fc.constant("hello" as const),
     protocol_version: u32Arb,
     data_mode: fc.constantFrom(...DATA_MODES),
-    venue: fc.option(fc.constantFrom(...VENUES), { nil: null }),
+    live_venues: fc.array(venueArb, { maxLength: 4 }),
+    venue_status: fc.array(
+      fc.record({ venue: venueArb, status: fc.constantFrom(...VENUE_STATUS_KINDS) }),
+      { maxLength: 4 },
+    ),
+    default_venue: venueArb,
+    starting_balance: i64TextArb,
     engine_running: fc.boolean(),
     instruments: fc.array(instrumentInfoArb, { maxLength: 3 }),
+    providers: fc.array(providerInfoArb, { maxLength: 4 }),
+    news_enabled: fc.boolean(),
+  }),
+  fc.record({
+    type: fc.constant("twap" as const),
+    twap_id: textArb,
+    symbol: textArb,
+    side: sideArb,
+    venue: venueArb,
+    slices: u32Arb,
+    sent: u32Arb,
+    status: fc.constantFrom(...(["active", "done", "canceled"] as const)),
+    reason: fc.option(textArb, { nil: null }),
+  }),
+  fc.record({
+    type: fc.constant("providers" as const),
+    available: fc.array(providerInfoArb, { maxLength: 4 }),
+    default: fc.option(providerIdArb, { nil: null }),
+    selected: fc.option(providerIdArb, { nil: null }),
   }),
   fc.record({ type: fc.constant("event" as const), event: eventArb }),
   fc.record({

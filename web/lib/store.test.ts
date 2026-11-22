@@ -11,6 +11,7 @@ import {
   candleKey,
   initialState,
   mergeBar,
+  pairKey,
   useTerminalStore,
   withSymbol,
   withTimeframe,
@@ -51,8 +52,22 @@ const HELLO: ServerMessage = {
   starting_balance: "1000000000000000",
   engine_running: true,
   instruments: [
-    { symbol: "BTC-USD", short: "BTC", price_decimals: 2, qty_decimals: 8, venues: ["coinbase", "backpack"] },
-    { symbol: "ETH-USD", short: "ETH", price_decimals: 2, qty_decimals: 8, venues: ["coinbase", "backpack"] },
+    {
+      symbol: "BTC-USD",
+      short: "BTC",
+      price_decimals: 2,
+      qty_decimals: 8,
+      reference_price: "64000.00",
+      venues: ["coinbase", "backpack"],
+    },
+    {
+      symbol: "ETH-USD",
+      short: "ETH",
+      price_decimals: 2,
+      qty_decimals: 8,
+      reference_price: "3500.00",
+      venues: ["coinbase", "backpack"],
+    },
   ],
   providers: [],
   news_enabled: false,
@@ -65,11 +80,11 @@ function times(list: readonly Bar[] | undefined): number[] {
 describe("initial state", () => {
   test("selects BTC-USD 1m and starts connecting", () => {
     const state = initialState();
-    expect(state.selection).toEqual({ symbol: "BTC-USD", timeframe: "1m" });
+    expect(state.selection).toEqual({ venue: "replay", symbol: "BTC-USD", timeframe: "1m" });
     expect(state.connection).toEqual({ kind: "connecting", attempt: 1 });
     expect(state.hello).toBeNull();
     expect(state.session).toBeNull();
-    expect(state.tape).toEqual([]);
+    expect(state.tape).toEqual({});
     expect(state.badFrames).toBe(0);
     expect(state.lastError).toBeNull();
   });
@@ -102,7 +117,14 @@ describe("hello and session", () => {
       starting_balance: "1000000000000000",
       engine_running: false,
       instruments: [
-        { symbol: "SOL-USD", short: "SOL", price_decimals: 2, qty_decimals: 8, venues: ["coinbase", "backpack"] },
+        {
+          symbol: "SOL-USD",
+          short: "SOL",
+          price_decimals: 2,
+          qty_decimals: 8,
+          reference_price: "150.00",
+          venues: ["coinbase", "backpack"],
+        },
       ],
       providers: [],
       news_enabled: false,
@@ -133,8 +155,8 @@ describe("candles", () => {
     let state = applyServerMessage(initialState(), candle("BTC-USD", "1m", true, [bar(1), bar(2)]));
     state = applyServerMessage(state, candle("BTC-USD", "5m", true, [bar(10)]));
     state = applyServerMessage(state, candle("BTC-USD", "1m", true, [bar(5), bar(6), bar(7)]));
-    expect(times(state.candles[candleKey("BTC-USD", "1m")])).toEqual([5, 6, 7]);
-    expect(times(state.candles[candleKey("BTC-USD", "5m")])).toEqual([10]);
+    expect(times(state.candles[candleKey("replay", "BTC-USD", "1m")])).toEqual([5, 6, 7]);
+    expect(times(state.candles[candleKey("replay", "BTC-USD", "5m")])).toEqual([10]);
   });
 
   test("a snapshot keeps only the newest 500 bars", () => {
@@ -142,7 +164,7 @@ describe("candles", () => {
       initialState(),
       candle("BTC-USD", "1m", true, bars(0, MAX_CANDLES + 100)),
     );
-    const list = state.candles[candleKey("BTC-USD", "1m")] ?? [];
+    const list = state.candles[candleKey("replay", "BTC-USD", "1m")] ?? [];
     expect(list).toHaveLength(MAX_CANDLES);
     expect(list[0]?.t).toBe(100);
     expect(list[list.length - 1]?.t).toBe(MAX_CANDLES + 99);
@@ -151,7 +173,7 @@ describe("candles", () => {
   test("a live bar with the same t replaces the last bar", () => {
     let state = applyServerMessage(initialState(), candle("BTC-USD", "1m", true, [bar(1), bar(2)]));
     state = applyServerMessage(state, candle("BTC-USD", "1m", false, [bar(2, "105")]));
-    const list = state.candles[candleKey("BTC-USD", "1m")] ?? [];
+    const list = state.candles[candleKey("replay", "BTC-USD", "1m")] ?? [];
     expect(times(list)).toEqual([1, 2]);
     expect(list[1]?.close).toBe("105");
   });
@@ -159,12 +181,12 @@ describe("candles", () => {
   test("a live bar with a newer t is appended", () => {
     let state = applyServerMessage(initialState(), candle("BTC-USD", "1m", true, [bar(1)]));
     state = applyServerMessage(state, candle("BTC-USD", "1m", false, [bar(2), bar(3)]));
-    expect(times(state.candles[candleKey("BTC-USD", "1m")])).toEqual([1, 2, 3]);
+    expect(times(state.candles[candleKey("replay", "BTC-USD", "1m")])).toEqual([1, 2, 3]);
   });
 
   test("a live bar with no snapshot yet starts the list", () => {
     const state = applyServerMessage(initialState(), candle("ETH-USD", "1m", false, [bar(7)]));
-    expect(times(state.candles[candleKey("ETH-USD", "1m")])).toEqual([7]);
+    expect(times(state.candles[candleKey("replay", "ETH-USD", "1m")])).toEqual([7]);
   });
 
   test("an older live bar replaces its match or is inserted in order", () => {
@@ -178,7 +200,7 @@ describe("candles", () => {
   test("live bars never push the list past 500", () => {
     let state = applyServerMessage(initialState(), candle("BTC-USD", "1m", true, bars(0, MAX_CANDLES)));
     state = applyServerMessage(state, candle("BTC-USD", "1m", false, [bar(MAX_CANDLES)]));
-    const list = state.candles[candleKey("BTC-USD", "1m")] ?? [];
+    const list = state.candles[candleKey("replay", "BTC-USD", "1m")] ?? [];
     expect(list).toHaveLength(MAX_CANDLES);
     expect(list[0]?.t).toBe(1);
     expect(list[list.length - 1]?.t).toBe(MAX_CANDLES);
@@ -186,9 +208,9 @@ describe("candles", () => {
 
   test("a merge does not change the previous state", () => {
     const before = applyServerMessage(initialState(), candle("BTC-USD", "1m", true, [bar(1)]));
-    const beforeList = before.candles[candleKey("BTC-USD", "1m")];
+    const beforeList = before.candles[candleKey("replay", "BTC-USD", "1m")];
     applyServerMessage(before, candle("BTC-USD", "1m", false, [bar(1, "1"), bar(2)]));
-    expect(before.candles[candleKey("BTC-USD", "1m")]).toBe(beforeList);
+    expect(before.candles[candleKey("replay", "BTC-USD", "1m")]).toBe(beforeList);
     expect(times(beforeList)).toEqual([1]);
     expect(beforeList?.[0]?.close).toBe("100");
   });
@@ -196,7 +218,7 @@ describe("candles", () => {
   test("a candle event without a bars array does not throw", () => {
     const bad = { type: "candle", venue: "replay", symbol: "BTC-USD", timeframe: "1m", snapshot: true } as unknown as Event;
     const state = applyEvent(initialState(), bad);
-    expect(state.candles[candleKey("BTC-USD", "1m")]).toEqual([]);
+    expect(state.candles[candleKey("replay", "BTC-USD", "1m")]).toEqual([]);
   });
 });
 
@@ -205,11 +227,14 @@ describe("trades and tape", () => {
     let state = applyServerMessage(initialState(), trade(1, "BTC-USD", "6400012"));
     state = applyServerMessage(state, trade(2, "ETH-USD", "350000"));
     state = applyServerMessage(state, trade(3, "BTC-USD", "6400100"));
-    expect(state.lastTrade["BTC-USD"]?.price).toBe("6400100");
-    expect(state.lastTrade["ETH-USD"]?.price).toBe("350000");
-    expect(state.tape.map((t) => t.ts)).toEqual([3, 2, 1]);
-    expect(state.tape[0]).toEqual({
+    expect(state.lastTrade[pairKey("replay", "BTC-USD")]?.price).toBe("6400100");
+    expect(state.lastTrade[pairKey("replay", "ETH-USD")]?.price).toBe("350000");
+    const btcTape = state.tape[pairKey("replay", "BTC-USD")] ?? [];
+    expect(btcTape.map((t) => t.ts)).toEqual([3, 1]);
+    expect((state.tape[pairKey("replay", "ETH-USD")] ?? []).map((t) => t.ts)).toEqual([2]);
+    expect(btcTape[0]).toEqual({
       id: 3,
+      venue: "replay",
       symbol: "BTC-USD",
       price: "6400100",
       qty: "1000000",
@@ -221,9 +246,10 @@ describe("trades and tape", () => {
   test("the tape keeps the newest 200 trades", () => {
     let state = initialState();
     for (let ts = 0; ts < MAX_TAPE + 50; ts += 1) state = applyServerMessage(state, trade(ts));
-    expect(state.tape).toHaveLength(MAX_TAPE);
-    expect(state.tape[0]?.ts).toBe(MAX_TAPE + 49);
-    expect(state.tape[MAX_TAPE - 1]?.ts).toBe(50);
+    const tape = state.tape[pairKey("replay", "BTC-USD")] ?? [];
+    expect(tape).toHaveLength(MAX_TAPE);
+    expect(tape[0]?.ts).toBe(MAX_TAPE + 49);
+    expect(tape[MAX_TAPE - 1]?.ts).toBe(50);
   });
 });
 
@@ -302,14 +328,14 @@ describe("connection events", () => {
 
   test("a message event applies the server message", () => {
     const state = applySocketEvent(initialState(), { type: "message", message: HELLO });
-    expect(state.hello?.protocolVersion).toBe(2);
+    expect(state.hello?.protocolVersion).toBe(3);
   });
 });
 
 describe("selection", () => {
   test("withSymbol and withTimeframe change one field each", () => {
     const state = withTimeframe(withSymbol(initialState(), "ETH-USD"), "1h");
-    expect(state.selection).toEqual({ symbol: "ETH-USD", timeframe: "1h" });
+    expect(state.selection).toEqual({ venue: "replay", symbol: "ETH-USD", timeframe: "1h" });
   });
 
   test("selecting the current value returns the same state", () => {
@@ -326,7 +352,7 @@ describe("useTerminalStore", () => {
 
   test("starts from the initial state with its actions", () => {
     const state = useTerminalStore.getState();
-    expect(state.selection).toEqual({ symbol: "BTC-USD", timeframe: "1m" });
+    expect(state.selection).toEqual({ venue: "replay", symbol: "BTC-USD", timeframe: "1m" });
     expect(typeof state.handleSocketEvent).toBe("function");
   });
 
@@ -341,7 +367,11 @@ describe("useTerminalStore", () => {
   test("selectSymbol and selectTimeframe update the selection", () => {
     useTerminalStore.getState().selectSymbol("SOL-USD");
     useTerminalStore.getState().selectTimeframe("15m");
-    expect(useTerminalStore.getState().selection).toEqual({ symbol: "SOL-USD", timeframe: "15m" });
+    expect(useTerminalStore.getState().selection).toEqual({
+      venue: "replay",
+      symbol: "SOL-USD",
+      timeframe: "15m",
+    });
   });
 });
 
@@ -351,19 +381,21 @@ describe("protocol v3 messages", () => {
       m.type === "event" ? [{ ...m.event, emit_us: null }] : [],
     );
     const state = applyServerMessage(initialState(), { type: "event_batch", events });
-    expect(state.tape.map((t) => t.price)).toEqual(["200", "100"]);
-    expect(state.lastTrade["BTC-USD"]?.price).toBe("200");
+    const key = pairKey("replay", "BTC-USD");
+    expect((state.tape[key] ?? []).map((t) => t.price)).toEqual(["200", "100"]);
+    expect(state.lastTrade[key]?.price).toBe("200");
   });
 
-  test("new venue, ticker, AI, news, and TWAP messages leave the state unchanged", () => {
-    const start = initialState();
-    const messages: ServerMessage[] = [
-      { type: "providers", available: [], default: null, selected: null },
-      { type: "news", available: false, items: [], updated_at: null },
-      { type: "ai_error", request_id: "r", reason: "timeout", message: "slow" },
-      { type: "event", event: { type: "venue_status", venue: "jupiter", status: "down", ts: 1 } },
-      { type: "event", event: { type: "reference_venue", symbol: "BTC-USD", venue: null } },
-    ];
-    for (const message of messages) expect(applyServerMessage(start, message)).toBe(start);
+  test("venue status and reference venue messages are stored", () => {
+    let state = applyServerMessage(initialState(), {
+      type: "event",
+      event: { type: "venue_status", venue: "jupiter", status: "down", ts: 1 },
+    });
+    expect(state.venueStatus.jupiter).toBe("down");
+    state = applyServerMessage(state, {
+      type: "event",
+      event: { type: "reference_venue", symbol: "BTC-USD", venue: null },
+    });
+    expect(state.referenceVenue["BTC-USD"]).toBeNull();
   });
 });

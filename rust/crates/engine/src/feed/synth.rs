@@ -72,11 +72,29 @@ pub enum SynthSymbol {
     Btc,
     Eth,
     Sol,
+    Bnb,
+    Xrp,
+    Doge,
+    Jup,
+    Wif,
+    Bonk,
+    Pepe,
 }
 
 impl SynthSymbol {
     /// Every symbol, in instrument table order.
-    pub const ALL: [Self; 3] = [Self::Btc, Self::Eth, Self::Sol];
+    pub const ALL: [Self; 10] = [
+        Self::Btc,
+        Self::Eth,
+        Self::Sol,
+        Self::Bnb,
+        Self::Xrp,
+        Self::Doge,
+        Self::Jup,
+        Self::Wif,
+        Self::Bonk,
+        Self::Pepe,
+    ];
 
     /// The full symbol, e.g. `BTC-USD`.
     pub fn symbol(self) -> &'static str {
@@ -88,6 +106,13 @@ impl SynthSymbol {
             Self::Btc => &BTC,
             Self::Eth => &ETH,
             Self::Sol => &SOL,
+            Self::Bnb => &BNB,
+            Self::Xrp => &XRP,
+            Self::Doge => &DOGE,
+            Self::Jup => &JUP,
+            Self::Wif => &WIF,
+            Self::Bonk => &BONK,
+            Self::Pepe => &PEPE,
         }
     }
 }
@@ -110,7 +135,8 @@ impl fmt::Display for UnknownSymbol {
         }
         write!(
             f,
-            "unknown symbol {value:?}, expected BTC-USD, ETH-USD, or SOL-USD"
+            "unknown symbol {value:?}, expected one of BTC-USD, ETH-USD, SOL-USD, BNB-USD, \
+             XRP-USD, DOGE-USD, JUP-USD, WIF-USD, BONK-USD, PEPE-USD"
         )
     }
 }
@@ -151,7 +177,7 @@ struct Profile {
 static BTC: Profile = Profile {
     symbol: "BTC-USD",
     short: "BTC",
-    start_price: 6_400_000,
+    start_price: 5_940_000,
     level_step: 1_000,
     hourly_vol: 0.0035,
     trade_qty: (10_000, 50_000_000),
@@ -161,7 +187,7 @@ static BTC: Profile = Profile {
 static ETH: Profile = Profile {
     symbol: "ETH-USD",
     short: "ETH",
-    start_price: 320_000,
+    start_price: 164_000,
     level_step: 60,
     hourly_vol: 0.004,
     trade_qty: (100_000, 800_000_000),
@@ -171,11 +197,92 @@ static ETH: Profile = Profile {
 static SOL: Profile = Profile {
     symbol: "SOL-USD",
     short: "SOL",
-    start_price: 15_000,
+    start_price: 6_870,
     level_step: 4,
     hourly_vol: 0.005,
     trade_qty: (1_000_000, 15_000_000_000),
     level_qty: (100_000_000, 50_000_000_000),
+};
+
+// Design reference prices. Price in ticks, quantity in lots (tick and lot from the instrument
+// table). `level_step` is about three times the typical price move between book updates, so the
+// book rarely shifts by more than one grid step.
+
+/// Reference 547 USD, tick 0.01, lot 1e-8.
+static BNB: Profile = Profile {
+    symbol: "BNB-USD",
+    short: "BNB",
+    start_price: 54_700,
+    level_step: 20,
+    hourly_vol: 0.004,
+    trade_qty: (100_000, 1_000_000_000),
+    level_qty: (10_000_000, 20_000_000_000),
+};
+
+/// Reference 0.913 USD, tick 1e-4, lot 1e-6.
+static XRP: Profile = Profile {
+    symbol: "XRP-USD",
+    short: "XRP",
+    start_price: 9_130,
+    level_step: 4,
+    hourly_vol: 0.005,
+    trade_qty: (1_000_000, 2_000_000_000),
+    level_qty: (100_000_000, 50_000_000_000),
+};
+
+/// Reference 0.0538 USD, tick 1e-6, lot 1e-4.
+static DOGE: Profile = Profile {
+    symbol: "DOGE-USD",
+    short: "DOGE",
+    start_price: 53_800,
+    level_step: 40,
+    hourly_vol: 0.007,
+    trade_qty: (100_000, 500_000_000),
+    level_qty: (10_000_000, 5_000_000_000),
+};
+
+/// Reference 0.221 USD, tick 1e-6, lot 1e-4.
+static JUP: Profile = Profile {
+    symbol: "JUP-USD",
+    short: "JUP",
+    start_price: 221_000,
+    level_step: 150,
+    hourly_vol: 0.008,
+    trade_qty: (100_000, 200_000_000),
+    level_qty: (10_000_000, 3_000_000_000),
+};
+
+/// Reference 0.12 USD, tick 1e-6, lot 1e-4.
+static WIF: Profile = Profile {
+    symbol: "WIF-USD",
+    short: "WIF",
+    start_price: 120_000,
+    level_step: 100,
+    hourly_vol: 0.008,
+    trade_qty: (100_000, 200_000_000),
+    level_qty: (10_000_000, 3_000_000_000),
+};
+
+/// Reference 0.00000207 USD, tick 1e-10, lot 1 BONK.
+static BONK: Profile = Profile {
+    symbol: "BONK-USD",
+    short: "BONK",
+    start_price: 20_700,
+    level_step: 12,
+    hourly_vol: 0.008,
+    trade_qty: (100_000, 500_000_000),
+    level_qty: (10_000_000, 20_000_000_000),
+};
+
+/// Reference 0.00000339 USD, tick 1e-10, lot 1 PEPE.
+static PEPE: Profile = Profile {
+    symbol: "PEPE-USD",
+    short: "PEPE",
+    start_price: 33_900,
+    level_step: 20,
+    hourly_vol: 0.008,
+    trade_qty: (100_000, 500_000_000),
+    level_qty: (10_000_000, 20_000_000_000),
 };
 
 /// Generates the fixture lines for `config`. See the module docs.
@@ -237,6 +344,8 @@ pub fn stats(lines: &[FixtureLine]) -> Vec<SymbolStats> {
             }
             MarketMsg::BookSnapshot { .. } => entry.snapshots += 1,
             MarketMsg::BookDelta { .. } => entry.deltas += 1,
+            // The generator makes no DEX samples.
+            MarketMsg::PriceSample { .. } | MarketMsg::Status { .. } | MarketMsg::Clock { .. } => {}
         }
     }
     out
@@ -457,6 +566,7 @@ impl SymbolSim {
             asks.push(Level { price, qty });
         }
         let msg = MarketMsg::BookSnapshot {
+            venue: protocol::Venue::Replay,
             symbol: self.profile.symbol.to_owned(),
             bids,
             asks,
@@ -478,6 +588,7 @@ impl SymbolSim {
         };
         let (lo, hi) = self.profile.trade_qty;
         let msg = MarketMsg::Trade {
+            venue: protocol::Venue::Replay,
             symbol: self.profile.symbol.to_owned(),
             price: Price(self.price),
             qty: Qty(self.rng.skewed(lo, hi, 3)),
@@ -489,6 +600,7 @@ impl SymbolSim {
 
     fn delta(&self, now: TimeMs, side: Side, level: i64, qty: Qty) -> FixtureLine {
         let msg = MarketMsg::BookDelta {
+            venue: protocol::Venue::Replay,
             symbol: self.profile.symbol.to_owned(),
             side,
             price: Price(level.saturating_mul(self.profile.level_step)),
@@ -630,10 +742,13 @@ mod tests {
                         assert!(book.best_bid() <= price.0, "line {at}");
                         assert!(price.0 < book.best_ask(), "line {at}");
                     }
+                    MarketMsg::PriceSample { .. }
+                    | MarketMsg::Status { .. }
+                    | MarketMsg::Clock { .. } => panic!("line {at}: unexpected message"),
                 }
                 assert!(book.bids.values().chain(book.asks.values()).all(|&q| q > 0));
             }
-            assert_eq!(books.len(), 3);
+            assert_eq!(books.len(), SynthSymbol::ALL.len());
             for book in books.values() {
                 assert_eq!(book.bids.len(), BOOK_DEPTH as usize);
                 assert_eq!(book.asks.len(), BOOK_DEPTH as usize);
@@ -653,6 +768,8 @@ mod tests {
                     }
                 }
                 MarketMsg::BookDelta { price, qty, .. } => assert!(price.0 > 0 && qty.0 >= 0),
+                MarketMsg::PriceSample { price, .. } => assert!(price.0 > 0),
+                MarketMsg::Status { .. } | MarketMsg::Clock { .. } => {}
             }
         }
     }
@@ -667,13 +784,15 @@ mod tests {
             assert_eq!(line.msg.ts(), line.recv);
             assert!(cfg.start_ms <= line.recv && line.recv < end);
         }
-        // The three snapshots open the fixture, in the requested symbol order.
-        let first: Vec<_> = lines.iter().take(3).map(|l| l.msg.symbol()).collect();
-        assert_eq!(first, ["BTC-USD", "ETH-USD", "SOL-USD"]);
+        // The snapshots open the fixture, in the requested symbol order.
+        let n = SynthSymbol::ALL.len();
+        let first: Vec<_> = lines.iter().take(n).map(|l| l.msg.symbol()).collect();
+        let expected: Vec<_> = SynthSymbol::ALL.iter().map(|s| s.symbol()).collect();
+        assert_eq!(first, expected);
         assert!(
             lines
                 .iter()
-                .take(3)
+                .take(n)
                 .all(|l| matches!(l.msg, MarketMsg::BookSnapshot { .. }))
         );
     }
@@ -701,7 +820,7 @@ mod tests {
     #[test]
     fn zero_duration_gives_only_the_snapshots() {
         let lines = synth(&config(1, 0, &SynthSymbol::ALL));
-        assert_eq!(lines.len(), 3);
+        assert_eq!(lines.len(), SynthSymbol::ALL.len());
         assert!(
             lines
                 .iter()
@@ -710,11 +829,12 @@ mod tests {
     }
 
     #[test]
-    fn default_fixture_is_under_8_mb_and_every_hour_has_trades() {
+    fn default_fixture_is_under_16_mib_and_every_hour_has_trades() {
         let cfg = default_config();
         let lines = synth(&cfg);
         let bytes = encoded(&lines).len();
-        assert!(bytes < 8 * 1024 * 1024, "{bytes} bytes");
+        // v2 has ten symbols; the fixture limit is 16 MiB.
+        assert!(bytes < 16 * 1024 * 1024, "{bytes} bytes");
         let hours = (cfg.duration_ms / (60 * MINUTE_MS)) as usize;
         assert!(hours >= 2);
         for symbol in SynthSymbol::ALL {
@@ -740,7 +860,7 @@ mod tests {
             let p = symbol.profile();
             let instrument = instrument(p.symbol).unwrap();
             assert_eq!(instrument.short, p.short);
-            assert_eq!((instrument.price_decimals, instrument.qty_decimals), (2, 8));
+            assert!(instrument.price_decimals + instrument.qty_decimals <= 10);
             assert!(p.level_step >= 1);
             assert!(p.start_price >= BOOK_DEPTH * p.level_step);
             assert!(0 < p.trade_qty.0 && p.trade_qty.0 < p.trade_qty.1);
@@ -755,11 +875,8 @@ mod tests {
         }
         assert_eq!("btc".parse::<SynthSymbol>().unwrap(), SynthSymbol::Btc);
         assert_eq!("sol-usd".parse::<SynthSymbol>().unwrap(), SynthSymbol::Sol);
-        let err = "DOGE-USD".parse::<SynthSymbol>().unwrap_err();
-        assert_eq!(
-            err.to_string(),
-            r#"unknown symbol "DOGE-USD", expected BTC-USD, ETH-USD, or SOL-USD"#
-        );
+        let err = "LTC-USD".parse::<SynthSymbol>().unwrap_err();
+        assert!(err.to_string().starts_with(r#"unknown symbol "LTC-USD""#));
     }
 
     #[test]

@@ -285,6 +285,9 @@ fn validate(msg: &MarketMsg) -> Result<(), LineError> {
                 })
             }
         }
+        MarketMsg::PriceSample { price, .. } => positive("sample price", price.0),
+        // No symbol, so the check above already refused them.
+        MarketMsg::Status { .. } | MarketMsg::Clock { .. } => Ok(()),
     }
 }
 
@@ -328,6 +331,7 @@ mod tests {
         FixtureLine {
             recv,
             msg: MarketMsg::Trade {
+                venue: protocol::Venue::Replay,
                 symbol: symbol.into(),
                 price: Price(price),
                 qty: Qty(qty),
@@ -350,6 +354,7 @@ mod tests {
         FixtureLine {
             recv,
             msg: MarketMsg::BookSnapshot {
+                venue: protocol::Venue::Replay,
                 symbol: "ETH-USD".into(),
                 bids: levels(bids),
                 asks: levels(asks),
@@ -362,6 +367,7 @@ mod tests {
         FixtureLine {
             recv,
             msg: MarketMsg::BookDelta {
+                venue: protocol::Venue::Replay,
                 symbol: "SOL-USD".into(),
                 side: Side::Sell,
                 price: Price(101),
@@ -448,9 +454,9 @@ mod tests {
 
     #[test]
     fn unknown_symbols_are_refused_and_named() {
-        let err = decode_reason(&trade(1, "DOGE-USD", 1, 1));
-        assert_eq!(err, LineError::UnknownSymbol("DOGE-USD".into()));
-        assert_eq!(err.to_string(), r#"unknown symbol "DOGE-USD""#);
+        let err = decode_reason(&trade(1, "NOPE-USD", 1, 1));
+        assert_eq!(err, LineError::UnknownSymbol("NOPE-USD".into()));
+        assert_eq!(err.to_string(), r#"unknown symbol "NOPE-USD""#);
         let short = decode_reason(&trade(1, "BTC", 1, 1));
         assert_eq!(short, LineError::UnknownSymbol("BTC".into()));
 
@@ -577,7 +583,7 @@ mod tests {
 
         let too_long = with_second(&vec![b' '; MAX_LINE_BYTES + 1]);
         let unknown = file(
-            &[trade(1, "BTC-USD", 1, 1), trade(2, "XRP-USD", 1, 1)],
+            &[trade(1, "BTC-USD", 1, 1), trade(2, "NOPE-USD", 1, 1)],
             "\n",
         );
         let cases: [(Vec<u8>, &str); 6] = [
@@ -588,7 +594,7 @@ mod tests {
             (with_second(b"\xff\xfe"), "line 2: line is not valid UTF-8"),
             (with_second(b""), "line 2: invalid JSON: "),
             (with_second(b"{\"recv\":2}"), "line 2: JSON does not match"),
-            (unknown, "line 2: unknown symbol \"XRP-USD\""),
+            (unknown, "line 2: unknown symbol \"NOPE-USD\""),
             (
                 file(&[trade(1, "BTC-USD", 1, 1), delta(2, -4)], "\r\n"),
                 "line 2: delta qty is -4, expected 0 or greater",

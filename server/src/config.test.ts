@@ -67,7 +67,7 @@ describe("loadConfig defaults (Req 16.1)", () => {
     expect(config.openaiModel).toBe(DEFAULT_OPENAI_MODEL);
     expect(config.nodeEnv).toBeUndefined();
     expect(config.isProduction).toBe(false);
-    expect(config.liveVenue).toBe("backpack");
+    expect([...config.liveVenues]).toEqual(["coinbase", "backpack", "jupiter", "raydium"]);
     expect(config.webUrl).toBe("http://localhost:3000");
     // Req 16.8: no SESSION_SECRET means a per-process secret with a warning.
     expect(warnings).toHaveLength(1);
@@ -276,16 +276,33 @@ describe("SESSION_SECRET (Req 16.7, 16.8)", () => {
   });
 });
 
-describe("LIVE_VENUE (Req 16.1)", () => {
-  test("defaults to backpack when unset or empty", () => {
-    expect(ok({}).config.liveVenue).toBe("backpack");
-    expect(ok({ LIVE_VENUE: "" }).config.liveVenue).toBe("backpack");
+describe("LIVE_VENUES and the LIVE_VENUE alias (Req 16.1)", () => {
+  const ALL = ["coinbase", "backpack", "jupiter", "raydium"];
+
+  test("defaults to all four venues when unset or empty", () => {
+    expect([...ok({}).config.liveVenues]).toEqual(ALL);
+    expect([...ok({ LIVE_VENUE: "" }).config.liveVenues]).toEqual(ALL);
+    expect([...ok({ LIVE_VENUES: "" }).config.liveVenues]).toEqual(ALL);
   });
 
-  test("accepts coinbase and backpack", () => {
-    expect(ok({ LIVE_VENUE: "coinbase" }).config.liveVenue).toBe("coinbase");
-    expect(ok({ LIVE_VENUE: "backpack" }).config.liveVenue).toBe("backpack");
-    expect(ok({ LIVE_VENUE: "coinbase" }).config.toJSON()).toMatchObject({ liveVenue: "coinbase" });
+  test("LIVE_VENUE is a single-venue alias", () => {
+    expect([...ok({ LIVE_VENUE: "coinbase" }).config.liveVenues]).toEqual(["coinbase"]);
+    expect([...ok({ LIVE_VENUE: "backpack" }).config.liveVenues]).toEqual(["backpack"]);
+    expect(ok({ LIVE_VENUE: "coinbase" }).config.toJSON()).toMatchObject({
+      liveVenue: "coinbase",
+      liveVenues: ["coinbase"],
+    });
+  });
+
+  test("LIVE_VENUES wins over the alias and drops duplicates", () => {
+    const { config } = ok({ LIVE_VENUE: "coinbase", LIVE_VENUES: "jupiter, raydium,jupiter" });
+    expect([...config.liveVenues]).toEqual(["jupiter", "raydium"]);
+  });
+
+  test("an unknown venue in LIVE_VENUES is invalid", () => {
+    const error = fail({ LIVE_VENUES: "coinbase,kraken-zz" });
+    expect(error.issues.map((i) => [i.variable, i.problem])).toEqual([["LIVE_VENUES", "invalid"]]);
+    expect(errorText(error)).not.toContain("kraken-zz");
   });
 
   test("any other value is invalid, even in replay mode", () => {

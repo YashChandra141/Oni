@@ -18,16 +18,18 @@ import { createAuthRoutes, socketAddressFromEnv } from "./auth/routes.ts";
 import { TokenService } from "./auth/token.ts";
 import { type Config, type SecretSource, loadConfigOrExit, redactSecrets } from "./config.ts";
 import { PreviewStore } from "./commands/previews.ts";
-import { createOpenAiProvider } from "./llm/openai.ts";
-import { LlmOrderParser } from "./llm/parser.ts";
-import type { LlmProvider } from "./llm/provider.ts";
+import { LlmOrderParser, type LlmProviderSource } from "./llm/parser.ts";
+import { buildRegistry } from "./llm/registry.ts";
 import { ActivityLog, MAX_LIST_LIMIT } from "./activity/log.ts";
 import { activityRoutes } from "./activity/routes.ts";
 import { EngineSupervisor, type Logger, spawnEngineProcess } from "./engine/supervisor.ts";
 import { SubscriptionRegistry } from "./gateway/clients.ts";
 import { checkOrigin } from "./gateway/origin.ts";
-import { type ClientData, Gateway, type GatewaySupervisor, defaultVenueOf } from "./gateway/ws.ts";
+import { AiLimiter } from "./ai/limits.ts";
+import { type AiDeps, type ClientData, Gateway, type GatewaySupervisor, defaultVenueOf } from "./gateway/ws.ts";
 import { configuredVenueHealth, createHttpApp } from "./http.ts";
+import { NewsCache, createConfiguredNewsProvider } from "./news/cache.ts";
+import { configureGuardedFetch } from "./net/http.ts";
 import type { Event, Venue } from "./protocol.ts";
 import { defaultLimits } from "./risk/limits.ts";
 import {
@@ -56,6 +58,7 @@ export interface AppDeps {
     Config,
     "allowedOrigins" | "dataMode" | "liveVenue" | "webUrl" | "sessionSecret" | "isProduction" | "killSwitch"
   > &
+    Partial<Pick<Config, "aiRatePerMin" | "aiDailyCap">> &
     SecretSource;
   readonly supervisor: GatewaySupervisor;
   /**
@@ -71,7 +74,9 @@ export interface AppDeps {
   readonly activity?: ActivityLog;
   readonly registry?: SubscriptionRegistry;
   /** LLM_Provider for `?` orders. Null or unset disables them (Req 23.7). `startServer` builds it from OPENAI_API_KEY. */
-  readonly llm?: LlmProvider | null;
+  readonly llm?: LlmProviderSource | null;
+  /** Provider registry for the Copilot (Task 10.6). Unset: AI requests answer `ai_disabled`. */
+  readonly aiRegistry?: AiDeps["registry"];
   /** Defaults to a new MarketState. */
   readonly market?: MarketState;
   /** Defaults to a new AccountState. */
@@ -188,6 +193,7 @@ export function createApp(deps: AppDeps): App {
     engineRunning: () => deps.supervisor.running,
     risk: { limits: defaultLimits(), killSwitch: deps.config.killSwitch },
     market: marketPrices(market),
+    health: market,
     accounts,
     activity,
     venue,
@@ -199,9 +205,13 @@ export function createApp(deps: AppDeps): App {
       gateway.sendTo(connectionId, { type: "event", event });
     },
     logger,
+    onTwapStatus: (status) => gateway.publishTwapStatus(status),
   });
   gateway.setRouter(router);
+  gateway.setTwap(router);
   gateway.onConnectionClosed((connectionId) => router.forgetConnection(connectionId));
+  gateway.onAccountChange((connectionId) => router.twapSessionChanged(connectionId));
+  deps.supervisor.onSessionStart(() => router.twapEngineRestarted());
 
   // Command bar (Task 12.1, Req 21, 22.4, 46.4): pending previews are bound to a connection and
   // its account, and are dropped on an account switch and on close.
@@ -210,11 +220,18 @@ export function createApp(deps: AppDeps): App {
   // yields commands only; they become previews and need Confirm like typed ones (Req 23.6).
   const prices = marketPrices(market);
   const llm = new LlmOrderParser({
-    provider: deps.llm ?? null,
+    registry: deps.llm ?? null,
     positionLots: (accountId, symbol) => accounts.positionLots(accountId, symbol),
     lastPrice: (symbol) => prices.lastPrice(symbol, venue()),
   });
   gateway.setCommandBar({ previews, accounts, router, llm });
+  if (deps.aiRegistry !== undefined) {
+    gateway.setAi({ registry: deps.aiRegistry, limiter: new AiLimiter({
+        now,
+        ...(deps.config.aiRatePerMin === undefined ? {} : { ratePerMin: deps.config.aiRatePerMin }),
+        ...(deps.config.aiDailyCap === undefined ? {} : { dailyCap: deps.config.aiDailyCap }),
+      }), accounts });
+  }
   gateway.onAccountChange((connectionId) => {
     previews.discardForConnection(connectionId);
   });
@@ -338,21 +355,24 @@ export function startServer(options: StartServerOptions): RunningServer {
   // The order writer is created once and goes straight to the Router (Req 18.3).
   const orderSender = supervisor.createOrderSender?.() ?? closedOrderSender;
 
-  // Req 23.7: no OPENAI_API_KEY, no provider, no plain-English orders.
-  const openaiApiKey = config.openaiApiKey;
-  const llm =
-    openaiApiKey === undefined
-      ? null
-      : createOpenAiProvider({
-          apiKey: openaiApiKey,
-          model: config.openaiModel,
-          fetch: (input, init) => globalThis.fetch(input, init),
-        });
+  // Req 23.7: no available provider, no plain-English orders.
+  const llm = buildRegistry(config);
+
+  // Every outbound HTTP request goes through the allowlisted wrapper (trading-safety rule 1).
+  configureGuardedFetch(config, options.logger ?? console);
+
+  // News (Task 11.4): provider chosen by config (production gating included); none disables it.
+  const news = new NewsCache({
+    provider: createConfiguredNewsProvider(config),
+    ttlSeconds: config.newsTtlSeconds,
+    ...(options.logger === undefined ? {} : { logger: options.logger }),
+  });
 
   const app = createApp({
     config,
     supervisor,
     llm,
+    aiRegistry: llm,
     orderSender,
     ...(options.activity === undefined ? {} : { activity: options.activity }),
     ...(options.logger === undefined ? {} : { logger: options.logger }),
@@ -365,11 +385,14 @@ export function startServer(options: StartServerOptions): RunningServer {
     websocket: app.websocket,
   });
   app.gateway.setPublisher(server);
+  app.gateway.setNews(news);
+  news.start();
   supervisor.start();
 
   let stopping: Promise<void> | null = null;
   const stop = (): Promise<void> => {
     stopping ??= (async () => {
+      news.stop();
       await supervisor.stop();
       app.gateway.dispose();
       await server.stop(true);

@@ -361,6 +361,7 @@ mod tests {
         FixtureLine {
             recv,
             msg: MarketMsg::Trade {
+                venue: protocol::Venue::Replay,
                 symbol: "BTC-USD".into(),
                 price: Price(price),
                 qty: Qty(1),
@@ -456,6 +457,7 @@ mod tests {
         let snapshot = FixtureLine {
             recv: 0,
             msg: MarketMsg::BookSnapshot {
+                venue: protocol::Venue::Replay,
                 symbol: "ETH-USD".into(),
                 bids: vec![Level {
                     price: Price(99),
@@ -468,6 +470,7 @@ mod tests {
         let delta = FixtureLine {
             recv: 10,
             msg: MarketMsg::BookDelta {
+                venue: protocol::Venue::Replay,
                 symbol: "ETH-USD".into(),
                 side: Side::Sell,
                 price: Price(101),

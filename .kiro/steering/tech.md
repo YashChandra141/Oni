@@ -16,6 +16,15 @@ The user must approve every shell or terminal command (cargo, bun, git, rustup, 
 | News | One `NewsProvider` interface: NewsAPI (local development only) and CryptoPanic (hosted), cached in server memory |
 | Deploy | Render Blueprint (`render.yaml`), Dockerfile `rust:1.94-bookworm` → `oven/bun:1.4.4-debian`. No database service |
 
+## Environment variables (names only; values come from `.env` or the Render dashboard)
+- Core: `PORT`, `ENGINE_PATH`, `DATA_MODE`, `LIVE_VENUES` (comma list, default all four; `LIVE_VENUE` is a single-venue alias), `ALLOWED_ORIGINS`, `WEB_URL`, `KILL_SWITCH`, `SESSION_SECRET`, `NODE_ENV`.
+- Accounts: `STARTING_BALANCE`, `BALANCE_SLIPPAGE_BPS`.
+- DEX: `JUPITER_API_KEY` (optional), `DEX_*` (poll and staleness tuning).
+- AI: `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `NVIDIA_API_KEY`, `NVIDIA_BASE_URL`, `OLLAMA_BASE_URL`, `AI_RATE_PER_MIN`, `AI_DAILY_CAP`.
+- News: `NEWS_PROVIDER`, `NEWS_API_KEY`, `CRYPTOPANIC_API_KEY`, `CRYPTOPANIC_PLAN`, `NEWS_TTL_SECONDS`, `NEWS_ALLOW_NEWSAPI_IN_PRODUCTION`.
+- MCP: `TERMINAL_TOKEN`.
+- There is no `DATABASE_URL`, `DIRECT_URL`, or `DB_ADAPTER`.
+
 ## Layout
 ```
 rust/crates/{protocol,engine,tui}   server/   web/   shared/{protocol,keymap.json}   fixtures/
@@ -38,7 +47,7 @@ Root `package.json` declares Bun workspaces `server`, `web`, `shared`.
 
 ## Wire protocol
 - Engine ↔ server: one JSON object per line on stdin/stdout. Engine logs go to stderr only.
-- Client ↔ server: JSON messages over WebSocket at `/ws`, typed by `ClientMessage` / `ServerMessage`. The server may send several Events in one `event_batch` message.
+- Client ↔ server: JSON messages over WebSocket at `/ws`, typed by `ClientMessage` / `ServerMessage`. The server may send several Events in one `event_batch` message (`EventBatch`). Book Events are throttled to one per venue and symbol per 50 ms.
 - Messages are internally tagged with a snake_case `type` field.
 - Protocol v3: order Commands (`PlaceOrder`, `Cancel`, `CancelAll`, `ResetAccount`) and account Events (`OrderAck`, `OrderRejected`, `Fill`, `Position`, `Balance`) carry `account_id` (`guest` or `w_<base58 address>`, 1..=64 chars of `[A-Za-z0-9_]`). `PlaceOrder`, `OrderAck`, `OrderRejected`, `Fill`, and all market data Events (`Candle`, `Trade`, `Book`, `Indicators`, `Ticker24h`) carry a `venue`. Clients authenticate with `ClientMessage::Authenticate { token }` after connect, since browsers can't set WebSocket headers; the server answers `ServerMessage::Session { account_id, address }`. Clients also send `SetProvider` and `SubscribeNews`. REST calls use `Authorization: Bearer <token>`.
 - Account events go to the Bun topic `account:<account_id>`; notices go to `notices`.
@@ -50,6 +59,9 @@ Root `package.json` declares Bun workspaces `server`, `web`, `shared`.
 - Raydium: `GET https://api-v3.raydium.io/mint/price?mints=<...>` and `GET /pools/info/mint` (pool TVL). No other Raydium host.
 - News and LLM hosts (Server only): `https://newsapi.org/v2/`, `https://cryptopanic.com/api/`, `https://api.openai.com`, `https://api.anthropic.com`, the host of `NVIDIA_BASE_URL`, and the host of `OLLAMA_BASE_URL`.
 - Internal symbols are `BTC-USD`, `ETH-USD`, `SOL-USD`, `BNB-USD`, `XRP-USD`, `DOGE-USD`, `JUP-USD`, `WIF-USD`, `BONK-USD`, and `PEPE-USD`. Each has its own tick and lot size in the Instrument_Table; `feed/venue.rs` maps them to venue symbols and token mints. `price_decimals + qty_decimals` never exceeds 10 (the Money scale). CEX values that don't fit exactly are dropped and counted, never rounded. DEX prices are rounded to the nearest tick.
+
+## Keymap and TUI
+- `shared/keymap.json` is per client: each action lists bindings under `web` and/or `tui`. Web uses `1`–`6` and `Alt+1`…`Alt+8` for timeframes and pages. The TUI has eight pages on `[1]`–`[8]` and cycles timeframes with `<` and `>`.
 
 ## Testing
 - Property-based tests for every "FOR ALL" acceptance criterion: proptest in Rust, fast-check in TS. The property table is in `design.md`.

@@ -5,12 +5,12 @@
 // Up/Down plus Enter while the panel is hovered or focused (shared keymap context `book`),
 // prefills the limit ticket with that price. The full order form is Task 12.3.
 
-import { useEffect, useMemo, useRef } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef } from "react";
 import type { Level } from "../../shared/protocol/index";
 import { bookKeyAction, depthFractions, layoutBook, levelAtCursor } from "../lib/bookView";
 import { isEditableTarget } from "../lib/chartKeys";
 import { formatPrice, formatQty } from "../lib/format";
-import { useTerminalStore } from "../lib/store";
+import { pairKey, useTerminalStore } from "../lib/store";
 
 const DEFAULT_PRICE_DECIMALS = 2;
 const DEFAULT_QTY_DECIMALS = 8;
@@ -24,35 +24,71 @@ interface RowsProps {
   readonly onPick: (price: string) => void;
 }
 
-function Rows({ levels, side, cursorIndex, priceDecimals, qtyDecimals, onPick }: RowsProps) {
-  const fractions = depthFractions(levels);
+interface BookRowProps {
+  readonly price: string;
+  readonly qty: string;
+  readonly fraction: number;
+  readonly side: "ask" | "bid";
+  readonly active: boolean;
+  readonly priceDecimals: number;
+  readonly qtyDecimals: number;
+  readonly onPick: (price: string) => void;
+}
+
+const BookRow = memo(function BookRow({
+  price,
+  qty,
+  fraction,
+  side,
+  active,
+  priceDecimals,
+  qtyDecimals,
+  onPick,
+}: BookRowProps) {
   const text = side === "ask" ? "text-sell" : "text-buy";
   const bar = side === "ask" ? "bg-sell" : "bg-buy";
   return (
+    <li>
+      <button
+        type="button"
+        tabIndex={-1}
+        aria-label={`${side} ${formatPrice(price, priceDecimals)}`}
+        onClick={() => {
+          onPick(price);
+        }}
+        className={`relative flex w-full justify-between px-1 text-left ${text} ${
+          active ? "outline outline-1 outline-amber" : ""
+        }`}
+      >
+        <span
+          aria-hidden="true"
+          data-testid="depth-bar"
+          className={`absolute inset-y-0 right-0 opacity-25 ${bar}`}
+          style={{ width: `${fraction / 10}%` }}
+        />
+        <span className="relative">{formatPrice(price, priceDecimals)}</span>
+        <span className="relative">{formatQty(qty, qtyDecimals)}</span>
+      </button>
+    </li>
+  );
+});
+
+function Rows({ levels, side, cursorIndex, priceDecimals, qtyDecimals, onPick }: RowsProps) {
+  const fractions = useMemo(() => depthFractions(levels), [levels]);
+  return (
     <ul>
       {levels.map((level, index) => (
-        <li key={level.price}>
-          <button
-            type="button"
-            tabIndex={-1}
-            aria-label={`${side} ${formatPrice(level.price, priceDecimals)}`}
-            onClick={() => {
-              onPick(level.price);
-            }}
-            className={`relative flex w-full justify-between px-1 text-left ${text} ${
-              cursorIndex === index ? "outline outline-1 outline-amber" : ""
-            }`}
-          >
-            <span
-              aria-hidden="true"
-              data-testid="depth-bar"
-              className={`absolute inset-y-0 right-0 opacity-25 ${bar}`}
-              style={{ width: `${(fractions[index] ?? 0) / 10}%` }}
-            />
-            <span className="relative">{formatPrice(level.price, priceDecimals)}</span>
-            <span className="relative">{formatQty(level.qty, qtyDecimals)}</span>
-          </button>
-        </li>
+        <BookRow
+          key={level.price}
+          price={level.price}
+          qty={level.qty}
+          fraction={fractions[index] ?? 0}
+          side={side}
+          active={cursorIndex === index}
+          priceDecimals={priceDecimals}
+          qtyDecimals={qtyDecimals}
+          onPick={onPick}
+        />
       ))}
     </ul>
   );
@@ -60,7 +96,8 @@ function Rows({ levels, side, cursorIndex, priceDecimals, qtyDecimals, onPick }:
 
 export default function OrderBookPanel() {
   const symbol = useTerminalStore((state) => state.selection.symbol);
-  const book = useTerminalStore((state) => state.book[symbol]);
+  const venue = useTerminalStore((state) => state.selection.venue);
+  const book = useTerminalStore((state) => state.book[pairKey(state.selection.venue, symbol)]);
   const cursor = useTerminalStore((state) => state.bookCursor);
   const ticketPrice = useTerminalStore((state) => state.ticket.price);
   const ticketSymbol = useTerminalStore((state) => state.ticket.symbol);
@@ -86,7 +123,7 @@ export default function OrderBookPanel() {
       const state = useTerminalStore.getState();
       event.preventDefault();
       if (action === "prefill") {
-        const current = state.book[state.selection.symbol];
+        const current = state.book[pairKey(state.selection.venue, state.selection.symbol)];
         const level = levelAtCursor(layoutBook(current), state.bookCursor);
         if (level !== null) state.prefillLimit(state.selection.symbol, level.price);
         return;
@@ -99,9 +136,12 @@ export default function OrderBookPanel() {
     };
   }, []);
 
-  const pick = (price: string) => {
-    prefillLimit(symbol, price);
-  };
+  const pick = useCallback(
+    (price: string) => {
+      prefillLimit(symbol, price);
+    },
+    [prefillLimit, symbol],
+  );
 
   const spread =
     book === undefined || book.spread === null ? "—" : formatPrice(book.spread, priceDecimals);
@@ -129,6 +169,11 @@ export default function OrderBookPanel() {
         activeRef.current.focus = false;
       }}
     >
+      {venue === "jupiter" || venue === "raydium" ? (
+        <div className="text-amber" aria-label="Simulated depth">
+          simulated depth
+        </div>
+      ) : null}
       {book === undefined ? (
         <div className="text-phosphor-faint">waiting for book…</div>
       ) : (

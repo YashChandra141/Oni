@@ -175,6 +175,67 @@ pub fn ticket_command_text(
     }
 }
 
+/// The order type of the ticket (Task 16.9).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TicketKind {
+    #[default]
+    Limit,
+    Market,
+    Stop,
+    Twap,
+}
+
+impl TicketKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            TicketKind::Limit => "LMT",
+            TicketKind::Market => "MKT",
+            TicketKind::Stop => "STP",
+            TicketKind::Twap => "TWAP",
+        }
+    }
+
+    /// The next type in the cycle Limit, Market, Stop, TWAP.
+    pub fn next(self) -> Self {
+        match self {
+            TicketKind::Limit => TicketKind::Market,
+            TicketKind::Market => TicketKind::Stop,
+            TicketKind::Stop => TicketKind::Twap,
+            TicketKind::Twap => TicketKind::Limit,
+        }
+    }
+}
+
+/// Canonical command text for a ticket of any type: `BUY BTC-USD 1 STP 60000.00`,
+/// `BUY BTC-USD 1 TWAP 4 60`. `twap` is (slices, interval seconds). The result only becomes a
+/// preview on the server; nothing here places an order.
+pub fn ticket_command_text_kind(
+    kind: TicketKind,
+    symbol: &str,
+    side: Side,
+    price: Option<Price>,
+    qty: Option<Qty>,
+    twap: (u32, u32),
+) -> Result<String, String> {
+    match kind {
+        TicketKind::Limit => ticket_command_text(symbol, side, price, qty),
+        TicketKind::Market => ticket_command_text(symbol, side, None, qty),
+        TicketKind::Stop => {
+            let base = ticket_command_text(symbol, side, None, qty)?;
+            match price {
+                Some(p) if p.0 > 0 => {
+                    Ok(format!("{base} STP {}", format_fixed(p.0, PRICE_DECIMALS)))
+                }
+                _ => Err("enter a stop price".to_owned()),
+            }
+        }
+        TicketKind::Twap => {
+            let base = ticket_command_text(symbol, side, None, qty)?;
+            Ok(format!("{base} TWAP {} {}", twap.0, twap.1))
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // Money (Req 28.1, 28.3)
 
@@ -508,7 +569,7 @@ mod tests {
             Err("no symbol selected".to_owned())
         );
         assert_eq!(
-            ticket_command_text("DOGE-USD", Side::Buy, None, Some(Qty(1))),
+            ticket_command_text("NOPE-USD", Side::Buy, None, Some(Qty(1))),
             Err("no symbol selected".to_owned())
         );
         assert_eq!(

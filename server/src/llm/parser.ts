@@ -19,8 +19,23 @@ import { INSTRUMENTS } from "../instruments.ts";
 import { unitsToFixed, unitsToTrimmed } from "../commands/formatter.ts";
 import { type ParsedCommand, decimalToUnits, parseCommand, resolveSymbol } from "../commands/parser.ts";
 import type { AccountId } from "../protocol.ts";
-import { type LlmIntent, IntentSchema } from "./intentSchema.ts";
-import { type LlmContext, type LlmProvider, isLlmError } from "./provider.ts";
+import { INTENT_JSON_SCHEMA, INTENT_SCHEMA_NAME, type LlmIntent, IntentSchema } from "./intentSchema.ts";
+import { PARSER_TIMEOUT_MS } from "./limits.ts";
+import { MAX_OUTPUT_TOKENS, SYSTEM_PROMPT, buildUserMessage } from "./openai.ts";
+import {
+  type JsonLlmProvider,
+  type LlmContext,
+  type LlmProvider,
+  type LlmProviderId,
+  isLlmError,
+} from "./provider.ts";
+
+/** The part of ProviderRegistry the parser reads. */
+export interface LlmProviderSource {
+  get(id: LlmProviderId): JsonLlmProvider | undefined;
+  defaultId(): LlmProviderId | null;
+  refresh?(): Promise<void>;
+}
 
 /** Time limit for the whole interpretation (Req 23.5). The OpenAI provider enforces the same. */
 export const LLM_PARSE_TIMEOUT_MS = 15_000;
@@ -40,7 +55,9 @@ export type LlmParseResult =
 
 export interface LlmOrderParserOptions {
   /** Null when OPENAI_API_KEY is unset: the parser is then disabled (Req 23.7). */
-  readonly provider: LlmProvider | null;
+  readonly provider?: LlmProvider | null;
+  /** Provider registry (task 9.6). Used when `provider` is not set. */
+  readonly registry?: LlmProviderSource | null;
   /** Signed position of an account in a full symbol, in lots. */
   readonly positionLots: (accountId: AccountId, symbol: string) => bigint;
   /** Last trade price in ticks, or null when there is none. */
@@ -112,12 +129,14 @@ export function intentToCommandText(intent: LlmIntent, lastPrice: (symbol: strin
 
 export class LlmOrderParser {
   readonly #provider: LlmProvider | null;
+  readonly #registry: LlmProviderSource | null;
   readonly #positionLots: LlmOrderParserOptions["positionLots"];
   readonly #lastPrice: LlmOrderParserOptions["lastPrice"];
   readonly #timeoutMs: number;
 
   constructor(options: LlmOrderParserOptions) {
-    this.#provider = options.provider;
+    this.#provider = options.provider ?? null;
+    this.#registry = options.registry ?? null;
     this.#positionLots = options.positionLots;
     this.#lastPrice = options.lastPrice;
     this.#timeoutMs = options.timeoutMs ?? LLM_PARSE_TIMEOUT_MS;
@@ -125,15 +144,40 @@ export class LlmOrderParser {
 
   /** False when no provider is configured (Req 23.7). */
   get enabled(): boolean {
-    return this.#provider !== null;
+    return this.#provider !== null || (this.#registry !== null && this.#registry.defaultId() !== null);
+  }
+
+  /** The legacy single provider, or the selected / default registry provider, as one `interpret`. */
+  async #resolve(providerId: LlmProviderId | undefined): Promise<LlmProvider | null> {
+    if (this.#provider !== null) return this.#provider;
+    const registry = this.#registry;
+    if (registry === null) return null;
+    await registry.refresh?.();
+    const id = providerId !== undefined && registry.get(providerId) !== undefined ? providerId : registry.defaultId();
+    if (id === null) return null;
+    const json = registry.get(id);
+    if (json === undefined) return null;
+    return {
+      interpret: (text, context, signal) =>
+        json.completeJson({
+          system: SYSTEM_PROMPT,
+          user: buildUserMessage(text, context),
+          schemaName: INTENT_SCHEMA_NAME,
+          schema: INTENT_JSON_SCHEMA,
+          maxOutputTokens: MAX_OUTPUT_TOKENS,
+          timeoutMs: PARSER_TIMEOUT_MS,
+          ...(signal === undefined ? {} : { signal }),
+        }),
+    };
   }
 
   /**
    * Interprets the text after the `?`. `accountId` comes from the verified session of the
-   * requesting connection; it only scopes the context and the `%` resolution.
+   * requesting connection; it only scopes the context and the `%` resolution. `providerId` is
+   * the connection's selected provider; it falls back to the default when unavailable.
    */
-  async parse(text: string, accountId: AccountId): Promise<LlmParseResult> {
-    const provider = this.#provider;
+  async parse(text: string, accountId: AccountId, providerId?: LlmProviderId): Promise<LlmParseResult> {
+    const provider = await this.#resolve(providerId);
     if (provider === null) return { ok: false, kind: "disabled", message: LLM_DISABLED_MESSAGE };
 
     const request = text.trim();

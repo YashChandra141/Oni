@@ -4,7 +4,8 @@
 //   OrderAck, Fill, Position, Balance → topic `account:<account_id>`
 //   OrderRejected             → the requesting connection when known, else `account:<account_id>`
 //   Candle, Indicators        → topic `candles:<venue>:<symbol>:<tf>`
-//   Trade, Book, Ticker24h    → topic `market:<venue>:<symbol>`
+//   Trade, Book               → topic `market:<venue>:<symbol>`
+//   Ticker24h                 → topic `ticker:<venue>:<symbol>`
 //   VenueStatus, PairStatus, ReferenceVenue → `notices`
 //   Heartbeat, Pong, Error    → dropped (stay inside the server)
 // Notices are published on NOTICES_TOPIC by the gateway; every connection is subscribed to it.
@@ -29,6 +30,11 @@ export function marketTopic(venue: Venue, symbol: string): string {
   return `market:${venue}:${symbol}`;
 }
 
+/** Ticker topic per (venue, symbol): `ticker:<venue>:<symbol>`. */
+export function tickerTopic(venue: Venue, symbol: string): string {
+  return `ticker:${venue}:${symbol}`;
+}
+
 export type RouteResult =
   | { readonly topic: string }
   | { readonly toConnection: string }
@@ -50,9 +56,10 @@ export function routeAccountEvent(event: Event, ctx: RouteContext = {}): RouteRe
       return { topic: candlesTopic(event.venue, event.symbol, event.timeframe) };
     case "trade":
     case "book":
-    // Ticker subscriptions land in Task 3.5; until then a Ticker24h goes to the pair's market topic.
-    case "ticker24h":
       return { topic: marketTopic(event.venue, event.symbol) };
+    // Only connections that sent SubscribeTicker for the (venue, symbol) receive it.
+    case "ticker24h":
+      return { topic: tickerTopic(event.venue, event.symbol) };
     case "order_ack":
     case "fill":
     case "position":
@@ -70,6 +77,40 @@ export function routeAccountEvent(event: Event, ctx: RouteContext = {}): RouteRe
     case "pong":
     case "error":
       return { drop: true };
+  }
+}
+
+/**
+ * Topic → connection ids. The gateway delivers engine events to each connection's own batcher
+ * (Req 34), so it tracks topic membership itself instead of using Bun's `publish`.
+ */
+export class TopicMembers {
+  readonly #topics = new Map<string, Set<string>>();
+
+  add(topic: string, connectionId: string): void {
+    let set = this.#topics.get(topic);
+    if (set === undefined) {
+      set = new Set();
+      this.#topics.set(topic, set);
+    }
+    set.add(connectionId);
+  }
+
+  remove(topic: string, connectionId: string): void {
+    const set = this.#topics.get(topic);
+    if (set === undefined) return;
+    set.delete(connectionId);
+    if (set.size === 0) this.#topics.delete(topic);
+  }
+
+  /** Removes a connection from every topic. */
+  removeAll(connectionId: string): void {
+    for (const topic of [...this.#topics.keys()]) this.remove(topic, connectionId);
+  }
+
+  /** Snapshot of the members of a topic. */
+  of(topic: string): readonly string[] {
+    return [...(this.#topics.get(topic) ?? [])];
   }
 }
 
