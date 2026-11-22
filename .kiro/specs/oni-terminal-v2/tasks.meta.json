@@ -1960,21 +1960,6 @@
     ],
     "17.4 README and env example": [
       {
-        "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
-        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
-        "timestamp": 1795267320973
-      },
-      {
-        "executionId": "70d2a9ea-6788-4918-b2ab-c0d0fa5aef9d",
-        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
-        "timestamp": 1795325433314
-      },
-      {
-        "executionId": "70d2a9ea-6788-4918-b2ab-c0d0fa5aef9d",
-        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
-        "timestamp": 1795325440659
-      },
-      {
         "executionId": "f99b2547-47f9-441c-933e-a1279012b3bf",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795325801049
@@ -2008,6 +1993,21 @@
         "executionId": "74d2dd87-4a81-4f93-a39f-21b7758a8b92",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795357087303
+      },
+      {
+        "executionId": "aed3d5ee-15f3-4b65-ab85-9f071e4e4969",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795358579179
+      },
+      {
+        "executionId": "aed3d5ee-15f3-4b65-ab85-9f071e4e4969",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795358596066
+      },
+      {
+        "executionId": "aed3d5ee-15f3-4b65-ab85-9f071e4e4969",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795358735171
       }
     ],
     "18. Final checkpoint - full verification": [
