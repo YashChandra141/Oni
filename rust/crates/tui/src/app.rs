@@ -28,7 +28,7 @@ pub const DEFAULT_SYMBOL: &str = "BTC-USD";
 /// How many recent errors the app keeps.
 pub const MAX_RECENT_ERRORS: usize = 16;
 
-/// The pages of the left menu, `[1]` to `[8]` (Req 30.1).
+/// The pages of the left menu, `[1]` to `[7]` (Req 30.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum Page {
     #[default]
@@ -38,19 +38,17 @@ pub enum Page {
     Orders,
     Watchlist,
     News,
-    Copilot,
     Config,
 }
 
 impl Page {
-    pub const ALL: [Page; 8] = [
+    pub const ALL: [Page; 7] = [
         Page::Trade,
         Page::Book,
         Page::Positions,
         Page::Orders,
         Page::Watchlist,
         Page::News,
-        Page::Copilot,
         Page::Config,
     ];
 
@@ -62,18 +60,17 @@ impl Page {
             Page::Orders => "Orders",
             Page::Watchlist => "Watchlist",
             Page::News => "News",
-            Page::Copilot => "Copilot",
             Page::Config => "Config",
         }
     }
 
-    /// The page for number key `1` to `8`.
+    /// The page for number key `1` to `7`.
     pub fn from_digit(c: char) -> Option<Page> {
         let index = usize::try_from(c.to_digit(10)?).ok()?.checked_sub(1)?;
         Self::ALL.get(index).copied()
     }
 
-    /// The number shown in the menu, 1 to 8.
+    /// The number shown in the menu, 1 to 7.
     pub fn number(self) -> usize {
         Self::ALL
             .iter()
@@ -252,12 +249,13 @@ pub struct App {
     pub picker: Option<Picker>,
     /// Set when a `hello` moved the Active_Venue; `main` drains it to resubscribe.
     pub venue_switched_from: Option<Venue>,
+    /// The venue whose market data is subscribed; `None` until the first `hello`, because the
+    /// venue is unknown before then. `main` keeps it in step with the messages it sends.
+    pub subscribed_venue: Option<Venue>,
     /// The news list (Task 16.4).
-    pub news: crate::copilot::NewsState,
-    /// The AI Copilot panel (Task 16.4).
-    pub copilot: crate::copilot::CopilotState,
+    pub news: crate::news::NewsState,
     /// Recent TWAP plans, oldest first (Task 16.4).
-    pub twaps: Vec<crate::copilot::TwapRow>,
+    pub twaps: Vec<crate::news::TwapRow>,
 }
 
 /// Which popup picker is open.
@@ -449,8 +447,8 @@ impl App {
             ollama_model: None,
             picker: None,
             venue_switched_from: None,
-            news: crate::copilot::NewsState::default(),
-            copilot: crate::copilot::CopilotState::default(),
+            subscribed_venue: None,
+            news: crate::news::NewsState::default(),
             twaps: Vec::new(),
         }
     }
@@ -707,8 +705,6 @@ pub fn update(app: &mut App, event: NetEvent) -> bool {
             app.reset_latency();
             app.hello = None;
             app.session = None;
-            // A request in flight on the old connection will never be answered.
-            app.copilot.pending = None;
             true
         }
         NetEvent::Disconnected { reason } => {
@@ -805,14 +801,14 @@ fn apply_message(app: &mut App, message: ServerMessage) -> bool {
             app.providers = available;
             true
         }
-        message @ (ServerMessage::Analysis { .. }
+        // The TUI has no AI Copilot: these replies are ignored.
+        ServerMessage::Analysis { .. }
         | ServerMessage::ScanResult { .. }
         | ServerMessage::StrategyDraft { .. }
         | ServerMessage::AiChat { .. }
-        | ServerMessage::AiError { .. }
-        | ServerMessage::News { .. }
-        | ServerMessage::Twap { .. }) => {
-            crate::copilot::apply_message(app, &message).unwrap_or(false)
+        | ServerMessage::AiError { .. } => false,
+        message @ (ServerMessage::News { .. } | ServerMessage::Twap { .. }) => {
+            crate::news::apply_message(app, &message).unwrap_or(false)
         }
         // The engine restarted: every paper account is flat again (Req 15.7).
         ServerMessage::Notice {
@@ -980,6 +976,51 @@ mod tests {
             account_id: AccountId::new("guest").unwrap(),
             address: None,
         })
+    }
+
+    fn live_hello(live: &[Venue], default_venue: Venue) -> NetEvent {
+        NetEvent::msg(ServerMessage::Hello {
+            protocol_version: 3,
+            data_mode: DataMode::Live,
+            live_venues: live.to_vec(),
+            venue_status: Vec::new(),
+            default_venue,
+            starting_balance: protocol::Money(0),
+            engine_running: true,
+            instruments: InstrumentInfo::all(),
+            providers: Vec::new(),
+            news_enabled: false,
+        })
+    }
+
+    #[test]
+    fn a_live_hello_adopts_the_default_venue_and_offers_only_live_venues() {
+        let live = [
+            Venue::Coinbase,
+            Venue::Backpack,
+            Venue::Jupiter,
+            Venue::Raydium,
+        ];
+        let mut app = App::new("ws://x/ws");
+        assert_eq!(app.active_venue, Venue::Replay);
+        update(&mut app, NetEvent::Connected);
+        update(&mut app, live_hello(&live, Venue::Coinbase));
+        assert_eq!(app.active_venue, Venue::Coinbase);
+        assert_eq!(app.venues, live);
+        assert!(!app.venues.contains(&Venue::Replay));
+        // The picker chooses only among live venues; a row past the end does nothing.
+        assert_eq!(app.picker_len(PickerKind::Venue), 4);
+        assert_eq!(app.select_venue(Venue::Backpack), Some(Venue::Coinbase));
+        assert_eq!(app.active_venue, Venue::Backpack);
+    }
+
+    #[test]
+    fn a_replay_hello_offers_only_replay() {
+        let mut app = App::new("ws://x/ws");
+        update(&mut app, NetEvent::Connected);
+        update(&mut app, live_hello(&[], Venue::Replay));
+        assert_eq!(app.active_venue, Venue::Replay);
+        assert_eq!(app.venues, [Venue::Replay]);
     }
 
     fn trade() -> NetEvent {

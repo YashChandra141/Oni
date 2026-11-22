@@ -8,14 +8,13 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Clear, Paragraph, Wrap};
+use ratatui::widgets::{Clear, Paragraph};
 
 use crate::app::{App, ConnState, Page};
 use crate::book_model::{BookRow, layout_rows};
 use crate::book_widget::BookWidget;
 use crate::chart_model::visible_bars;
 use crate::chart_widget::{AXIS_WIDTH, CandleChart, PlotGeometry};
-use crate::copilot::CopilotOutput;
 use crate::hitmap::{HitMap, HitTarget, PanelId};
 use crate::indicator_model::{Indicator, IndicatorSeries, legend_text, subpane_rows};
 use crate::indicator_widget::{draw_overlays, draw_subpane, indicator_color};
@@ -55,7 +54,8 @@ pub const TIMEFRAMES: [Timeframe; 6] = [
 /// Draws one frame and rebuilds the hit map for it (Req 35.1).
 pub fn draw(frame: &mut Frame, app: &App, hits: &mut HitMap) {
     hits.clear();
-    if !app.candles.is_empty() {
+    // The splash shows only before `hello`; after it the panels draw even with no candles yet.
+    if !app.candles.is_empty() || (app.conn == ConnState::Connected && app.hello.is_some()) {
         draw_screen(frame, app, hits);
         crate::pairing_dialog::draw(frame, &app.pairing);
         return;
@@ -285,7 +285,7 @@ pub const FULL_MIN_WIDTH: u16 = 140;
 pub const FULL_MIN_HEIGHT: u16 = 40;
 /// Width of the left menu.
 pub const MENU_WIDTH: u16 = 18;
-/// Rows of the News and Copilot row under the chart on the Trade page.
+/// Rows of the News panel under the chart on the Trade page.
 pub const LOWER_ROW_HEIGHT: u16 = 6;
 
 /// Picks the layout: the full layout (menu, panels, key bar) from 140x40, otherwise only the
@@ -309,11 +309,7 @@ fn draw_screen(frame: &mut Frame, app: &App, hits: &mut HitMap) {
                 Layout::vertical([Constraint::Min(0), Constraint::Length(LOWER_ROW_HEIGHT)])
                     .areas(content);
             draw_chart_in(frame, app, hits, top, true);
-            let [news, copilot] =
-                Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)])
-                    .areas(lower);
-            draw_news_panel(frame, app, hits, news);
-            draw_copilot_panel(frame, app, hits, copilot);
+            draw_news_panel(frame, app, hits, lower);
         } else {
             draw_page(frame, app, hits, content);
             order_widget::draw_dialogs(frame, app, hits);
@@ -565,14 +561,13 @@ fn draw_page(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect) {
         Page::Positions | Page::Orders => order_widget::draw_strip(frame, app, hits, area),
         Page::Watchlist => draw_watchlist_panel(frame, app, hits, area),
         Page::News => draw_news_panel(frame, app, hits, area),
-        Page::Copilot => draw_copilot_panel(frame, app, hits, area),
         Page::Config => draw_placeholder(
             frame,
             hits,
             area,
             PanelId::Config,
             "CONFIG",
-            "Provider and account settings arrive with the Copilot task.",
+            "Provider and account settings arrive in a later task.",
         ),
     }
 }
@@ -618,7 +613,7 @@ fn draw_news_panel(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect) 
     let width = usize::from(inner.width);
     let mut lines = Vec::new();
     for (index, item) in news.items.iter().enumerate().skip(first).take(rows) {
-        let ago = crate::copilot::time_ago(app.now_ms, item.published_at);
+        let ago = crate::news::time_ago(app.now_ms, item.published_at);
         let prefix = format!("{ago:>4} ");
         let suffix = if item.symbols.is_empty() {
             String::new()
@@ -647,121 +642,6 @@ fn draw_news_panel(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect) 
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
-/// The AI Copilot panel: result text above, input line at the bottom (Task 16.4).
-fn draw_copilot_panel(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect) {
-    hits.register(area, HitTarget::Panel(PanelId::Copilot));
-    let title = match (&app.provider, &app.ollama_model) {
-        (Some(protocol::ProviderId::Ollama), Some(model)) => {
-            format!(
-                " AI COPILOT ollama:{} ",
-                crate::copilot::clean(model)
-                    .chars()
-                    .take(32)
-                    .collect::<String>()
-            )
-        }
-        _ => " AI COPILOT ".to_owned(),
-    };
-    let mut block = crate::brand::block().title(title);
-    if app.copilot.focused {
-        block = block.border_style(Style::new().fg(crate::brand::ACCENT_BRIGHT));
-    }
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-    if inner.height == 0 {
-        return;
-    }
-    let [body, input] = Layout::vertical([Constraint::Min(0), Constraint::Length(1)]).areas(inner);
-    let muted = Style::new().fg(crate::brand::MUTED);
-    let text = Style::new().fg(crate::brand::TEXT);
-    let mut lines: Vec<Line> = Vec::new();
-    match &app.copilot.output {
-        Some(CopilotOutput::Analysis {
-            analysis,
-            command,
-            preview_error,
-        }) => {
-            let bias_color = match analysis.bias {
-                protocol::AnalysisBias::Long => crate::brand::BUY,
-                protocol::AnalysisBias::Short => crate::brand::SELL,
-                protocol::AnalysisBias::Neutral => crate::brand::MUTED,
-            };
-            lines.push(Line::from(vec![
-                Span::styled(
-                    format!(
-                        "{} {} ",
-                        analysis.symbol,
-                        crate::copilot::bias_label(analysis.bias)
-                    ),
-                    Style::new().fg(bias_color).add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(format!("{}%", analysis.confidence_bps / 100), muted),
-            ]));
-            lines.push(Line::styled(analysis.summary.clone(), text));
-            for reason in &analysis.rationale {
-                lines.push(Line::styled(format!("- {reason}"), muted));
-            }
-            if let Some(command) = command {
-                lines.push(Line::styled(
-                    format!("Idea: {command}   [t] preview (you still confirm)"),
-                    Style::new().fg(crate::brand::ACCENT_BRIGHT),
-                ));
-            } else if let Some(error) = preview_error {
-                lines.push(Line::styled(format!("No preview: {error}"), muted));
-            }
-        }
-        Some(CopilotOutput::Scan(items)) => {
-            for item in items {
-                lines.push(Line::styled(
-                    format!(
-                        "{} {} {}% {}",
-                        item.symbol,
-                        crate::copilot::bias_label(item.bias),
-                        item.confidence_bps / 100,
-                        item.summary
-                    ),
-                    text,
-                ));
-            }
-            if items.is_empty() {
-                lines.push(Line::styled("Scan found nothing.", muted));
-            }
-        }
-        Some(CopilotOutput::Strategy(body)) => {
-            lines.extend(body.lines().map(|l| Line::styled(l.to_owned(), text)));
-        }
-        Some(CopilotOutput::Error(message)) => {
-            lines.push(Line::styled(
-                message.clone(),
-                Style::new().fg(crate::brand::SELL),
-            ));
-        }
-        None if crate::copilot::ai_disabled(app) => {
-            lines.push(Line::styled("AI features are disabled", muted));
-        }
-        None => {
-            lines.push(Line::styled(
-                "Analyze the chart symbol, or /scan, /strategy <text>. Preview only: it never places orders.",
-                muted,
-            ));
-        }
-    }
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), body);
-    let line = if app.copilot.pending.is_some() {
-        Line::styled("… thinking (Esc cancels)", muted)
-    } else if app.copilot.focused {
-        Line::styled(
-            format!("> {}▏", app.copilot.input.text()),
-            Style::new().fg(crate::brand::ACCENT_BRIGHT),
-        )
-    } else if app.copilot.input.is_empty() {
-        Line::styled("[a] ask the Copilot", muted)
-    } else {
-        Line::styled(format!("> {}", app.copilot.input.text()), muted)
-    };
-    frame.render_widget(Paragraph::new(line), input);
-}
-
 fn draw_placeholder(
     frame: &mut Frame,
     hits: &mut HitMap,
@@ -778,7 +658,7 @@ fn draw_placeholder(
     frame.render_widget(paragraph, area);
 }
 
-/// The left menu: `[1] Trade` to `[8] Config`, then `[q] Quit`.
+/// The left menu: `[1] Trade` to `[7] Config`, then `[q] Quit`.
 fn draw_menu(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect) {
     hits.register(area, HitTarget::Panel(PanelId::Menu));
     let block = crate::brand::block().title(logo_title());
@@ -823,7 +703,7 @@ fn draw_menu(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect) {
 }
 
 const KEY_BAR_TEXT: &str =
-    " 1-8 page  < > timeframe  B buy  S sell  : command  P sign in  F1 help  q quit";
+    " 1-7 page  < > timeframe  B buy  S sell  : command  P sign in  F1 help  q quit";
 
 /// The bottom key bar.
 fn draw_key_bar(frame: &mut Frame, hits: &mut HitMap, area: Rect) {
@@ -835,8 +715,8 @@ fn draw_key_bar(frame: &mut Frame, hits: &mut HitMap, area: Rect) {
 }
 
 const HELP_LINES: [&str; 12] = [
-    "1-8        switch page (Trade, Book, Positions, Orders,",
-    "           Watchlist, News, Copilot, Config)",
+    "1-7        switch page (Trade, Book, Positions, Orders,",
+    "           Watchlist, News, Config)",
     "< >        previous / next timeframe",
     "Tab        next symbol",
     "+ -        zoom the chart",
@@ -1184,21 +1064,34 @@ mod tests {
                 }),
             );
         }
-        let text = screen_text(100, 12, &app).join("\n");
-        assert!(text.contains("CONNECTED"), "{text}");
+        // After hello the full layout replaces the status screen, so read the summary directly.
+        let text = connected_summary(&app);
         assert!(
             text.contains("protocol v2 · LIVE · Backpack (USDC) · account GUEST · events 3"),
             "{text}"
         );
-        assert!(!text.contains("WAKING SERVER"), "{text}");
 
         update(&mut app, NetEvent::Connected);
         update(&mut app, hello(DataMode::Replay, None));
-        let text = screen_text(100, 12, &app).join("\n");
+        let text = connected_summary(&app);
         assert!(
             text.contains("protocol v2 · REPLAY · account … · events 3"),
             "{text}"
         );
+    }
+
+    #[test]
+    fn after_hello_the_panels_draw_without_candles() {
+        let mut app = App::new("ws://localhost:8080/ws");
+        update(&mut app, NetEvent::Connected);
+        // Before hello: the status screen.
+        let text = screen_text(100, 20, &app).join("\n");
+        assert!(text.contains("CONNECTED"), "{text}");
+        update(&mut app, hello(DataMode::Live, Some(Venue::Coinbase)));
+        assert!(app.candles.is_empty());
+        let text = screen_text(100, 20, &app).join("\n");
+        assert!(!text.contains("press q to quit, P to sign in"), "{text}");
+        assert!(text.contains("BTC-USD"), "{text}");
     }
 
     #[test]
@@ -1214,6 +1107,7 @@ mod tests {
                 },
             }),
         );
+        // No hello yet, so the status screen shows the error.
         let text = screen_text(100, 12, &app).join("\n");
         assert!(text.contains("last error: server error"), "{text}");
     }

@@ -1,14 +1,12 @@
 # Coin icons
 
-Expected files, served at `/coins/<name>.svg`:
+Served at `/coins/<name>.svg`, with `/coins/<name>.png` as the second choice. `CoinIcon` falls back to an initial-letter badge when neither file exists, so a missing icon is fine.
 
-btc.svg eth.svg sol.svg bnb.svg xrp.svg doge.svg jup.svg wif.svg bonk.svg pepe.svg
+Names: btc, eth, sol, bnb, xrp, doge, jup, wif, bonk, pepe.
 
-Sources:
+Run `bun run icons` from the repo root (needs network) to download what is available. For each coin the script tries, in order:
 
-- BTC, ETH, SOL, BNB, XRP, DOGE: [spothq/cryptocurrency-icons](https://github.com/spothq/cryptocurrency-icons) (CC0), `svg/color/`.
-- JUP, WIF, BONK, PEPE: each project's official brand assets (save by hand if the script gets a 404).
+1. The SVG from [spothq/cryptocurrency-icons](https://github.com/spothq/cryptocurrency-icons) (`svg/color/`, CC0).
+2. For `jup`, `wif`, and `bonk`, the logo that the Jupiter token API lists for the mint, saved as a PNG.
 
-Run `bun run icons` from the repo root to download what is available.
-
-A missing file is fine: `CoinIcon` falls back to the initial-letter badge.
+Coins with no result (for example `pepe`) use the badge fallback, or you can save an icon by hand from the project's official brand assets.

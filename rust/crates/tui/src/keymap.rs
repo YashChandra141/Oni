@@ -151,7 +151,6 @@ actions! {
     VenueNext => "venue.next",
     ProviderNext => "provider.next",
     ModelNext => "model.next",
-    CopilotFocus => "copilot.focus",
     Help => "help",
     TimeframePrev => "timeframe.prev",
     TimeframeNext => "timeframe.next",
@@ -162,7 +161,6 @@ actions! {
     Page5 => "page.5",
     Page6 => "page.6",
     Page7 => "page.7",
-    Page8 => "page.8",
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -554,6 +552,14 @@ pub fn load_keymap(text: &str) -> Result<Keymap, Vec<String>> {
                 // Per-client form: `"action": ["keys"]` or `"action": {"web": [...], "tui": [...]}`.
                 Raw::Scalar(Value::Array(_)) | Raw::Object(_) => {
                     let Some(action) = Action::parse(name) else {
+                        // A web-only action (`{ "web": [...] }` with no `tui` entry) is not
+                        // the TUI's business, so the TUI loader skips it.
+                        if let Raw::Object(fields) = value
+                            && !fields.is_empty()
+                            && fields.iter().all(|(client, _)| client == "web")
+                        {
+                            continue;
+                        }
                         errors.push(format!("context \"{ctx_name}\": unknown action \"{name}\""));
                         continue;
                     };
@@ -661,7 +667,7 @@ mod tests {
             resolve(&keymap, Context::Dialog, "y"),
             Some(Action::DialogConfirm)
         );
-        assert_eq!(keymap.bindings(Context::Global).len(), 29);
+        assert_eq!(keymap.bindings(Context::Global).len(), 27);
     }
 
     #[test]
@@ -672,9 +678,31 @@ mod tests {
         let body = &KEYMAP_TS[start..];
         let end = body.find("] as const;").expect("end of ACTIONS");
         let ts_actions: Vec<&str> = body[..end].split('"').skip(1).step_by(2).collect();
+        // The actions the TUI does not know: `WEB_ONLY_ACTIONS` in keymap.ts.
+        let web_start = KEYMAP_TS
+            .find("export const WEB_ONLY_ACTIONS")
+            .expect("WEB_ONLY_ACTIONS in keymap.ts");
+        let web_body = &KEYMAP_TS[web_start..];
+        let web_end = web_body.find("];").expect("end of WEB_ONLY_ACTIONS");
+        let web_only: Vec<&str> = web_body[..web_end].split('"').skip(1).step_by(2).collect();
+        assert_eq!(web_only, ["copilot.focus", "page.8"]);
+        let ts_actions: Vec<&str> = ts_actions
+            .into_iter()
+            .filter(|a| !web_only.contains(a))
+            .collect();
         let rust_actions: Vec<&str> = Action::ALL.iter().map(|a| a.name()).collect();
         assert_eq!(rust_actions, ts_actions);
-        assert_eq!(Action::ALL.len(), 51);
+        assert_eq!(Action::ALL.len(), 49);
+    }
+
+    #[test]
+    fn web_only_actions_are_skipped_and_unknown_tui_actions_still_fail() {
+        let make =
+            |binding: &str| format!(r#"{{"version":1,"contexts":{{"global":{{{binding}}}}}}}"#);
+        let ok = load_keymap(&make(r#""copilot.focus":{"web":["C"]}"#));
+        assert_eq!(ok.map(|k| k.bindings(Context::Global).len()), Ok(0));
+        assert!(load_keymap(&make(r#""nope":{"tui":["C"]}"#)).is_err());
+        assert!(load_keymap(&make(r#""nope":["C"]"#)).is_err());
     }
 
     #[test]

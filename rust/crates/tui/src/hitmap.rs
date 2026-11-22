@@ -25,7 +25,6 @@ pub enum PanelId {
     CommandBar,
     Menu,
     News,
-    Copilot,
     Config,
     KeyBar,
 }

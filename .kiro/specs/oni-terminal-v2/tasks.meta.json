@@ -1786,19 +1786,54 @@
     ],
     "16.3 Venue and provider pickers": [
       {
-        "executionId": "1e0ec270-6d79-41db-93c5-8f65507a2ccb",
+        "executionId": "a15aa7f0-c66a-430e-9e39-685fe7179738",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
-        "timestamp": 1795232449478
+        "timestamp": 1795354234252
       },
       {
-        "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
+        "executionId": "a15aa7f0-c66a-430e-9e39-685fe7179738",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
-        "timestamp": 1795265180336
+        "timestamp": 1795354527761
       },
       {
-        "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
+        "executionId": "bdd5e8ef-6905-421e-98cf-9106335ff9fb",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
-        "timestamp": 1795265851089
+        "timestamp": 1795354687634
+      },
+      {
+        "executionId": "e9e6d480-4989-49fc-9851-6a316d174f88",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795354705941
+      },
+      {
+        "executionId": "e9e6d480-4989-49fc-9851-6a316d174f88",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795354715472
+      },
+      {
+        "executionId": "11deb36a-f9e4-4f50-972e-fe26b0b7365b",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795354835853
+      },
+      {
+        "executionId": "11deb36a-f9e4-4f50-972e-fe26b0b7365b",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795354845374
+      },
+      {
+        "executionId": "52f7a335-57a7-447c-b558-d806287a2e39",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795355108642
+      },
+      {
+        "executionId": "c449eb56-603f-4407-8887-b2600d1ec06d",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795355312829
+      },
+      {
+        "executionId": "c449eb56-603f-4407-8887-b2600d1ec06d",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795355380439
       }
     ],
     "16.4 News and AI Copilot panels": [
@@ -1816,6 +1851,36 @@
         "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795266554603
+      },
+      {
+        "executionId": "8d6ffae6-ce5f-495f-9110-4001b0a5dab2",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795355502010
+      },
+      {
+        "executionId": "8d6ffae6-ce5f-495f-9110-4001b0a5dab2",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795355510712
+      },
+      {
+        "executionId": "8d6ffae6-ce5f-495f-9110-4001b0a5dab2",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795356008454
+      },
+      {
+        "executionId": "38c9cab4-810d-444c-aae2-32086364e3eb",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795356267320
+      },
+      {
+        "executionId": "38c9cab4-810d-444c-aae2-32086364e3eb",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795356276796
+      },
+      {
+        "executionId": "38c9cab4-810d-444c-aae2-32086364e3eb",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795356340988
       }
     ],
     "16.5 Batch application": [
@@ -1895,16 +1960,6 @@
     ],
     "17.4 README and env example": [
       {
-        "executionId": "1e0ec270-6d79-41db-93c5-8f65507a2ccb",
-        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
-        "timestamp": 1795232452606
-      },
-      {
-        "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
-        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
-        "timestamp": 1795266654142
-      },
-      {
         "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795267320973
@@ -1938,6 +1993,21 @@
         "executionId": "747d6761-f239-47aa-9a7a-9e486b19ecf4",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795326503875
+      },
+      {
+        "executionId": "74d2dd87-4a81-4f93-a39f-21b7758a8b92",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795356772101
+      },
+      {
+        "executionId": "74d2dd87-4a81-4f93-a39f-21b7758a8b92",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795356783460
+      },
+      {
+        "executionId": "74d2dd87-4a81-4f93-a39f-21b7758a8b92",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795357087303
       }
     ],
     "18. Final checkpoint - full verification": [

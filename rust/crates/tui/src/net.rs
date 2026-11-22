@@ -124,7 +124,9 @@ pub struct Subscription {
 }
 
 impl Subscription {
-    /// A subscription on the `replay` venue; the app moves it with a venue switch (Task 16.3).
+    /// A subscription on the `replay` venue. Tests only; the app subscribes on the venue that
+    /// `hello` names.
+    #[cfg(test)]
     pub fn new(symbol: impl Into<String>, timeframe: Timeframe) -> Self {
         Self::on(protocol::Venue::Replay, symbol, timeframe)
     }

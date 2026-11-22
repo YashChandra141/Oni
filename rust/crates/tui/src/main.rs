@@ -22,7 +22,6 @@ mod brand;
 mod chart_model;
 mod chart_widget;
 mod cli;
-mod copilot;
 mod frame_limiter;
 mod hitmap;
 mod http;
@@ -33,6 +32,7 @@ mod latency;
 mod line_editor;
 mod mouse;
 mod net;
+mod news;
 mod order_input;
 mod order_model;
 mod order_widget;
@@ -151,7 +151,9 @@ async fn run_async(server: &str, keymap: &Keymap, guest: bool) -> io::Result<()>
     // Req 33.3: the watchlist subscriptions, which include the default chart key (BTC-USD 1m).
     // The net task's subscription set sends them, and every chart key added later, again after
     // every reconnect.
-    let initial = watchlist_subscriptions();
+    // Nothing is subscribed up front: the venue is only known from `hello` (see
+    // `hello_subscription_messages`), and a live server rejects `replay`.
+    let initial: Vec<Subscription> = Vec::new();
     // Keep the sender alive for the whole loop; dropping it stops the connection task.
     // Req 33.4, 48.12: after each hello the net task asks for the saved token. It is read from
     // the Token_Store each time, so a token deleted after a failed sign-in is not sent again.
@@ -188,7 +190,6 @@ async fn run_async(server: &str, keymap: &Keymap, guest: bool) -> io::Result<()>
                     if is_hard_exit(&key)
                         || (!app.pairing.is_open()
                             && !order_input::blocks_global_keys(&app)
-                            && !copilot::captures_text(&app)
                             && is_quit(keymap, &key)) =>
                 {
                     break;
@@ -221,43 +222,24 @@ async fn run_async(server: &str, keymap: &Keymap, guest: bool) -> io::Result<()>
                         }
                     }
                 }
-                // `copilot.focus` (keymap, default `C`) focuses the Copilot input line.
+                // News keys (Task 16.4): Enter/`y` act on the selected item, Up/Down/`j`/`k` move.
                 Some(Ok(Event::Key(key)))
                     if key.kind == KeyEventKind::Press
-                        && (app.page == app::Page::Copilot || app.page == app::Page::News)
+                        && app.page == app::Page::News
                         && app.focus == Focus::Chart
                         && !app.account.dialog_open()
                         && !app.help_open
-                        && !app.copilot.focused
-                        && global_action(keymap, &key) == Some(Action::CopilotFocus) =>
-                {
-                    app.copilot.focused = true;
-                    limiter.mark_dirty();
-                }
-                // News and Copilot keys (Task 16.4): the Copilot input line takes every key while
-                // focused; `t` previews the trade idea, Enter/`y` act on news.
-                Some(Ok(Event::Key(key)))
-                    if key.kind == KeyEventKind::Press
-                        && (app.page == app::Page::Copilot || app.page == app::Page::News)
-                        && app.focus == Focus::Chart
-                        && !app.account.dialog_open()
-                        && !app.help_open
-                        && (app.copilot.focused
-                            || matches!(
-                                key.code,
-                                KeyCode::Char('t' | 'T' | 'y' | 'Y' | 'j' | 'k')
-                                    | KeyCode::Up
-                                    | KeyCode::Down
-                                    | KeyCode::Enter
-                                    | KeyCode::Esc
-                            ))
+                        && matches!(
+                            key.code,
+                            KeyCode::Char('y' | 'Y' | 'j' | 'k')
+                                | KeyCode::Up
+                                | KeyCode::Down
+                                | KeyCode::Enter
+                        )
                         && !is_hard_exit(&key) =>
                 {
                     app.now_ms = wall_ms();
-                    if let Some(outcome) = copilot::handle_key(&mut app, &key) {
-                        for message in outcome.messages {
-                            let _ = net_tx.try_send(message);
-                        }
+                    if let Some(outcome) = news::handle_key(&mut app, &key) {
                         if let Some(sequence) = outcome.osc52 {
                             use std::io::Write;
                             let mut out = io::stdout();
@@ -328,7 +310,7 @@ async fn run_async(server: &str, keymap: &Keymap, guest: bool) -> io::Result<()>
                     start_pairing(&mut app, &mut pairing_task, &mut pairing_id, &pair_tx);
                     limiter.mark_dirty();
                 }
-                // Menu keys: 1 to 8 switch page, `<` and `>` move the timeframe, F1 toggles
+                // Menu keys: 1 to 7 switch page, `<` and `>` move the timeframe, F1 toggles
                 // help, Esc closes it (Req 30.1).
                 Some(Ok(Event::Key(key)))
                     if key.kind == KeyEventKind::Press
@@ -356,7 +338,6 @@ async fn run_async(server: &str, keymap: &Keymap, guest: bool) -> io::Result<()>
                         )
                         && !app.pairing.is_open()
                         && !app.help_open
-                        && !app.copilot.focused
                         && app.picker.is_none()
                         && order_input::effective_focus(&app) != order_input::Focus::Ticket =>
                 {
@@ -430,12 +411,19 @@ async fn run_async(server: &str, keymap: &Keymap, guest: bool) -> io::Result<()>
                     if matches!(event, net::NetEvent::Connected) {
                         let _ = net_tx.try_send(ClientMessage::SubscribeNews);
                     }
+                    let is_hello = matches!(
+                        &event,
+                        net::NetEvent::Message(m) if matches!(**m, protocol::client::ServerMessage::Hello { .. })
+                    );
                     if app::update(&mut app, event) {
                         limiter.mark_dirty();
                     }
-                    // A `hello` that moved the Active_Venue: resubscribe on the new venue.
-                    if let Some(old) = app.venue_switched_from.take() {
-                        for message in venue_switch_messages(&app, old) {
+                    // Nothing is subscribed until the `hello` names the venue, so a live
+                    // server never sees `replay`. A venue the hello moved to replaces the
+                    // old one; the same venue after a reconnect was resent by the net task.
+                    if is_hello {
+                        app.venue_switched_from = None;
+                        for message in hello_subscription_messages(&mut app) {
                             let _ = net_tx.try_send(message);
                         }
                     }
@@ -638,6 +626,7 @@ fn move_book_cursor(app: &mut App, up: bool) -> bool {
 /// The subscriptions that keep every watchlist price live (Req 27.3): each default watchlist
 /// symbol at 1m. They are never unsubscribed, so the net task resends all of them after every
 /// reconnect (Req 33.3). BTC-USD 1m is also the default chart key.
+#[cfg(test)]
 fn watchlist_subscriptions() -> Vec<Subscription> {
     DEFAULT_WATCHLIST
         .iter()
@@ -683,12 +672,14 @@ fn venue_keys(app: &App) -> Vec<(String, Timeframe)> {
 fn venue_switch_messages(app: &App, old: protocol::Venue) -> Vec<ClientMessage> {
     let keys = venue_keys(app);
     let mut messages = Vec::with_capacity(keys.len() * 2);
-    for (symbol, timeframe) in &keys {
-        messages.push(ClientMessage::Unsubscribe {
-            venue: old,
-            symbol: symbol.clone(),
-            timeframe: *timeframe,
-        });
+    if old != app.active_venue {
+        for (symbol, timeframe) in &keys {
+            messages.push(ClientMessage::Unsubscribe {
+                venue: old,
+                symbol: symbol.clone(),
+                timeframe: *timeframe,
+            });
+        }
     }
     for (symbol, timeframe) in keys {
         messages.push(ClientMessage::Subscribe {
@@ -736,13 +727,29 @@ fn apply_picker_key(
     Some((app.open_picker(kind), Vec::new()))
 }
 
+/// The subscriptions to send after a `hello`, for the app's Active_Venue. Records the venue as
+/// subscribed. Empty when the venue is already subscribed (the net task resent it on reconnect).
+fn hello_subscription_messages(app: &mut App) -> Vec<ClientMessage> {
+    let active = app.active_venue;
+    let messages = match app.subscribed_venue {
+        Some(old) if old == active => Vec::new(),
+        Some(old) => venue_switch_messages(app, old),
+        None => venue_switch_messages(app, active),
+    };
+    app.subscribed_venue = Some(active);
+    messages
+}
+
 /// Chooses a picker row (key Enter or a click): resubscribes on a venue change and sends
 /// `SetProvider` on a provider choice.
 fn choose_picker_row(app: &mut App, index: usize) -> (bool, Vec<ClientMessage>) {
     let (changed, switched, message) = app.choose_picker_row(index);
     let mut messages = Vec::new();
     if let Some((old, _)) = switched {
+        // Only unsubscribe a venue that was subscribed; before `hello` nothing is.
+        let old = app.subscribed_venue.unwrap_or(old);
         messages.extend(venue_switch_messages(app, old));
+        app.subscribed_venue = Some(app.active_venue);
     }
     messages.extend(message);
     (changed, messages)
@@ -890,7 +897,6 @@ fn menu_key_kind(app: &App, keymap: &Keymap, key: &KeyEvent) -> Option<MenuKey> 
         Action::Page5 => '5',
         Action::Page6 => '6',
         Action::Page7 => '7',
-        Action::Page8 => '8',
         _ => return None,
     };
     crate::app::Page::from_digit(digit).map(MenuKey::Page)
@@ -961,7 +967,9 @@ fn is_quit(keymap: &Keymap, key: &KeyEvent) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::net::NetEvent;
     use crossterm::event::KeyEventState;
+    use protocol::client::ServerMessage;
 
     fn key(code: KeyCode, modifiers: KeyModifiers, kind: KeyEventKind) -> KeyEvent {
         KeyEvent {
@@ -1043,6 +1051,39 @@ mod tests {
                 KeyEventKind::Release
             )
         ));
+    }
+
+    #[test]
+    fn the_first_subscribe_after_a_live_hello_carries_the_default_venue() {
+        let mut app = App::new("ws://x/ws");
+        app::update(&mut app, NetEvent::Connected);
+        app::update(
+            &mut app,
+            NetEvent::msg(ServerMessage::Hello {
+                protocol_version: 3,
+                data_mode: protocol::client::DataMode::Live,
+                live_venues: vec![protocol::Venue::Coinbase, protocol::Venue::Backpack],
+                venue_status: Vec::new(),
+                default_venue: protocol::Venue::Coinbase,
+                starting_balance: protocol::Money(0),
+                engine_running: true,
+                instruments: protocol::client::InstrumentInfo::all(),
+                providers: Vec::new(),
+                news_enabled: false,
+            }),
+        );
+        let messages = hello_subscription_messages(&mut app);
+        assert!(!messages.is_empty());
+        for message in &messages {
+            match message {
+                ClientMessage::Subscribe { venue, .. } => {
+                    assert_eq!(*venue, protocol::Venue::Coinbase);
+                }
+                other => panic!("unexpected message {other:?}"),
+            }
+        }
+        // A reconnect to the same venue sends nothing more: the net task resends.
+        assert!(hello_subscription_messages(&mut app).is_empty());
     }
 
     fn sub(symbol: &str, timeframe: Timeframe) -> ClientMessage {

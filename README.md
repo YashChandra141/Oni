@@ -1,55 +1,60 @@
-# Oni
+<div align="center">
 
-Oni is a crypto **paper-trading** terminal for fast order entry, built for the Kiroween 2026 hackathon (Frankenstein category). No real orders are placed and no real money is used.
+<img src="web/public/brand/oni-mark.svg" alt="Oni mark" width="96" height="96">
 
-- **Next.js web UI** and **Ratatui TUI** with the same panels: chart, order book, trades, order ticket, positions and orders, watchlist, news, and an AI Copilot.
-- **Bun server**: WebSocket gateway, risk checks, the single order router, plain-English orders, AI analyst, MCP server.
-- **Rust engine** (sidecar process): market data, order books, candles, indicators, paper matcher, P&L and paper balance.
-- **No database.** Orders, fills, and rejections live in an in-memory Activity_Log. Every account resets when the engine restarts.
+# ONI 鬼
 
-## Run locally (no Docker)
+**A crypto paper-trading terminal for fast order entry, on the web and in your terminal.**
 
-Works in Git Bash, PowerShell, and macOS/Linux shells.
+![Rust](https://img.shields.io/badge/Rust-1.94-b7410e?logo=rust&logoColor=white)
+![Bun](https://img.shields.io/badge/Bun-1.4.4-000000?logo=bun&logoColor=white)
+![Next.js](https://img.shields.io/badge/Next.js-16-000000?logo=nextdotjs&logoColor=white)
+![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178c6?logo=typescript&logoColor=white)
+![Paper trading only](https://img.shields.io/badge/paper%20trading-only-c1121f)
+![Kiroween 2026](https://img.shields.io/badge/Kiroween-2026-ff2a2a)
 
-```
-bun install
-bun run gen:protocol
-bun run build:engine
-bun run dev
-```
+</div>
 
-Open http://localhost:3000. In a second terminal run `bun run dev:tui`. `bun run dev` starts the server (ws://localhost:8080/ws, `/health`) and the web dev server; `bun run dev:server` starts only the server. `server/.env` is optional, and replay mode needs no keys.
+## What is Oni
+
+Oni is a **paper-trading** terminal built for the Kiroween 2026 hackathon (Frankenstein category). It stitches a Next.js web UI, a Ratatui terminal UI, a Bun server, and a native Rust engine into one product. No real orders are placed and no real money is used.
+
+Both clients show the same panels (chart, order book, trades, order ticket, positions and orders, watchlist, news) and talk to one Bun server. The server runs the Rust engine as a sidecar process. The engine owns market data, order books, candles, indicators, the paper matcher, and each account's P&L and paper balance.
+
+There is **no database**. Orders, fills, and rejections live in an in-memory Activity_Log, and every account resets when the engine restarts. Replay mode and the guest account need no API keys and no wallet.
 
 ## Contents
 
-- [Safety](#safety)
 - [Features](#features)
-- [Local models with Ollama](#local-models-with-ollama)
+- [Architecture](#architecture)
+- [Quick start](#quick-start)
+- [Configuration](#configuration)
+- [Keyboard and mouse](#keyboard-and-mouse)
+- [Command bar](#command-bar)
+- [AI Copilot and local models](#ai-copilot-and-local-models)
 - [Accounts and sign-in](#accounts-and-sign-in)
 - [MCP server](#mcp-server)
-- [Keys](#keys)
-- [Setup and commands](#setup-and-commands)
-- [Configuration](#configuration)
+- [Testing](#testing)
 - [Deploy on Render](#deploy-on-render)
-- [Downloads (TUI)](#downloads-tui)
+- [TUI downloads](#tui-downloads)
 - [Recording fixtures](#recording-fixtures)
-- [Repository layout](#repository-layout)
-
-## Safety
-
-- **Paper only.** The matcher fills paper orders against live public market data or replayed fixtures. No funds move, no wallet transaction is built or signed, no testnet.
-- **Endpoint allowlist.** Market data is read-only and limited to public, unauthenticated Coinbase and Backpack endpoints, `GET api.jup.ag/price/v3`, and `GET api-v3.raydium.io/mint/price` and `/pools/info/mint`. The server also calls its news and LLM hosts, only through the allowlisted HTTP wrapper `server/src/net/http.ts` (Rust twin: `feed/allowlist.rs`). No authenticated, trading, swap, or transaction endpoint is ever called.
-- **One order path.** Every order, from the web UI, TUI, plain-English parser, AI analyst, or MCP server, goes through `server/src/router.ts` and the Risk_Engine before the engine sees it.
-- **Confirm before placing.** Command bar, plain-English, and AI orders produce a preview. The router accepts them only after the same client confirms it.
-- **The LLM never trades.** LLM output is untrusted input. It is validated with Zod and parsed by the normal command parser, so it can only produce a preview.
-- **Risk limits and kill switch.** Limits have no bypass. `KILL_SWITCH=true` rejects every new order on every account. An order the account cannot pay for is rejected with `insufficient_balance`.
-- **Secrets** come only from environment variables. `.env` is gitignored. Never commit a real value.
+- [Safety rules](#safety-rules)
+- [Project structure](#project-structure)
+- [License](#license)
 
 ## Features
 
-**Symbols and timeframes.** Ten symbols: `BTC-USD`, `ETH-USD`, `SOL-USD`, `BNB-USD`, `XRP-USD`, `DOGE-USD`, `JUP-USD`, `WIF-USD`, `BONK-USD`, `PEPE-USD`. Six timeframes: `1m 5m 15m 1h 4h 1d`.
+**Trading**
 
-**Venues.**
+- Ten symbols: `BTC-USD`, `ETH-USD`, `SOL-USD`, `BNB-USD`, `XRP-USD`, `DOGE-USD`, `JUP-USD`, `WIF-USD`, `BONK-USD`, `PEPE-USD`.
+- Market, limit, stop, and TWAP orders. Every typed, plain-English, or AI order shows a preview that you confirm before it is placed.
+- A paper balance per account (`STARTING_BALANCE` USD, default 100000). An order the account cannot pay for is rejected with `insufficient_balance`. There is no margin or borrowing.
+- Positions with realized and unrealized P&L.
+
+**Market data**
+
+- Six timeframes: `1m 5m 15m 1h 4h 1d`. Chart types: candles, line, area, and Heikin-Ashi. Indicators: EMA, VWAP, Bollinger Bands, RSI, ATR.
+- Four venues:
 
 | Venue | Kind | Data |
 |---|---|---|
@@ -58,168 +63,342 @@ Open http://localhost:3000. In a second terminal run `bun run dev:tui`. `bun run
 | Jupiter | DEX | Prices only. Paper orders fill against a Synthetic_Book built around the price |
 | Raydium | DEX | Prices and pool TVL only. Same Synthetic_Book fills |
 
-Binance and Bybit appear as disabled chips only. `DATA_MODE=replay` (recorded fixtures, no keys) is the default. With `DATA_MODE=live`, `LIVE_VENUES` (comma list of `coinbase,backpack,jupiter,raydium`, default all four) picks the feeds. `LIVE_VENUE` with one value still works as an alias.
+- Binance and Bybit appear as disabled "coming soon" tabs.
+- `DATA_MODE=replay` (recorded fixtures, no keys) is the default. With `DATA_MODE=live`, `LIVE_VENUES` (comma list of `coinbase,backpack,jupiter,raydium`, default all four) picks the feeds. `LIVE_VENUE` with one value is still accepted as an alias.
+- News from NewsAPI (local development) or CryptoPanic (hosted).
 
-**Paper balance.** Each account starts with `STARTING_BALANCE` USD (default 100000) and resets with the engine. There is no margin or borrowing.
+**AI**
 
-**Command bar.** Keywords are case-insensitive; short symbols like `BTC` resolve to `BTC-USD`.
+- Web AI Copilot: a chat with a "thinking" indicator and four actions: Analyze, Place trade, Create strategy, and Scan opportunities.
+- Plain-English orders: start the command bar text with `?`.
+- Providers: OpenAI, Anthropic, NVIDIA NIM, and Ollama (with local model discovery).
+- The AI only suggests. Its output becomes a preview that you confirm. It never places an order.
 
+**Interfaces**
+
+- Web UI (Next.js static export, red and black Oni theme): resizable IDE-style split panels (drag a divider, double-click to reset, sizes are remembered), a resizable console with a log under the command bar, exchange tabs, coin icons, and times shown in your local time zone.
+- Terminal UI (Ratatui, Windows and macOS): seven pages, mouse and keyboard. It has no Copilot panel.
+- MCP server for agents such as Kiro.
+- Sign in with Phantom or Backpack through Sign In With Solana (sign-in message only), or trade on the shared guest account.
+
+**Safety**
+
+- Paper only, a read-only endpoint allowlist, one order path through the Risk_Engine, confirm before placing, and a kill switch. See [Safety rules](#safety-rules).
+
+## Architecture
+
+```mermaid
+flowchart LR
+  subgraph Clients["Clients"]
+    WEB["Web UI, Next.js static export"]
+    TUI["TUI, Ratatui"]
+  end
+
+  AGENT["Agents, for example Kiro"]
+  MCPP["MCP process oni-terminal"]
+
+  subgraph Server["Bun server (Hono, Bun.serve)"]
+    GW["Gateway: WebSocket /ws and REST"]
+    ROUTER["Router"]
+    RISK["Risk_Engine"]
+    PARSER["Command_Parser"]
+    COPILOT["AI Copilot and LLM parser"]
+    NEWS["News cache"]
+    LOG["Activity_Log, in memory"]
+    HTTPW["Allowlisted HTTP wrapper"]
+  end
+
+  subgraph Engine["Rust engine (sidecar)"]
+    FEEDS["Feeds and replay"]
+    BOOKS["Order books and candles"]
+    IND["Indicators"]
+    MATCH["Paper matcher and balances"]
+  end
+
+  subgraph Venues["Public market data"]
+    CB["Coinbase"]
+    BP["Backpack"]
+    JUP["Jupiter prices"]
+    RAY["Raydium prices"]
+  end
+
+  subgraph External["External services"]
+    LLM["LLM providers: OpenAI, Anthropic, NVIDIA NIM, Ollama"]
+    NP["News providers: NewsAPI, CryptoPanic"]
+  end
+
+  WEB -->|"WebSocket /ws"| GW
+  TUI -->|"WebSocket /ws"| GW
+  AGENT --> MCPP
+  MCPP -->|"WebSocket and REST"| GW
+  GW --> PARSER
+  GW --> COPILOT
+  GW --> NEWS
+  GW --> LOG
+  PARSER --> ROUTER
+  COPILOT -->|"preview only"| GW
+  GW --> ROUTER
+  ROUTER --> RISK
+  RISK -->|"approved"| ROUTER
+  ROUTER -->|"stdin and stdout, JSON lines"| FEEDS
+  FEEDS --> BOOKS --> IND
+  BOOKS --> MATCH
+  FEEDS --> CB
+  FEEDS --> BP
+  FEEDS --> JUP
+  FEEDS --> RAY
+  COPILOT --> HTTPW
+  NEWS --> HTTPW
+  HTTPW --> LLM
+  HTTPW --> NP
 ```
-BUY|SELL <symbol> <quantity> [LMT <price> | STP <price>]
-BUY|SELL <symbol> <percent>%
-BUY|SELL <symbol> <quantity> TWAP <slices> <seconds>     e.g. BUY BTC-USD 1 TWAP 4 60
-CANCEL ALL
-FLAT
+
+The engine reads Commands as JSON lines on stdin and writes Events as JSON lines on stdout. Logs go to stderr. The router is the only module that sends order Commands to the engine.
+
+### Order flow
+
+```mermaid
+sequenceDiagram
+  actor U as User
+  participant C as Client (web or TUI)
+  participant S as Server gateway
+  participant P as Command_Parser
+  participant R as Router
+  participant K as Risk_Engine
+  participant E as Rust engine
+
+  U->>C: type "BUY BTC 0.1 LMT 64000"
+  C->>S: command text
+  S->>P: parse
+  P-->>S: Order_Preview
+  S-->>C: preview
+  U->>C: confirm
+  C->>S: confirm
+  S->>R: confirmed order, account from session
+  R->>K: check limits
+  alt rejected
+    K-->>R: reason, for example max_order_value
+    R-->>C: OrderRejected
+  else approved
+    K-->>R: approved
+    R->>E: PlaceOrder
+    E-->>S: OrderAck, Fill, Position, Balance
+    S-->>C: account events
+  end
+
+  Note over S,C: The AI Copilot and the "?" plain-English parser end at the preview step. The user still confirms, and the order then takes this same path.
 ```
 
-TWAP: you confirm one preview, then the router sends one market child order per slice, each through the risk checks. Remaining children are cancelled on disconnect, account change, engine restart, a rejected child, or cancel.
+## Quick start
 
-**Plain-English orders.** Start the command bar text with `?`, for example `? buy a little ETH at 3000`. The text goes to the LLM provider and returns a preview you confirm.
+Requirements: [Bun](https://bun.sh) 1.4.4 and Rust 1.94 with `clippy` and `rustfmt`. On Windows the release builds use the MSVC toolchain.
 
-**AI Copilot and analyst.** Analyze, trade suggestions, strategies, and opportunity scans. It only suggests. A trade becomes a preview and you confirm it. Providers: OpenAI, Anthropic, NVIDIA NIM, and Ollama. `LLM_PROVIDER` sets the default; `AI_RATE_PER_MIN` and `AI_DAILY_CAP` limit use (Ollama is not counted against the cap). Headlines and other external text are untrusted data.
+1. Install dependencies.
 
-**News.** NewsAPI (local development only) and CryptoPanic (hosted). `NEWS_PROVIDER` is `newsapi`, `cryptopanic`, or `none`.
+   ```sh
+   bun install
+   ```
 
-**Web pages:** `/dashboard`, `/trade`, `/markets`, `/portfolio`, `/backtest`, `/copilot`, `/logs`, `/settings`, `/pair`.
+2. Generate the TypeScript protocol types from the Rust protocol crate.
 
-## Local models with Ollama
+   ```sh
+   bun run gen:protocol
+   ```
+
+3. Build the engine and the TUI (release build).
+
+   ```sh
+   bun run build:engine
+   ```
+
+4. Start the server and the web dev server. Open <http://localhost:3000>.
+
+   ```sh
+   bun run dev
+   ```
+
+5. In a second terminal, start the TUI.
+
+   ```sh
+   bun run dev:tui
+   ```
+
+`bun run dev` starts the server (`ws://localhost:8080/ws`, `GET /health`) and the web dev server. It waits for `/health` before it starts the web server, and it loads `server/.env` when that file exists. Replay mode needs no keys, so `server/.env` is optional. To set options, copy `server/.env.example` to `server/.env` (gitignored) and fill in values locally.
+
+| Script | What it does |
+|---|---|
+| `bun run dev` | Server and web dev server |
+| `bun run dev:server` | Server only |
+| `bun run dev:web` | Web dev server only |
+| `bun run dev:tui` | TUI against `ws://localhost:8080/ws` |
+| `bun run build:engine` | Release build of the `engine` and `tui` crates |
+| `bun run gen:protocol` | Regenerate `shared/protocol/*.ts` (never edit those files by hand) |
+| `bun run icons` | Download coin icons into `web/public/coins/` (needs network) |
+| `bun run check` | Full check, see [Testing](#testing) |
+| `bun run bench:latency` | Server and engine in replay mode, prints p50 and p95 latency |
+| `bun run --cwd web build` | Static export of the web UI |
+
+`ENGINE_PATH` defaults to `rust/target/release/engine` (`.exe` on Windows). The web UI reads `NEXT_PUBLIC_WS_URL` (`ws://localhost:8080/ws`) and `NEXT_PUBLIC_API_URL` (`http://localhost:8080`), and `ALLOWED_ORIGINS` must include the web origin (default `http://localhost:3000`).
+
+### Web pages
+
+`/` (Trade), `/dashboard`, `/markets`, `/copilot`, `/portfolio`, `/logs`, `/settings`, and `/pair` (TUI pairing). `/backtest` exists as a "not built yet" placeholder.
+
+## Configuration
+
+Names only. Copy `server/.env.example` to `server/.env` and fill in values locally. An empty value counts as unset and selects the default. "Secret" means never log it, never commit it, and set it only through the environment (or the Render dashboard).
+
+| Variable | Secret | Default | Purpose |
+|---|---|---|---|
+| `PORT` | no | `8080` | HTTP and WebSocket port |
+| `ENGINE_PATH` | no | `rust/target/release/engine` | Path to the engine binary |
+| `DATA_MODE` | no | `replay` | `replay` or `live` |
+| `REPLAY_FIXTURE` | no | `demo.jsonl` | Fixture in `fixtures/` for replay mode |
+| `REPLAY_SPEED` | no | `1` | Replay speed, 1 to 50 |
+| `LIVE_VENUES` | no | all four | Live feeds (`coinbase,backpack,jupiter,raydium`) when `DATA_MODE=live` |
+| `LIVE_VENUE` | no | unset | Single-venue alias for `LIVE_VENUES` |
+| `ALLOWED_ORIGINS` | no | `http://localhost:3000` | Browser origins allowed on `/ws` and the auth routes |
+| `WEB_URL` | no | first `ALLOWED_ORIGINS` entry | Web UI origin for pairing links. Must be in `ALLOWED_ORIGINS` |
+| `KILL_SWITCH` | no | `false` | `true` rejects every new order on every account |
+| `SESSION_SECRET` | yes | random per process | HMAC key for session tokens. Required in production, at least 32 bytes |
+| `NODE_ENV` | no | unset | `development`, `production`, or `test` |
+| `STARTING_BALANCE` | no | `100000` | Starting paper balance in USD (1000 to 100000000) |
+| `BALANCE_SLIPPAGE_BPS` | no | `100` | Slippage allowance in the balance check |
+| `DEX_*` | no | see `server/src/config.ts` | Synthetic_Book tuning for Jupiter and Raydium (`DEX_LEVELS`, `DEX_SPREAD_BPS`, `DEX_STEP_BPS`, `DEX_LEVEL_NOTIONAL`, `DEX_MAX_DEVIATION_PCT`) |
+| `JUPITER_POLL_MS`, `RAYDIUM_POLL_MS` | no | engine default | Poll intervals for the DEX price feeds |
+| `JUPITER_API_KEY` | yes | unset | Optional. Raises the Jupiter Price API rate limit. Sent only to that API |
+| `LLM_PROVIDER` | no | first available of `ollama`, `openai`, `anthropic`, `nvidia` | Default AI provider |
+| `OPENAI_API_KEY` | yes | unset | Enables OpenAI |
+| `OPENAI_MODEL` | no | built-in | OpenAI model override |
+| `ANTHROPIC_API_KEY` | yes | unset | Enables Anthropic |
+| `ANTHROPIC_MODEL` | no | built-in | Anthropic model override |
+| `NVIDIA_API_KEY` | yes | unset | Enables NVIDIA NIM |
+| `NVIDIA_MODEL` | no | built-in | NVIDIA NIM model override |
+| `NVIDIA_BASE_URL` | yes | NVIDIA hosted endpoint | NVIDIA NIM base URL (a URL can carry credentials) |
+| `OLLAMA_BASE_URL` | yes | `http://127.0.0.1:11434` | Ollama base URL |
+| `OLLAMA_MODEL` | no | `gemma4` | Default Ollama model |
+| `AI_RATE_PER_MIN` | no | `6` | AI requests per connection per minute |
+| `AI_DAILY_CAP` | no | `500` | AI provider calls per UTC day (OpenAI, Anthropic, NVIDIA) |
+| `NEWS_PROVIDER` | no | by `NODE_ENV` and available key | `newsapi`, `cryptopanic`, or `none` |
+| `NEWS_API_KEY` | yes | unset | NewsAPI key (development only) |
+| `CRYPTOPANIC_API_KEY` | yes | unset | CryptoPanic token (hosted) |
+| `CRYPTOPANIC_PLAN` | no | `developer` | `developer`, `growth`, or `enterprise` |
+| `NEWS_TTL_SECONDS` | no | `900` | News cache time, 300 to 3600 |
+| `NEWS_ALLOW_NEWSAPI_IN_PRODUCTION` | no | `false` | Allow NewsAPI in production (its terms may forbid it) |
+| `TERMINAL_TOKEN` | yes | unset | MCP process only: a session token for a wallet account |
+| `TERMINAL_URL` | no | `http://localhost:8080` | MCP process only: the Oni server address |
+
+There is no `DATABASE_URL`. An invalid value makes the server log the variable name (never the value) and exit with status 1.
+
+## Keyboard and mouse
+
+Bindings live in `shared/keymap.json`, per client. The mouse works on every panel.
+
+| Action | Web | TUI |
+|---|---|---|
+| Timeframe | `1` to `6` (1m, 5m, 15m, 1h, 4h, 1d) | `<` and `>` (previous and next) |
+| Pages | `Alt+1` to `Alt+8` | `1` to `7` |
+| Next or previous symbol | `Tab` / `Shift+Tab` | `Tab` / `Shift+Tab` |
+| Next venue | `V` | `V` |
+| Next AI provider | `G` | `G` |
+| Next AI model | | `M` |
+| Focus the AI Copilot | `C` | |
+| Buy / sell | `B` / `S` | `B` / `S` |
+| Flatten all positions | `F` | `F` |
+| Cancel all orders | `X` | `X` |
+| Toggle EMA / VWAP / Bollinger / RSI / ATR | `E` / `W` / `O` / `R` / `T` | `E` / `W` / `O` / `R` / `T` |
+| Focus the command bar | `:` | `:` |
+| Chart zoom and pan | `+` `-` `Left` `Right` | `+` `-` `Left` `Right` |
+| Chart type | chart type control (candles, line, area, Heikin-Ashi) | `l` toggles line and candles |
+| Cycle ticket order type | | `t` |
+| Pair with the web UI | | `P` |
+| Help | `F1` | `F1` |
+| Quit | | `Q` |
+
+TUI pages: **[1] Trade**, **[2] Book**, **[3] Positions**, **[4] Orders**, **[5] Watchlist**, **[6] News**, **[7] Config**. Web pages are listed under [Quick start](#web-pages) and follow the sidebar order on `Alt+1` to `Alt+8`.
+
+## Command bar
+
+Keywords are case-insensitive. Short symbols such as `BTC` resolve to `BTC-USD`. Every command produces a preview that you confirm.
+
+```text
+BUY BTC 0.1                     market order
+BUY BTC 0.1 LMT 64000           limit order
+SELL ETH 2 STP 3000             stop order
+SELL SOL 50%                    50% of the current SOL position, rounded down to a lot
+BUY BTC-USD 1 TWAP 4 60         4 slices, 60 seconds apart
+CANCEL ALL                      cancel every open order of the account
+FLAT                            flatten all positions
+? buy a little ETH at 3000      plain-English order (needs an AI provider)
+```
+
+TWAP takes 2 to 20 slices and 5 to 3600 seconds between slices. You confirm one preview, then the router sends one market child order per slice, each through the Risk_Engine. Remaining children are cancelled on disconnect, account change, engine restart, a rejected child, or cancel.
+
+## AI Copilot and local models
+
+The web Copilot panel (and the `/copilot` page) lets you chat, **Analyze** the selected symbol, **Place trade** (which produces a preview), **Create strategy**, and **Scan opportunities**. Pick the provider with `G` or in the panel. Headlines and other external text sent to a model are treated as untrusted data.
+
+The TUI has no Copilot. `G` and `M` still choose the provider and model used by `?` plain-English orders.
+
+### Ollama
 
 1. Install [Ollama](https://ollama.com) and start it.
-2. Pull a model: `ollama pull gemma4` (or any other model).
-3. Optionally set `OLLAMA_BASE_URL` (default `http://127.0.0.1:11434`; `localhost` can resolve to IPv6 on Windows and fail) and `OLLAMA_MODEL` (the default model, `gemma4`) in `server/.env`.
+2. Pull a model, for example `ollama pull gemma4`.
+3. Optionally set `OLLAMA_BASE_URL` and `OLLAMA_MODEL` in `server/.env`. Use `127.0.0.1`, not `localhost`, on Windows.
 
-Oni lists the installed models from Ollama's `/api/tags` and re-checks every 30 seconds. Each entry shows family, parameter size, and size on disk. Pick a model in the web Copilot panel or on the Settings page (remembered per browser), or cycle with `M` in the TUI. Ollama shows as unavailable when no model is installed. A hosted server cannot reach your local Ollama.
+Oni lists the installed models from Ollama and re-checks every 30 seconds. Choose a model in the web Copilot panel (a picker with a "None" option) or on the Settings page, or cycle with `M` in the TUI. Ollama shows as unavailable when no model is installed. A hosted server cannot reach your local Ollama.
 
 ## Accounts and sign-in
 
 - **Guest.** Everyone without a valid session shares one `guest` account. No wallet or keys needed.
-- **Wallet (web).** Sign in with **Phantom** or **Backpack** through Wallet Standard and Sign In With Solana. The wallet signs one thing, the sign-in message ("Sign in to Oni paper trading. This signature does not authorize any transaction."). It never signs or sends a transaction, and the server never contacts a Solana RPC. Your account is `w_<address>`. The session token lasts 24 hours.
-- **TUI pairing.** Press `P` in the TUI. It shows an 8-character code and a link `<web url>/pair/?code=...` (valid 5 minutes). Open it, sign in, and confirm the code. The token is saved to `haunted-terminal/session.json` in the per-user config directory (mode 0600 on Unix).
-- `oni-tui --guest` ignores the saved sign-in. `oni-tui --logout` revokes the token, deletes the file, and exits.
+- **Wallet (web).** Sign in with Phantom or Backpack through Wallet Standard and Sign In With Solana. The wallet signs one thing, the sign-in message ("Sign in to Oni paper trading. This signature does not authorize any transaction."). It never signs or sends a transaction, and the server never contacts a Solana RPC. Your account is `w_<address>`. The session token lasts 24 hours.
+- **TUI pairing.** Press `P` in the TUI. It shows an 8-character code and a link `<web url>/pair/?code=...` that is valid for 5 minutes. Open the link, sign in, and confirm the code. The token is saved to `haunted-terminal/session.json` in the per-user config directory (mode 0600 on Unix).
+- `tui --guest` ignores the saved sign-in. `tui --logout` revokes the token, deletes the file, and exits. In a release download the binary is named `oni-tui`.
 
 ## MCP server
 
-Registered in `.kiro/settings/mcp.json` as `oni-terminal`, started with `bun run server/src/mcp/main.ts`. It is a client of a running Oni server, so start the server first.
+Registered in `.kiro/settings/mcp.json` as `oni-terminal` and started with `bun run server/src/mcp/main.ts`. It is a client of a running Oni server, so start the server first.
 
-Tools: `get_quote`, `get_candles`, `get_positions`, `preview_order`, `place_paper_order`. Orders go through the same router and risk checks as every other order.
+| Tool | What it does |
+|---|---|
+| `get_quote` | Best bid, best ask, spread, and last trade price for a symbol |
+| `get_candles` | Recent OHLCV candles for a symbol and timeframe |
+| `get_positions` | Positions and P&L of the MCP connection's paper account |
+| `preview_order` | Parses an order command and returns its preview. Places nothing |
+| `place_paper_order` | Submits an order through the same router and risk checks as every other order |
 
-- `TERMINAL_URL` is the server address (default `http://localhost:8080`).
-- Without `TERMINAL_TOKEN` the MCP server uses the guest account. To use a wallet account, set a session token in `TERMINAL_TOKEN` in the environment that launches Kiro. Never write it into `mcp.json`.
+The settings file auto-approves the four read-only tools, so `place_paper_order` asks for approval. Without `TERMINAL_TOKEN` the MCP process uses the guest account. For a wallet account, set a session token in `TERMINAL_TOKEN` in the environment that launches Kiro. Never write it into `mcp.json`.
 
-## Keys
-
-The shared bindings are in `shared/keymap.json`. The mouse works on every panel.
-
-| Key | Web | TUI |
-|---|---|---|
-| Timeframes | `1`–`6` (1m, 5m, 15m, 1h, 4h, 1d) | `<` / `>` previous / next |
-| Pages | `Alt+1` … `Alt+8` | `[1]`–`[8]` |
-| `V` | Next venue | Next venue |
-| `G` | Next AI provider | Next AI provider |
-| `M` | | Next model (Ollama) |
-| `C` | Focus Copilot | Focus Copilot |
-| `l` | | Chart type |
-| `t` | | Ticket order type |
-| `P` | | Pair with the web UI |
-| `F1` | Help | Help |
-
-## Setup and commands
-
-Requirements: [Bun](https://bun.sh) 1.4.4, Rust 1.94 with `clippy` and `rustfmt`. On Windows the release builds use the MSVC toolchain.
+## Testing
 
 ```sh
-bun install                                              # server, web, shared dependencies
-bun run gen:protocol                                     # regenerate shared/protocol/*.ts from the Rust protocol crate
-cargo build --manifest-path rust/Cargo.toml --release    # builds engine and tui
-bun run check                                            # cargo fmt, clippy, cargo test, tsc, bun test
-bun run --cwd web build                                  # static export of the web UI
-bun run bench:latency                                    # server + engine in replay mode, prints p50 and p95
+bun run check
 ```
 
-`bun run check` needs no database, API key, or network. Do not hand-edit `shared/protocol/`.
-
-Run locally (replay mode, no keys), from the repository root:
-
-```sh
-cp server/.env.example server/.env              # optional; empty values select defaults
-cd server && bun run start                      # server on http://localhost:8080 (spawns the engine)
-bun run --cwd web dev                           # web UI on http://localhost:3000
-./rust/target/release/tui --server ws://localhost:8080/ws   # TUI
-```
-
-- `ENGINE_PATH` defaults to `rust/target/release/engine` (`.exe` on Windows). For a debug build set it to `rust/target/debug/engine`.
-- `REPLAY_SPEED` (1 to 50) speeds up replay.
-- The web UI reads `NEXT_PUBLIC_WS_URL` (`ws://localhost:8080/ws`) and `NEXT_PUBLIC_API_URL` (`http://localhost:8080`). `ALLOWED_ORIGINS` must include the web origin.
-- `GET /health` reports the engine state.
-
-Regenerate the demo fixture:
-
-```sh
-cargo run --manifest-path rust/Cargo.toml -p engine -- synth --out fixtures/demo.jsonl
-```
-
-## Configuration
-
-Names only; copy `server/.env.example` to `server/.env` (gitignored) and fill in values locally. Empty means default.
-
-| Variable | Secret | Purpose |
-|---|---|---|
-| `PORT` | no | HTTP and WebSocket port (default 8080) |
-| `ENGINE_PATH` | no | Path to the engine binary |
-| `DATA_MODE` | no | `replay` (default) or `live` |
-| `LIVE_VENUES` | no | Live feeds, default all four. `LIVE_VENUE` is a single-venue alias |
-| `ALLOWED_ORIGINS` | no | Browser origins allowed to open `/ws` and the auth routes |
-| `WEB_URL` | no | Web UI origin for pairing links. Must be in `ALLOWED_ORIGINS` |
-| `KILL_SWITCH` | no | `true` rejects every new order |
-| `SESSION_SECRET` | yes | HMAC key for session tokens, at least 32 bytes in production |
-| `NODE_ENV` | no | `production` enables strict checks |
-| `STARTING_BALANCE` | no | Starting paper balance in USD |
-| `BALANCE_SLIPPAGE_BPS` | no | Slippage allowance for balance checks |
-| `JUPITER_API_KEY` | yes | Optional. Raises the Jupiter price rate limit. Sent only to the Jupiter Price API |
-| `DEX_*` | no | DEX poll and staleness tuning |
-| `LLM_PROVIDER` | no | Default AI provider |
-| `OPENAI_API_KEY` | yes | Enables OpenAI |
-| `ANTHROPIC_API_KEY` | yes | Enables Anthropic |
-| `NVIDIA_API_KEY` | yes | Enables NVIDIA NIM |
-| `NVIDIA_BASE_URL` | yes | NVIDIA NIM base URL (a URL can carry credentials) |
-| `OLLAMA_BASE_URL` | yes | Ollama base URL (default `http://127.0.0.1:11434`) |
-| `OLLAMA_MODEL` | no | Default Ollama model (`gemma4`) |
-| `AI_RATE_PER_MIN` | no | AI requests per connection per minute |
-| `AI_DAILY_CAP` | no | AI provider calls per UTC day |
-| `NEWS_PROVIDER` | no | `newsapi`, `cryptopanic`, or `none` |
-| `NEWS_API_KEY` | yes | NewsAPI key (development only) |
-| `CRYPTOPANIC_API_KEY` | yes | CryptoPanic token |
-| `CRYPTOPANIC_PLAN` | no | CryptoPanic plan |
-| `NEWS_TTL_SECONDS` | no | News cache time |
-| `NEWS_ALLOW_NEWSAPI_IN_PRODUCTION` | no | Allow NewsAPI in production (terms may forbid it) |
-| `TERMINAL_TOKEN` | yes | MCP process only: session token for a wallet account |
-
-There is no `DATABASE_URL`. Model overrides (`OPENAI_MODEL`, `ANTHROPIC_MODEL`, `NVIDIA_MODEL`) are listed in `server/.env.example`.
+It runs, in order: `cargo fmt --check`, `cargo clippy` with `-D warnings`, `cargo test` for the workspace, an engine build, `tsc --noEmit` for `shared`, `server`, and `web`, and `bun test`. It needs no database, API key, or network. Rust properties use proptest and TypeScript properties use fast-check. Tests use mock servers and recorded fixtures and never contact a real exchange, news host, LLM host, or wallet.
 
 ## Deploy on Render
 
-`render.yaml` defines two services:
+`render.yaml` is a Render Blueprint with two services:
 
 | Service | Type | Runs |
 |---|---|---|
-| `oni-server` | Docker web service (free plan) | Bun server and Rust engine, built from `Dockerfile` |
+| `oni-server` | Docker web service (free plan, health check `/health`) | Bun server and Rust engine, built from `Dockerfile` |
 | `oni-web` | Static site | Next.js static export from `web/` |
 
 1. Push the repository to GitHub.
 2. In Render choose **New > Blueprint**, select the repository, and apply `render.yaml`.
-3. Enter the values marked `sync: false` in the dashboard (API keys, for example). `SESSION_SECRET` is generated by Render.
+3. Enter the values marked `sync: false` in the dashboard (API keys). Render generates `SESSION_SECRET`.
 
-If a service name is taken, Render adds a suffix to the URL. Then update `ALLOWED_ORIGINS` and `WEB_URL` on `oni-server`, and `NEXT_PUBLIC_WS_URL` (`wss://<server-host>/ws`) and `NEXT_PUBLIC_API_URL` (`https://<server-host>`) on `oni-web`, and redeploy `oni-web`. The TUI defaults to `wss://oni-server.onrender.com/ws`; use `--server` for other hosts.
+The Blueprint runs the hosted server in replay mode with `NEWS_PROVIDER=cryptopanic`. If a service name is taken, Render adds a suffix to the URL. Then update `ALLOWED_ORIGINS` and `WEB_URL` on `oni-server`, update `NEXT_PUBLIC_WS_URL` (`wss://<server-host>/ws`) and `NEXT_PUBLIC_API_URL` (`https://<server-host>`) on `oni-web`, and redeploy `oni-web`. The TUI defaults to `wss://oni-server.onrender.com/ws`; use `--server` for other hosts.
 
-Free-plan limits: the server sleeps after 15 minutes without traffic and takes about a minute to wake. A restart resets the engine, so every paper account resets. There is no database service.
+On the free plan the server sleeps after a period without traffic and takes a while to wake. A restart resets the engine, so every paper account resets. There is no database service.
 
-## Downloads (TUI)
+## TUI downloads
 
-Each tagged release (`v*`) has `oni-tui-windows-x64.zip`, `oni-tui-macos-universal.tar.gz`, and `SHA256SUMS.txt`. Each archive unpacks to `oni/` with `oni-tui`, `oni-engine`, `fixtures/`, `LICENSE`, and `README.md`. The binaries are not code-signed.
+Each tagged release (`v*`) has `oni-tui-windows-x64.zip`, `oni-tui-macos-universal.tar.gz`, and `SHA256SUMS.txt`. Each archive unpacks to `oni/` with `oni-tui`, `oni-engine`, and `fixtures/`. The binaries are not code-signed.
 
-Verify: `Get-FileHash .\oni-tui-windows-x64.zip -Algorithm SHA256` (Windows) or `shasum -a 256 oni-tui-macos-universal.tar.gz` (macOS), and compare with `SHA256SUMS.txt`.
-
-Run: `.\oni\oni-tui.exe` (Windows) or `./oni/oni-tui` (macOS).
+Verify: `Get-FileHash .\oni-tui-windows-x64.zip -Algorithm SHA256` (Windows) or `shasum -a 256 oni-tui-macos-universal.tar.gz` (macOS), and compare with `SHA256SUMS.txt`. Run `.\oni\oni-tui.exe` (Windows) or `./oni/oni-tui` (macOS).
 
 | Flag | Meaning |
 |---|---|
@@ -229,7 +408,7 @@ Run: `.\oni\oni-tui.exe` (Windows) or `./oni/oni-tui` (macOS).
 | `--version` | Print the version |
 
 - **macOS Gatekeeper** blocks unsigned downloads. Run `xattr -d com.apple.quarantine ./oni/oni-tui ./oni/oni-engine`, or right-click the file and choose **Open**.
-- **Windows SmartScreen** may warn. Click **More info**, then **Run anyway**, or tick **Unblock** in the zip's Properties before extracting.
+- **Windows SmartScreen** may warn. Click **More info**, then **Run anyway**.
 
 ## Recording fixtures
 
@@ -249,19 +428,39 @@ cargo run --manifest-path rust/Cargo.toml -p engine --release -- record \
 | `--max-messages <n>` | Stop after this many lines |
 | `--force` | Replace an existing output or leftover `.partial` file |
 
-Lines go to `<out>.partial` and are renamed when the run ends. Ctrl-C is not handled; use `--duration` or `--max-messages`.
+Lines go to `<out>.partial` and are renamed when the run ends. Ctrl-C is not handled; use `--duration` or `--max-messages`. To regenerate the demo fixture, run the engine's `synth` subcommand: `cargo run --manifest-path rust/Cargo.toml -p engine -- synth --out fixtures/demo.jsonl`.
 
-## Repository layout
+## Safety rules
 
-| Path | Contents |
-|---|---|
-| `rust/` | Cargo workspace: `protocol`, `engine`, `tui` |
-| `server/` | Bun + Hono server |
-| `web/` | Next.js web UI |
-| `shared/` | Generated protocol types and `keymap.json` |
-| `fixtures/` | Replay fixtures |
-| `.kiro/` | Specs, steering, hooks, MCP settings |
+1. **Paper only.** The matcher fills paper orders against live public market data or replayed fixtures. No funds move, no wallet transaction is built or signed, and there is no testnet.
+2. **Endpoint allowlist.** Market data is read-only and limited to public, unauthenticated Coinbase and Backpack endpoints, `GET api.jup.ag/price/v3`, and `GET api-v3.raydium.io/mint/price` and `/pools/info/mint`. The server also calls its news and LLM hosts, only through the allowlisted HTTP wrapper `server/src/net/http.ts` (Rust twin: `rust/crates/engine/src/feed/allowlist.rs`). No authenticated, trading, swap, or transaction endpoint is ever called.
+3. **One order path.** Every order, from the web UI, the TUI, the plain-English parser, the AI Copilot, or the MCP server, goes through `server/src/router.ts` and the Risk_Engine before the engine sees it.
+4. **Confirm before placing.** Command bar, plain-English, and AI orders produce a preview. The router accepts them only after the same client confirms it on the same account.
+5. **The LLM never trades.** LLM output is untrusted input. It is validated with Zod and parsed by the normal command parser, so it can only produce a preview.
+6. **Risk limits and the kill switch.** Limits have no bypass. `KILL_SWITCH=true` rejects every new order on every account. Rejection reasons include `kill_switch`, `rate_limit`, `max_open_orders`, `price_band`, `max_order_value`, `max_position`, and `insufficient_balance`.
+7. **Secrets in the environment only.** `.env` is gitignored. Secrets are never logged, returned in responses (except the one response that issues a session token), or committed.
+8. **Accounts come from the verified session.** The server sets the account on every order from the session of the requesting connection, never from client input, MCP arguments, or LLM output.
+
+## Project structure
+
+```text
+.
+├── rust/                  Cargo workspace
+│   └── crates/
+│       ├── protocol/      Command and Event types, TypeScript generation
+│       ├── engine/        Sidecar: feeds, books, candles, indicators, matcher, balances
+│       └── tui/           Ratatui terminal client
+├── server/                Bun + Hono server (gateway, router, risk, parser, AI, news, MCP)
+├── web/                   Next.js web UI (static export)
+├── shared/                Generated protocol types and keymap.json
+├── fixtures/              Replay fixtures
+├── scripts/               dev.ts launcher, coin icon downloader
+├── .github/workflows/     CI and release workflows
+├── .kiro/                 Specs, steering, hooks, MCP settings
+├── Dockerfile             Server and engine image
+└── render.yaml            Render Blueprint
+```
 
 ## License
 
-[MIT](LICENSE)
+Released under the [MIT License](LICENSE).

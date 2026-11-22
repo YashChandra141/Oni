@@ -7,6 +7,7 @@ import defaultKeymap, {
   loadKeymap,
   normalizeKey,
   resolve,
+  WEB_ONLY_ACTIONS,
 } from "./keymap.ts";
 
 function errorsOf(json: unknown): readonly string[] {
@@ -204,5 +205,14 @@ describe("forClient", () => {
     expect(resolve(web, "global", "Alt+8")).toBe("page.8");
     expect(resolve(web, "global", "6")).toBe("timeframe.1d");
     expect(forClient(keymap, "tui")).toBe(keymap);
+  });
+
+  test("the TUI has no copilot.focus and no page.8 (web-only)", () => {
+    const web = forClient(keymap, "web");
+    expect(resolve(web, "global", "C")).toBe("copilot.focus");
+    expect(resolve(keymap, "global", "C")).toBeNull();
+    expect(resolve(keymap, "global", "8")).toBeNull();
+    const tuiActions = [...keymap.contexts.global.values()];
+    for (const action of WEB_ONLY_ACTIONS) expect(tuiActions).not.toContain(action);
   });
 });

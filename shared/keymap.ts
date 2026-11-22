@@ -73,6 +73,12 @@ export type Action = (typeof ACTIONS)[number];
 /** Actions only the TUI handles. The web UI signs in with buttons (Req 47) and cannot quit. */
 export const TUI_ONLY_ACTIONS: readonly Action[] = ["app.quit", "auth.pair", "model.next"];
 
+/**
+ * Actions only the web UI handles. The TUI has no AI Copilot and seven pages, so the Rust loader
+ * does not know these actions and skips them.
+ */
+export const WEB_ONLY_ACTIONS: readonly Action[] = ["copilot.focus", "page.8"];
+
 export type Client = "web" | "tui";
 const CLIENTS: readonly Client[] = ["web", "tui"];
 
