@@ -51,6 +51,8 @@ pub enum ClientMessage {
     CancelTwap { request_id: String, twap_id: String },
     /// Select the LLM provider for this connection (Req 4.2).
     SetProvider { provider: ProviderId },
+    /// Select the Ollama model for this connection (Req 38). Only `ollama` is accepted.
+    SetModel { provider: ProviderId, model: String },
     /// A Copilot request. "Place trade" is not an action here: the client sends `command_text`
     /// with a `?` prefix (Req 7.4). The message carries no account id.
     AiRequest {
@@ -127,6 +129,12 @@ pub enum ServerMessage {
         default: Option<ProviderId>,
         selected: Option<ProviderId>,
     },
+    /// The installed Ollama models, the server default, and this connection's selection (Req 38).
+    OllamaModels {
+        models: Vec<OllamaModel>,
+        default: Option<String>,
+        selected: Option<String>,
+    },
     /// A validated AI analysis, with the preview built from its suggested order (Req 5.9).
     Analysis {
         request_id: String,
@@ -143,6 +151,8 @@ pub enum ServerMessage {
     },
     /// A strategy description. The text starts with "draft, not executed" (Req 7.6).
     StrategyDraft { request_id: String, text: String },
+    /// A plain-text chat reply. It never carries an order.
+    AiChat { request_id: String, text: String },
     /// An AI request failed or was canceled.
     AiError {
         request_id: String,
@@ -257,6 +267,21 @@ pub struct ProviderInfo {
     pub model: String,
     /// Why the provider cannot be used, or `null` when it can.
     pub reason: Option<String>,
+    /// The installed models; `Some` only for `ollama` (Req 38).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub models: Option<Vec<OllamaModel>>,
+}
+
+/// One model that Ollama reports installed (Req 38).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = crate::TS_EXPORT_DIR)]
+pub struct OllamaModel {
+    pub name: String,
+    #[ts(type = "number")]
+    pub size: u64,
+    pub family: Option<String>,
+    pub parameter_size: Option<String>,
 }
 
 /// A suggested order inside an [`AnalysisResult`]. It has no account, venue, or wallet field:
@@ -365,6 +390,8 @@ pub enum NoticeKind {
     SessionExpired,
     /// The wallet signed out; the connection is a guest again.
     SignedOut,
+    /// A `set_model` named a model that Ollama does not list (Req 38).
+    ModelUnknown,
 }
 
 /// Where the engine's market data comes from.
@@ -573,6 +600,7 @@ mod tests {
                 id: ProviderId::Openai,
                 model: "gpt".into(),
                 reason: None,
+                models: None,
             });
             *news_enabled = true;
         }
@@ -600,6 +628,7 @@ mod tests {
                 id: ProviderId::Nvidia,
                 model: "m".into(),
                 reason: Some("no key".into()),
+                models: None,
             }],
             default: Some(ProviderId::Nvidia),
             selected: None,
@@ -683,6 +712,10 @@ mod tests {
             ServerMessage::StrategyDraft {
                 request_id: "r".into(),
                 text: "draft, not executed".into(),
+            },
+            ServerMessage::AiChat {
+                request_id: "r".into(),
+                text: "hello".into(),
             },
         ] {
             assert_round_trip(&message);

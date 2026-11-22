@@ -4,7 +4,7 @@
 |---|---|
 | `favicon.svg` | Browser tab icon (set in `app/layout.tsx` metadata). |
 | `oni-mark.svg`, `oni-mask.svg`, `oni-wordmark.svg` | Logo mark, mask, and wordmark. |
-| `icons/*.svg` | UI icons: dashboard, trade, markets, strategies, ai-copilot, backtest, portfolio, logs, settings, bell, gear, user, search, send, plus, check. |
+| `icons/*.svg` | UI icons: dashboard, trade, markets, ai-copilot, backtest, portfolio, logs, settings, bell, gear, user, search, send, plus, check. |
 | `exchanges/*.svg` | Neutral monogram badges for backpack, coinbase, jupiter, raydium, binance, bybit, and generic. They are NOT the real logos. |
 | `oni-bg.png` | Page background. You supply it (JPG or WebP also works if the CSS path changes); see `BACKGROUND.md`. |
 

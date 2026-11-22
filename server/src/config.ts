@@ -164,7 +164,8 @@ export const DEFAULT_ANTHROPIC_MODEL = "claude-haiku-5-5";
 export const DEFAULT_NVIDIA_MODEL = "z-ai/glm-5.3-flash";
 export const DEFAULT_OLLAMA_MODEL = "gemma4";
 export const DEFAULT_NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
-export const DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434";
+// 127.0.0.1, not localhost: on Windows `localhost` can resolve to ::1 first, where Ollama does not listen.
+export const DEFAULT_OLLAMA_BASE_URL = "http://127.0.0.1:11434";
 
 /**
  * Validates a provider base URL: http(s), no userinfo, no query, no fragment. Returns the URL

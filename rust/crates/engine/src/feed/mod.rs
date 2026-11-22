@@ -2,6 +2,8 @@
 //! produce [`MarketMsg`] values, so the engine core handles a single format (Req 7).
 
 pub mod allowlist;
+#[cfg(test)]
+mod allowlist_properties;
 pub mod backfill;
 pub mod backpack;
 pub mod backpack_parse;

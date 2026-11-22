@@ -42,13 +42,14 @@ export interface PromptInput {
   /** Headlines; each is cut to 200 characters and stripped of markers. */
   readonly news?: readonly string[];
   readonly userText?: string;
-  readonly task?: "analyze" | "ask" | "create_strategy" | "scan";
+  readonly task?: "analyze" | "ask" | "create_strategy" | "scan" | "chat";
 }
 
 const TASKS: Record<NonNullable<PromptInput["task"]>, string> = {
   analyze: "Analyze the selected symbol and give a bias, a confidence, and an optional trade idea.",
   ask: "Answer the user's request about the market using the snapshot.",
   create_strategy: "Draft a trading strategy as a title and a description. It is a draft and is not executed.",
+  chat: "Reply conversationally and briefly to the user's message. You may use the market snapshot for context. Do not place or suggest orders unless asked; you cannot trade.",
   scan: "Assess this one symbol for a trading opportunity with a bias, a confidence, and an optional trade idea.",
 };
 
@@ -148,6 +149,19 @@ export const SCAN_JSON_SCHEMA = {
     summary: { type: "string", minLength: 1, maxLength: 300 },
     risk_level: riskJson,
     trade_idea: tradeIdeaJson,
+  },
+} as const;
+
+export const ChatReplySchema = z.strictObject({
+  reply: z.string().min(1).max(4000),
+});
+
+export const CHAT_JSON_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["reply"],
+  properties: {
+    reply: { type: "string", minLength: 1, maxLength: 4000 },
   },
 } as const;
 

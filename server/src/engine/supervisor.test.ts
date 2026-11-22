@@ -2,7 +2,7 @@
 // engine process. The real engine is spawned only in the Task 3.6 integration test.
 import { describe, expect, test } from "bun:test";
 import type { SecretSource } from "../config.ts";
-import type { Command, Event } from "../protocol.ts";
+import type { Command } from "../protocol.ts";
 import { Backoff } from "./backoff.ts";
 import { MAX_EVENT_LINE_BYTES } from "./lines.ts";
 import {
@@ -155,7 +155,8 @@ function harness(
     },
   });
 
-  const events: Event[] = [];
+  // The supervisor hands listeners the parsed WireEvent (with `emit_us`), typed as Event.
+  const events: unknown[] = [];
   const notices: EngineNotice[] = [];
   const statuses: EngineStatus[] = [];
   let clears = 0;

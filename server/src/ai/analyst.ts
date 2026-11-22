@@ -8,7 +8,9 @@
  * through Confirm on that stored preview.
  */
 import type { JsonLlmProvider, LlmProviderId } from "../llm/provider.ts";
-import { isLlmError, LlmBadOutput, LlmRefused, LlmTimeout } from "../llm/provider.ts";
+import { isLlmError, LlmBadOutput, LlmRefused, LlmTimeout, LlmUnavailable } from "../llm/provider.ts";
+import { timeoutForProvider } from "../llm/limits.ts";
+import { OLLAMA_MODEL_MISSING } from "../llm/ollama.ts";
 import type { MarketSnapshot } from "./snapshot.ts";
 import { ANALYSIS_JSON_SCHEMA, AnalysisSchema, SYSTEM_PROMPT, buildUserPrompt } from "./prompt.ts";
 import type { AnalysisOutput, TradeIdeaOutput } from "./prompt.ts";
@@ -66,6 +68,12 @@ function mapError(error: unknown, signal: AbortSignal | undefined): AiError {
   if (error instanceof LlmTimeout) return new AiError("timeout", "The language model did not answer in time");
   if (error instanceof LlmRefused) return new AiError("refused", "The language model declined to answer");
   if (error instanceof LlmBadOutput) return new AiError("validation_error", "The model output was not valid JSON");
+  if (error instanceof LlmUnavailable && error.status === 404 && error.message === OLLAMA_MODEL_MISSING) {
+    return new AiError("provider_unavailable", "The selected Ollama model is not installed");
+  }
+  if (error instanceof LlmUnavailable && error.status !== undefined) {
+    return new AiError("provider_unavailable", `The language model is unavailable (HTTP ${error.status})`);
+  }
   if (isLlmError(error)) return new AiError("provider_unavailable", "The language model is unavailable");
   return new AiError("provider_unavailable", "The language model call failed");
 }
@@ -89,7 +97,7 @@ export async function analyze(input: AnalyzeInput): Promise<AnalysisResult> {
       schemaName: "analysis",
       schema: ANALYSIS_JSON_SCHEMA,
       maxOutputTokens: ANALYST_MAX_OUTPUT_TOKENS,
-      timeoutMs: ANALYST_TIMEOUT_MS,
+      timeoutMs: timeoutForProvider(provider.id, ANALYST_TIMEOUT_MS),
       ...(signal === undefined ? {} : { signal }),
     });
   } catch (error) {

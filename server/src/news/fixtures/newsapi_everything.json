@@ -1,0 +1,30 @@
+{
+  "status": "ok",
+  "totalResults": 4,
+  "articles": [
+    {
+      "source": { "id": null, "name": "Example Wire" },
+      "title": "Bitcoin climbs past a new weekly high",
+      "url": "https://example.com/news/btc-weekly-high",
+      "publishedAt": "2026-03-01T10:00:00Z"
+    },
+    {
+      "source": { "id": "demo", "name": "Demo Daily" },
+      "title": "<b>Solana</b> network upgrade ships",
+      "url": "https://example.com/news/sol-upgrade",
+      "publishedAt": "2026-03-01T12:00:00Z"
+    },
+    {
+      "source": { "id": null, "name": "No Title Co" },
+      "title": null,
+      "url": "https://example.com/news/no-title",
+      "publishedAt": "2026-03-01T11:00:00Z"
+    },
+    {
+      "source": { "id": null, "name": "Dup Co" },
+      "title": "Bitcoin climbs past a new weekly high (duplicate)",
+      "url": "https://example.com/news/btc-weekly-high",
+      "publishedAt": "2026-03-01T09:00:00Z"
+    }
+  ]
+}

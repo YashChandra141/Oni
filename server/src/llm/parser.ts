@@ -20,7 +20,7 @@ import { unitsToFixed, unitsToTrimmed } from "../commands/formatter.ts";
 import { type ParsedCommand, decimalToUnits, parseCommand, resolveSymbol } from "../commands/parser.ts";
 import type { AccountId } from "../protocol.ts";
 import { INTENT_JSON_SCHEMA, INTENT_SCHEMA_NAME, type LlmIntent, IntentSchema } from "./intentSchema.ts";
-import { PARSER_TIMEOUT_MS } from "./limits.ts";
+import { PARSER_TIMEOUT_MS, timeoutForProvider } from "./limits.ts";
 import { MAX_OUTPUT_TOKENS, SYSTEM_PROMPT, buildUserMessage } from "./openai.ts";
 import {
   type JsonLlmProvider,
@@ -32,9 +32,10 @@ import {
 
 /** The part of ProviderRegistry the parser reads. */
 export interface LlmProviderSource {
-  get(id: LlmProviderId): JsonLlmProvider | undefined;
+  get(id: LlmProviderId, model?: string): JsonLlmProvider | undefined;
   defaultId(): LlmProviderId | null;
   refresh?(): Promise<void>;
+  chooseOllamaModel?(preferred?: string): string | undefined;
 }
 
 /** Time limit for the whole interpretation (Req 23.5). The OpenAI provider enforces the same. */
@@ -148,14 +149,21 @@ export class LlmOrderParser {
   }
 
   /** The legacy single provider, or the selected / default registry provider, as one `interpret`. */
-  async #resolve(providerId: LlmProviderId | undefined): Promise<LlmProvider | null> {
+  async #resolve(providerId: LlmProviderId | undefined, ollamaModel?: string): Promise<LlmProvider | null> {
     if (this.#provider !== null) return this.#provider;
     const registry = this.#registry;
     if (registry === null) return null;
     await registry.refresh?.();
     const id = providerId !== undefined && registry.get(providerId) !== undefined ? providerId : registry.defaultId();
     if (id === null) return null;
-    const json = registry.get(id);
+    let json: JsonLlmProvider | undefined;
+    if (id === "ollama" && registry.chooseOllamaModel !== undefined) {
+      // Req 38.12, 38.13: selected model if installed, else OLLAMA_MODEL, else the first installed.
+      const model = registry.chooseOllamaModel(ollamaModel);
+      json = model === undefined ? undefined : registry.get("ollama", model);
+    } else {
+      json = registry.get(id);
+    }
     if (json === undefined) return null;
     return {
       interpret: (text, context, signal) =>
@@ -165,7 +173,7 @@ export class LlmOrderParser {
           schemaName: INTENT_SCHEMA_NAME,
           schema: INTENT_JSON_SCHEMA,
           maxOutputTokens: MAX_OUTPUT_TOKENS,
-          timeoutMs: PARSER_TIMEOUT_MS,
+          timeoutMs: timeoutForProvider(json.id, PARSER_TIMEOUT_MS),
           ...(signal === undefined ? {} : { signal }),
         }),
     };
@@ -176,8 +184,13 @@ export class LlmOrderParser {
    * requesting connection; it only scopes the context and the `%` resolution. `providerId` is
    * the connection's selected provider; it falls back to the default when unavailable.
    */
-  async parse(text: string, accountId: AccountId, providerId?: LlmProviderId): Promise<LlmParseResult> {
-    const provider = await this.#resolve(providerId);
+  async parse(
+    text: string,
+    accountId: AccountId,
+    providerId?: LlmProviderId,
+    ollamaModel?: string,
+  ): Promise<LlmParseResult> {
+    const provider = await this.#resolve(providerId, ollamaModel);
     if (provider === null) return { ok: false, kind: "disabled", message: LLM_DISABLED_MESSAGE };
 
     const request = text.trim();

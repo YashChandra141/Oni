@@ -153,6 +153,6 @@ export function buildMarketSnapshot(input: SnapshotInput): MarketSnapshot {
       pos === undefined
         ? null
         : { qty: qty(pos.qty), avg_entry: pos.avgEntry === null ? null : price(pos.avgEntry) },
-    free_balance: bal === undefined ? null : formatDecimal(bal.freeBalance, MONEY_DECIMALS),
+    free_balance: bal == null ? null : formatDecimal(bal.freeBalance, MONEY_DECIMALS),
   };
 }

@@ -308,6 +308,8 @@ pub struct Ticker {
 pub enum CopilotAction {
     Analyze,
     Ask,
+    /// Plain conversational reply.
+    Chat,
     CreateStrategy,
     Scan,
 }
@@ -508,6 +510,7 @@ mod tests {
         assert_eq!(json(&VenueStatusKind::Connecting), "\"connecting\"");
         assert_eq!(json(&PairHealth::Suspect), "\"suspect\"");
         assert_eq!(json(&CopilotAction::CreateStrategy), "\"create_strategy\"");
+        assert_eq!(json(&CopilotAction::Chat), "\"chat\"");
         assert_eq!(json(&AnalysisBias::Neutral), "\"neutral\"");
         assert_eq!(json(&ProviderId::Nvidia), "\"nvidia\"");
         assert_eq!(json(&TwapStatus::Canceled), "\"canceled\"");

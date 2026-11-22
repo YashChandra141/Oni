@@ -2,6 +2,7 @@
 
 import { memo, useCallback, useEffect, useState } from "react";
 import { formatPrice } from "../lib/format";
+import { CoinIcon } from "./CoinIcon";
 import { pairKey, useTerminalStore } from "../lib/store";
 import { useSocketHandle } from "../lib/terminalContext";
 import { symbolForKey, watchlistSymbols } from "../lib/watchlist";
@@ -49,6 +50,7 @@ const WatchRow = memo(function WatchRow({
   const change = ticker?.change_bps;
   const color = change === undefined || change === 0 ? "text-phosphor-dim" : change > 0 ? "text-buy" : "text-sell";
   const base = symbol.split("-")[0] ?? symbol;
+  const shortName = useTerminalStore((state) => state.instruments[symbol]?.short) ?? base;
 
   return (
     <li
@@ -65,19 +67,18 @@ const WatchRow = memo(function WatchRow({
           event.stopPropagation();
           onStar(symbol);
         }}
-        className={starred ? "text-amber" : "text-phosphor-dim"}
+        className={`shrink-0 ${starred ? "text-amber" : "text-phosphor-dim"}`}
       >
         {starred ? "★" : "☆"}
       </button>
-      <span
-        aria-hidden="true"
-        className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border border-crt-line text-[10px]"
-      >
-        {base.charAt(0)}
+      <span className="shrink-0">
+        <CoinIcon symbol={base} size={16} />
       </span>
-      <span className="flex-1 truncate">{symbol}</span>
-      <span className="tabular-nums">{formatPrice(price, decimals)}</span>
-      <span className={`w-16 text-right tabular-nums ${color}`}>
+      <span className="w-11 shrink-0 truncate" title={symbol}>
+        {shortName}
+      </span>
+      <span className="min-w-0 flex-1 truncate text-right tabular-nums">{formatPrice(price, decimals)}</span>
+      <span className={`w-14 shrink-0 text-right tabular-nums ${color}`}>
         {change === undefined ? "—" : formatChangeBps(change)}
       </span>
     </li>

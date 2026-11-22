@@ -24,6 +24,7 @@ import type {
   NoticeKind,
   OrderPreview,
   PairHealth,
+  OllamaModel,
   PreviewAction,
   PreviewError,
   ProviderId,
@@ -47,6 +48,7 @@ import {
   type IndicatorToggles,
 } from "./indicatorData";
 import { recordPong } from "./latency";
+import { clearStoredModel, readStoredModel, reapplyStored, writeStoredModel } from "./ollamaModels";
 import { addUnits, pushHistory } from "./orderEntry";
 import type { SocketEvent } from "./socket";
 
@@ -179,6 +181,83 @@ export interface AiState {
   readonly errors: Readonly<Record<string, AiErrorState>>;
 }
 
+/** Most Copilot chat bubbles kept. */
+export const MAX_COPILOT_MESSAGES = 100;
+
+export interface CopilotMessage {
+  readonly id: string;
+  readonly role: "user" | "assistant" | "error";
+  readonly text: string;
+  readonly ts: number;
+  readonly requestId?: string;
+  readonly kind?: "chat" | "analysis" | "scan_result" | "strategy_draft" | "ai_error";
+}
+
+export interface CopilotPending {
+  readonly requestId: string;
+  readonly label: string;
+  readonly startedAt: number;
+}
+
+let copilotMessageCounter = 0;
+
+/** Appends a bubble, keeping the newest `MAX_COPILOT_MESSAGES`. */
+export function withCopilotMessage(
+  state: TerminalState,
+  entry: Omit<CopilotMessage, "id" | "ts"> & { readonly ts?: number },
+): TerminalState {
+  copilotMessageCounter += 1;
+  const message: CopilotMessage = {
+    ...entry,
+    id: `cm-${copilotMessageCounter}`,
+    ts: entry.ts ?? Date.now(),
+  };
+  const all = [...state.copilotMessages, message];
+  return {
+    ...state,
+    copilotMessages: all.length > MAX_COPILOT_MESSAGES ? all.slice(all.length - MAX_COPILOT_MESSAGES) : all,
+  };
+}
+
+/** The user sent a Copilot request: adds the user bubble and opens the spinner. */
+export function withCopilotSent(
+  state: TerminalState,
+  requestId: string,
+  label: string,
+  now: number = Date.now(),
+): TerminalState {
+  const next = withCopilotMessage(state, { role: "user", text: label, requestId, ts: now });
+  return {
+    ...next,
+    copilotPending: { ...next.copilotPending, [requestId]: { requestId, label, startedAt: now } },
+  };
+}
+
+/** Adds the reply bubble for a request and clears its spinner. */
+function withCopilotReply(
+  state: TerminalState,
+  requestId: string,
+  entry: Pick<CopilotMessage, "role" | "text" | "kind">,
+): TerminalState {
+  const { [requestId]: _done, ...rest } = state.copilotPending;
+  return withCopilotMessage({ ...state, copilotPending: rest }, { ...entry, requestId });
+}
+
+/** The user canceled a request: the spinner goes away. */
+export function withCopilotCanceled(state: TerminalState, requestId: string): TerminalState {
+  if (!(requestId in state.copilotPending)) return state;
+  const { [requestId]: _done, ...rest } = state.copilotPending;
+  return { ...state, copilotPending: rest };
+}
+
+export function withCopilotCleared(state: TerminalState): TerminalState {
+  return { ...state, copilotMessages: [] };
+}
+
+function pctBps(bps: number): string {
+  return `${(bps / 100).toFixed(0)}%`;
+}
+
 /** One trade as shown in the tape and the last-trade readout. */
 export interface TapeEntry {
   /** Stable unique id from `nextTapeId`; use as the React row key. */
@@ -289,6 +368,36 @@ export interface RejectionEntry {
   readonly reason: string;
 }
 
+/** Most console log entries kept, oldest first. */
+export const MAX_CONSOLE = 200;
+
+export type ConsoleKind = "command" | "preview" | "parse_error" | "rejection" | "notice";
+
+/** One line of the console log under the command bar. `ts` is ms since the epoch. */
+export interface ConsoleEntry {
+  readonly ts: number;
+  readonly kind: ConsoleKind;
+  readonly text: string;
+}
+
+/** Appends to a ring buffer: keeps the newest `max` entries, oldest first. */
+export function pushConsole(
+  log: readonly ConsoleEntry[],
+  entry: ConsoleEntry,
+  max: number = MAX_CONSOLE,
+): readonly ConsoleEntry[] {
+  const next = [...log, entry];
+  return next.length > max ? next.slice(next.length - max) : next;
+}
+
+function withConsole<S extends { readonly consoleLog: readonly ConsoleEntry[] }>(
+  state: S,
+  kind: ConsoleKind,
+  text: string,
+): S {
+  return { ...state, consoleLog: pushConsole(state.consoleLog, { ts: Date.now(), kind, text }) };
+}
+
 /** An action that needs a yes/no dialog before anything is sent (Req 30.4, 30.5). */
 export type ConfirmAction = "flatten_all" | "cancel_all";
 
@@ -333,11 +442,19 @@ export interface TerminalState {
   /** Paper starting balance (Money) from `hello`. */
   readonly startingBalance: string | null;
   readonly providers: ProvidersState;
+  /** Local Ollama models, the server default, and this connection's selection (Req 38.15). */
+  readonly ollamaModels: readonly OllamaModel[];
+  readonly ollamaDefault: string | null;
+  readonly ollamaSelected: string | null;
   readonly news: NewsState;
   readonly newsEnabled: boolean;
   /** TWAP plans by id. */
   readonly twaps: Readonly<Record<string, TwapState>>;
   readonly ai: AiState;
+  /** Copilot chat transcript, oldest first, at most `MAX_COPILOT_MESSAGES`. */
+  readonly copilotMessages: readonly CopilotMessage[];
+  /** Open Copilot requests by request id (drives the spinner bubble). */
+  readonly copilotPending: Readonly<Record<string, CopilotPending>>;
   readonly ticket: TicketState;
   /** Keyboard cursor on the selected symbol's book; null when none. */
   readonly bookCursor: BookCursor | null;
@@ -361,6 +478,8 @@ export interface TerminalState {
   readonly rejections: readonly RejectionEntry[];
   /** Submitted command texts, oldest first, at most 50 (Req 31.3). */
   readonly commandHistory: readonly string[];
+  /** Console log under the command bar, oldest first, at most `MAX_CONSOLE`. */
+  readonly consoleLog: readonly ConsoleEntry[];
   /** The F or X confirmation dialog, or null. */
   readonly confirmAction: ConfirmAction | null;
   /** Frames that were not valid messages, over all connections. */
@@ -375,8 +494,16 @@ export interface TerminalActions {
   selectVenue(venue: Venue): void;
   /** Selects the LLM provider for this connection (sends `set_provider`). */
   setProvider(provider: ProviderId): boolean;
+  /** Picks the Ollama model: remembers it and sends `set_model`. */
+  setOllamaModel(model: string): boolean;
+  /** Forgets the remembered local model so it is not reapplied ("None"). */
+  clearOllamaModel(): void;
   /** Sends a Copilot request for the selected venue, symbol, and timeframe; returns its request id. */
-  sendAiRequest(action: CopilotAction, text: string): string | null;
+  sendAiRequest(action: CopilotAction, text: string, label?: string): string | null;
+  /** Sends `ai_cancel` for a request and drops its spinner. */
+  cancelAiRequest(requestId: string): boolean;
+  /** Empties the chat transcript (local only). */
+  clearCopilotChat(): void;
   /** Cancels the remaining child orders of a TWAP plan. */
   cancelTwap(twapId: string): boolean;
   /** Starts receiving news. */
@@ -462,10 +589,15 @@ export function initialState(): TerminalState {
     balances: {},
     startingBalance: null,
     providers: EMPTY_PROVIDERS,
+    ollamaModels: [],
+    ollamaDefault: null,
+    ollamaSelected: null,
     news: { available: false, items: [], updatedAt: null },
     newsEnabled: false,
     twaps: {},
     ai: EMPTY_AI,
+    copilotMessages: [],
+    copilotPending: {},
     ticket: { symbol: DEFAULT_SYMBOL, side: null, price: null, qty: null },
     bookCursor: null,
     notices: [],
@@ -480,6 +612,7 @@ export function initialState(): TerminalState {
     parseError: null,
     rejections: [],
     commandHistory: [],
+    consoleLog: [],
     confirmAction: null,
     badFrames: 0,
     lastError: null,
@@ -512,6 +645,7 @@ export function clearAccountData(state: TerminalState): TerminalState {
 }
 
 function withRejection(state: TerminalState, entry: RejectionEntry): TerminalState {
+  state = withConsole(state, "rejection", entry.orderId === null ? entry.reason : `${entry.reason} (${entry.orderId})`);
   return { ...state, rejections: [entry, ...state.rejections].slice(0, MAX_REJECTIONS) };
 }
 
@@ -657,13 +791,14 @@ export function withCommandSent(
   requestId: string,
   text: string | null,
 ): TerminalState {
-  return {
+  const next = {
     ...state,
     lastRequestId: requestId,
     preview: null,
     parseError: null,
     commandHistory: text === null ? state.commandHistory : pushHistory(state.commandHistory, text),
   };
+  return text === null ? next : withConsole(next, "command", `> ${text}`);
 }
 
 /** The user confirmed the preview: close it and queue a `place` for its ack. */
@@ -1037,6 +1172,9 @@ export function applyServerMessage(state: TerminalState, message: ServerMessage)
           default: state.providers.default,
           selected: state.providers.selected,
         },
+        ollamaModels: providers.find((p) => p.id === "ollama")?.models ?? [],
+        ollamaDefault: null,
+        ollamaSelected: null,
         hello: {
           protocolVersion: message.protocol_version,
           dataMode: message.data_mode,
@@ -1071,8 +1209,10 @@ export function applyServerMessage(state: TerminalState, message: ServerMessage)
         ...state,
         providers: { available: message.available, default: message.default, selected: message.selected },
       };
+    case "ai_chat":
+      return withCopilotReply(state, message.request_id, { role: "assistant", text: message.text, kind: "chat" });
     case "analysis":
-      return {
+      return withCopilotReply({
         ...state,
         ai: {
           ...state.ai,
@@ -1085,17 +1225,30 @@ export function applyServerMessage(state: TerminalState, message: ServerMessage)
             previewError: message.preview_error,
           }),
         },
-      };
+      }, message.request_id, {
+        role: "assistant",
+        kind: "analysis",
+        text: `${message.analysis.symbol} · ${message.analysis.bias} · confidence ${pctBps(message.analysis.confidence_bps)}\n${message.analysis.summary}`,
+      });
     case "scan_result":
-      return {
+      return withCopilotReply({
         ...state,
         ai: {
           ...state.ai,
           scans: addCapped(state.ai.scans, message.request_id, { requestId: message.request_id, items: message.items }),
         },
-      };
+      }, message.request_id, {
+        role: "assistant",
+        kind: "scan_result",
+        text:
+          message.items.length === 0
+            ? "No opportunities found."
+            : message.items
+                .map((item, i) => `${i + 1}. ${item.symbol} · ${item.bias} · ${pctBps(item.confidence_bps)} — ${item.summary}`)
+                .join("\n"),
+      });
     case "strategy_draft":
-      return {
+      return withCopilotReply({
         ...state,
         ai: {
           ...state.ai,
@@ -1104,9 +1257,9 @@ export function applyServerMessage(state: TerminalState, message: ServerMessage)
             text: message.text,
           }),
         },
-      };
+      }, message.request_id, { role: "assistant", kind: "strategy_draft", text: message.text });
     case "ai_error":
-      return {
+      return withCopilotReply({
         ...state,
         ai: {
           ...state.ai,
@@ -1116,7 +1269,7 @@ export function applyServerMessage(state: TerminalState, message: ServerMessage)
             message: message.message,
           }),
         },
-      };
+      }, message.request_id, { role: "error", kind: "ai_error", text: `${message.reason}: ${message.message}` });
     case "news":
       return {
         ...state,
@@ -1147,27 +1300,46 @@ export function applyServerMessage(state: TerminalState, message: ServerMessage)
       // The stored token is cleared on auth_failed, session_expired, and signed_out by the socket
       // layer (socket.ts), not here, so this reducer stays pure.
       const notices = [...state.notices, { kind: message.kind, message: message.message }];
-      const base = { ...state, notices: tail(notices, MAX_NOTICES) };
+      const base = withConsole(
+        { ...state, notices: tail(notices, MAX_NOTICES) },
+        "notice",
+        message.message,
+      );
       // The engine restarted: every paper account is flat again (Req 15.7).
       return message.kind === "account_reset" ? clearAccountData(base) : base;
     }
     case "preview":
       if (state.lastRequestId !== message.request_id) return state;
-      return {
-        ...state,
-        preview: { requestId: message.request_id, preview: message.preview },
-        parseError: null,
-      };
+      return withConsole(
+        {
+          ...state,
+          preview: { requestId: message.request_id, preview: message.preview },
+          parseError: null,
+        },
+        "preview",
+        message.preview.text,
+      );
     case "parse_error":
       if (state.lastRequestId !== message.request_id) return state;
+      return withConsole(
+        {
+          ...state,
+          preview: null,
+          parseError: {
+            requestId: message.request_id,
+            message: message.message,
+            position: message.position,
+          },
+        },
+        "parse_error",
+        message.message,
+      );
+    case "ollama_models":
       return {
         ...state,
-        preview: null,
-        parseError: {
-          requestId: message.request_id,
-          message: message.message,
-          position: message.position,
-        },
+        ollamaModels: message.models,
+        ollamaDefault: message.default,
+        ollamaSelected: message.selected,
       };
     case "pong":
       recordPong(message.id);
@@ -1222,19 +1394,51 @@ export function applySocketEvent(state: TerminalState, event: SocketEvent): Term
 // ---------------------------------------------------------------------------------------------
 // Store
 
+/** Last stored model name re-sent on this connection; stops a reapply loop. */
+let lastReapplied: string | null = null;
+
 export const useTerminalStore = create<TerminalStore>()((set) => ({
   ...initialState(),
-  handleSocketEvent: (event) => set((state) => applySocketEvent(state, event)),
+  handleSocketEvent: (event) => {
+    set((state) => applySocketEvent(state, event));
+    if (event.type === "message" && (event.message.type === "hello" || event.message.type === "ollama_models")) {
+      if (event.message.type === "hello") lastReapplied = null;
+      const s = useTerminalStore.getState();
+      const name = reapplyStored(s.ollamaModels, readStoredModel());
+      if (name !== null && name !== s.ollamaSelected && name !== lastReapplied) {
+        lastReapplied = name;
+        sendMessage({ type: "set_model", provider: "ollama", model: name });
+      }
+    }
+  },
+  setOllamaModel: (model) => {
+    writeStoredModel(model);
+    lastReapplied = model;
+    return sendMessage({ type: "set_model", provider: "ollama", model });
+  },
+  clearOllamaModel: () => {
+    clearStoredModel();
+    lastReapplied = null;
+    set({ ollamaSelected: null });
+  },
   selectSymbol: (symbol) => set((state) => withSymbol(state, symbol)),
   selectVenue: (venue) => set((state) => withVenue(state, venue)),
   setProvider: (provider) => sendMessage({ type: "set_provider", provider }),
-  sendAiRequest: (action, text) => {
+  sendAiRequest: (action, text, label) => {
     const { venue, symbol, timeframe } = useTerminalStore.getState().selection;
     aiRequestCounter += 1;
     const requestId = `ai-${Date.now().toString(36)}-${aiRequestCounter}`;
     const sent = sendMessage({ type: "ai_request", request_id: requestId, action, text, symbol, timeframe, venue });
-    return sent ? requestId : null;
+    if (!sent) return null;
+    set((state) => withCopilotSent(state, requestId, label ?? text));
+    return requestId;
   },
+  cancelAiRequest: (requestId) => {
+    const sent = sendMessage({ type: "ai_cancel", request_id: requestId });
+    set((state) => withCopilotCanceled(state, requestId));
+    return sent;
+  },
+  clearCopilotChat: () => set((state) => withCopilotCleared(state)),
   cancelTwap: (twapId) => sendMessage({ type: "cancel_twap", request_id: `twap-${twapId}`, twap_id: twapId }),
   subscribeNews: () => sendMessage({ type: "subscribe_news" }),
   selectTimeframe: (timeframe) => set((state) => withTimeframe(state, timeframe)),

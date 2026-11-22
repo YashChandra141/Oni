@@ -41,6 +41,7 @@ import type {
   Money,
   NewsItem,
   NoticeKind,
+  OllamaModel,
   OrderId,
   OrderKind,
   OrderPreview,
@@ -150,6 +151,7 @@ const confidenceBps = z.number().int().min(0).max(10_000);
 /** Boundary limits for client and LLM text (design "AI limits"; Req 7). */
 export const MAX_AI_PROMPT_CHARS = 1_000;
 export const MAX_STRATEGY_DRAFT_CHARS = 500;
+export const MAX_AI_CHAT_CHARS = 4_000;
 /** A scan covers at most the ten listed symbols (Req 7.5). */
 export const MAX_SCAN_ITEMS = 10;
 
@@ -162,7 +164,7 @@ export const VenueSchema = z.enum(["coinbase", "backpack", "jupiter", "raydium",
 export const VenueKindSchema = z.enum(["cex", "dex"]);
 export const VenueStatusKindSchema = z.enum(["connected", "connecting", "stale", "down", "disabled"]);
 export const PairHealthSchema = z.enum(["ok", "stale", "suspect"]);
-export const CopilotActionSchema = z.enum(["analyze", "ask", "create_strategy", "scan"]);
+export const CopilotActionSchema = z.enum(["analyze", "ask", "chat", "create_strategy", "scan"]);
 export const AnalysisBiasSchema = z.enum(["long", "short", "neutral"]);
 /** Provider id format: one of the four known providers. Anything else is rejected. */
 export const ProviderIdSchema = z.enum(["openai", "anthropic", "nvidia", "ollama"]);
@@ -186,6 +188,7 @@ export const NoticeKindSchema = z.enum([
   "auth_failed",
   "session_expired",
   "signed_out",
+  "model_unknown",
 ]);
 export const ErrorCodeSchema = z.enum([
   "invalid_json",
@@ -290,11 +293,20 @@ export const VenueStatusEntrySchema = z.object({
   status: VenueStatusKindSchema,
 });
 
+/** One model that Ollama reports installed (Req 38). `size` is bounded so a JSON number is exact. */
+export const OllamaModelSchema = z.object({
+  name: z.string(),
+  size: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  family: z.string().nullable(),
+  parameter_size: z.string().nullable(),
+});
+
 /** One selectable LLM provider. Carries no key, base URL, or credential (Req 4.1). */
 export const ProviderInfoSchema = z.object({
   id: ProviderIdSchema,
   model: z.string(),
   reason: z.string().nullable(),
+  models: z.array(OllamaModelSchema).optional(),
 });
 
 /** External text: clients show it, nothing executes it. */
@@ -538,6 +550,7 @@ export const ClientMessageSchema = z.discriminatedUnion("type", [
   }),
   z.object({ type: z.literal("cancel_twap"), request_id: z.string(), twap_id: z.string() }),
   z.object({ type: z.literal("set_provider"), provider: ProviderIdSchema }),
+  z.object({ type: z.literal("set_model"), provider: ProviderIdSchema, model: z.string() }),
   z.object({
     type: z.literal("ai_request"),
     request_id: z.string(),
@@ -586,6 +599,12 @@ export const ServerMessageSchema = z.discriminatedUnion("type", [
     selected: ProviderIdSchema.nullable(),
   }),
   z.object({
+    type: z.literal("ollama_models"),
+    models: z.array(OllamaModelSchema),
+    default: z.string().nullable(),
+    selected: z.string().nullable(),
+  }),
+  z.object({
     type: z.literal("analysis"),
     request_id: z.string(),
     provider: ProviderIdSchema,
@@ -604,6 +623,13 @@ export const ServerMessageSchema = z.discriminatedUnion("type", [
     request_id: z.string(),
     text: z.string().max(MAX_STRATEGY_DRAFT_CHARS, {
       message: `StrategyDraft text must be at most ${MAX_STRATEGY_DRAFT_CHARS} characters`,
+    }),
+  }),
+  z.object({
+    type: z.literal("ai_chat"),
+    request_id: z.string(),
+    text: z.string().max(MAX_AI_CHAT_CHARS, {
+      message: `AiChat text must be at most ${MAX_AI_CHAT_CHARS} characters`,
     }),
   }),
   z.object({
@@ -736,6 +762,7 @@ export type ProtocolSchemaChecks = [
   Assert<Same<typeof AiErrorReasonSchema, AiErrorReason>>,
   Assert<Same<typeof TickerSchema, Ticker>>,
   Assert<Same<typeof VenueStatusEntrySchema, VenueStatusEntry>>,
+  Assert<Same<typeof OllamaModelSchema, OllamaModel>>,
   Assert<Same<typeof ProviderInfoSchema, ProviderInfo>>,
   Assert<Same<typeof NewsItemSchema, NewsItem>>,
   Assert<Same<typeof TradeIdeaSchema, TradeIdea>>,

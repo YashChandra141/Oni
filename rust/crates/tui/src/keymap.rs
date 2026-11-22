@@ -150,6 +150,7 @@ actions! {
     DialogCancel => "dialog.cancel",
     VenueNext => "venue.next",
     ProviderNext => "provider.next",
+    ModelNext => "model.next",
     CopilotFocus => "copilot.focus",
     Help => "help",
     TimeframePrev => "timeframe.prev",
@@ -660,7 +661,7 @@ mod tests {
             resolve(&keymap, Context::Dialog, "y"),
             Some(Action::DialogConfirm)
         );
-        assert_eq!(keymap.bindings(Context::Global).len(), 28);
+        assert_eq!(keymap.bindings(Context::Global).len(), 29);
     }
 
     #[test]
@@ -673,7 +674,7 @@ mod tests {
         let ts_actions: Vec<&str> = body[..end].split('"').skip(1).step_by(2).collect();
         let rust_actions: Vec<&str> = Action::ALL.iter().map(|a| a.name()).collect();
         assert_eq!(rust_actions, ts_actions);
-        assert_eq!(Action::ALL.len(), 50);
+        assert_eq!(Action::ALL.len(), 51);
     }
 
     #[test]

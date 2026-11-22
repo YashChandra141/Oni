@@ -62,6 +62,8 @@ Terms defined in HT keep their HT meaning unless this glossary redefines them. H
 - **LLM_Provider**: The Server interface for a language model. The implementations are `openai`, `anthropic`, `nvidia`, and `ollama`. This definition extends HT's LLM_Provider.
 - **Provider_Registry**: The Server component that lists the LLM_Providers that are configured and reachable and resolves a provider identifier to an LLM_Provider.
 - **Provider_Selection**: The LLM_Provider that one WebSocket connection uses for AI requests, set by the Server default or by the Client.
+- **Ollama_Model_List**: The Server's latest validated list of the models that the Ollama instance at OLLAMA_BASE_URL reports installed, each with name, size in bytes, family, and parameter size. The list is empty when Ollama is unreachable or its answer is invalid.
+- **Model_Selection**: The Ollama model that one WebSocket connection uses for plain-English orders and AI_Analyst requests, set by the Server default or by `set_model`.
 - **AI_Analyst**: The Server component that builds a Market_Snapshot, sends it to the selected LLM_Provider, validates the answer with Zod, and returns an Analysis.
 - **Market_Snapshot**: The data the AI_Analyst sends to an LLM_Provider: for one symbol, recent candles, indicator values, top-of-book levels, Ticker24h, news headlines, and the Positions of the caller's Paper_Account. It holds no Account_Id, Wallet_Address, or secret.
 - **Analysis**: The validated AI_Analyst result: a summary, a bias (`long`, `short`, or `neutral`), a confidence from 0 to 1, a list of rationale strings, and an optional suggested order.
@@ -716,6 +718,35 @@ Today's account model (`rust/crates/engine/src/account.rs`) holds signed Positio
 5. THE Repository README SHALL replace the HT Req 42, criteria 6 and 8, statements about Neon Postgres.
 6. THE Repository SHALL contain the amended steering documents listed in the section "Applied Steering Amendments".
 
+### Requirement 38: Ollama Local Model Discovery and Selection
+
+**User Story:** As a trader who runs Ollama locally, I want to see the models installed on my machine and pick one, so that the Copilot and plain-English orders use the model I choose without editing environment variables.
+
+#### Acceptance Criteria
+
+1. WHEN the Provider_Registry probes `GET <OLLAMA_BASE_URL>/api/tags`, THE Provider_Registry SHALL validate the response body with Zod and read, for each entry of `models`, the fields `name`, `size`, `details.family`, and `details.parameter_size`.
+2. THE Provider_Registry SHALL accept a model name only when the name is 1 to 128 characters long and consists of the characters A–Z, a–z, 0–9, and `.`, `_`, `:`, `/`, `@`, and `-`, and SHALL drop each entry whose name fails this rule.
+3. IF the `/api/tags` response is not valid JSON, fails the Zod schema, or lists more than 100 models, THEN THE Provider_Registry SHALL treat the probe as failed, mark `ollama` unavailable, and set the Ollama_Model_List to empty.
+4. WHEN the `/api/tags` response is valid, THE Provider_Registry SHALL set the Ollama_Model_List to the accepted entries, with a missing `details.family` or `details.parameter_size` stored as null.
+5. THE Provider_Registry SHALL mark `ollama` available only WHILE the latest probe answered with a 2xx status and the Ollama_Model_List holds at least one model.
+6. THE Server SHALL include in the `ProviderInfo` of `ollama` an optional `models` list whose entries carry name, size in bytes, family, and parameter size, in the `hello` and `providers` Server_Messages.
+7. WHEN a probe changes the Ollama_Model_List, THE Server SHALL send an `ollama_models` Server_Message to every connected Client, carrying the list, the default model, and the Model_Selection of that connection.
+8. THE Protocol_Crate SHALL define the Client_Message `set_model` with the fields `provider` and `model`, where `provider` is `ollama`.
+9. WHEN the Server receives a `set_model` message whose model name equals a name in the latest Ollama_Model_List, THE Server SHALL store that name as the Model_Selection of that connection and reply with an `ollama_models` Server_Message.
+10. IF the Server receives a `set_model` message whose model name is not in the latest Ollama_Model_List, THEN THE Server SHALL send a Notice with the kind `model_unknown`, keep the Model_Selection unchanged, and take no other action on the name.
+11. WHEN the Server handles a plain-English order or an AI_Analyst request on a connection whose Provider_Selection is `ollama`, THE Server SHALL send the request to the Model_Selection of that connection.
+12. THE Server SHALL use as the default Model_Selection the model named by OLLAMA_MODEL when the Ollama_Model_List contains it, and otherwise the first model of the Ollama_Model_List.
+13. IF the Model_Selection of a connection is not in the Ollama_Model_List after a probe, THEN THE Server SHALL replace the Model_Selection with the model named by OLLAMA_MODEL when the Ollama_Model_List contains it, and otherwise with the first model of the Ollama_Model_List.
+14. WHEN a WebSocket connection closes, THE Server SHALL discard the Model_Selection of that connection.
+15. WHERE the selected provider is `ollama`, THE Web_UI Copilot panel SHALL show a dropdown of the Ollama_Model_List with each option reading name, family, parameter size, and size, separated by ` · `, with the size in human-readable units such as `4.3 GB`.
+16. WHEN the user picks a model in the dropdown, THE Web_UI SHALL send `set_model` and store the model name in `localStorage` under the key `oni.ollamaModel`.
+17. WHEN the Web_UI receives `hello` or `ollama_models`, THE Web_UI SHALL send `set_model` with the stored name only when the name is in the received Ollama_Model_List.
+18. THE TUI SHALL show the current Model_Selection in the Copilot panel and SHALL cycle through the Ollama_Model_List with the key `M`, defined as `model.next` in `shared/keymap.json` for the `tui` client and no other binding.
+19. THE Server SHALL treat every model name, family, and parameter size as display data and SHALL include none of them in an instruction to an LLM_Provider other than the `model` field of the Ollama request.
+20. THE Server SHALL write no Ollama_Model_List and no `/api/tags` URL to any log, and SHALL log at most the host of OLLAMA_BASE_URL.
+21. THE Server SHALL send every order that results from a Model_Selection through the Order_Preview, confirmation, Router, and Risk_Engine path of Requirement 3, with no other order path.
+22. THE Endpoint_Allowlist SHALL keep its existing Ollama entries, `GET /api/tags` and `POST /api/chat`, and SHALL gain no host and no path for this requirement.
+
 ## Superseded and Amended Requirements
 
 This spec supersedes or amends the following HT requirements. Statements in HT that conflict with this spec stop applying.
@@ -743,6 +774,7 @@ This spec supersedes or amends the following HT requirements. Statements in HT t
 | Req 27.3 (watchlist of three symbols) | Superseded | Requirement 26 |
 | Req 34.3, 35 (TUI render rate, Hit_Map) | Kept | Requirements 30 and 32 add panels |
 | Req 14, 15, 18, 45 through 49 (accounts, supervision, single order path, auth, wallet safety) | Kept | Unchanged |
+| Requirement 3 (Ollama availability = any 2xx from `/api/tags`; fixed model OLLAMA_MODEL) | Amended | Requirement 38 (available only with at least one installed model; per-connection Model_Selection, OLLAMA_MODEL is the preferred default) |
 
 ## Applied Steering Amendments
 

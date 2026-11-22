@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { forClient, keymap } from "../../../shared/keymap";
+import { OllamaModelSelect } from "../../components/OllamaModelSelect";
 import { PageFrame } from "../../components/shell/PageFrame";
 import { CHART_TYPES, CHART_TYPE_LABELS, type ChartType } from "../../lib/chartData";
 import { useTerminalStore } from "../../lib/store";
@@ -56,6 +57,8 @@ export default function SettingsPage() {
             ))}
           </select>
         </label>
+
+        <OllamaModelSelect id="settings-ollama-model" />
 
         <label className="flex items-center justify-between gap-4">
           <span className="text-phosphor-dim">Default venue</span>

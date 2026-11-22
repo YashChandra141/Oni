@@ -8,7 +8,8 @@
 import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { historyStep } from "../lib/orderEntry";
 import { orderActionForKey } from "../lib/orderKeys";
-import { useTerminalStore } from "../lib/store";
+import { useTerminalStore, type ConsoleKind } from "../lib/store";
+import { formatClock } from "../lib/timeFormat";
 import { useOrderActions } from "../lib/useOrderActions";
 
 export const COMMAND_INPUT_ID = "command-input";
@@ -66,8 +67,8 @@ export function CommandBar() {
   const caretColumn = parseError === null ? 0 : Math.min(parseError.position, text.length);
 
   return (
-    <footer aria-label="Command bar" className="crt-panel px-2 py-1">
-      <div className="flex items-center gap-2">
+    <footer aria-label="Command bar" className="crt-panel flex h-full min-h-0 flex-col overflow-hidden px-2 py-1">
+      <div className="flex shrink-0 items-center gap-2">
         <label htmlFor={COMMAND_INPUT_ID} className="text-amber">
           &gt;
         </label>
@@ -87,15 +88,42 @@ export function CommandBar() {
           onKeyDown={onKeyDown}
           className="min-w-0 flex-1 bg-transparent text-phosphor outline-none placeholder:text-phosphor-faint"
         />
+        {parseError !== null && (
+          // Inline so it stays visible at the one-line pane height.
+          <span id="command-error" role="alert" className="max-w-[50%] shrink-0 truncate text-xs text-sell">
+            {parseError.message}
+          </span>
+        )}
       </div>
       {parseError !== null && (
-        <div id="command-error" role="alert" className="text-xs text-sell">
-          <div aria-hidden="true" style={{ paddingLeft: `calc(${caretColumn}ch + 1.5ch)` }}>
-            ^
-          </div>
-          <div>{parseError.message}</div>
+        <div aria-hidden="true" className="shrink-0 text-xs text-sell" style={{ paddingLeft: `calc(${caretColumn}ch + 1.5ch)` }}>
+          ^
         </div>
       )}
+      <ConsoleLog />
     </footer>
+  );
+}
+
+const KIND_CLASS: Record<ConsoleKind, string> = {
+  command: "text-phosphor",
+  preview: "text-amber",
+  parse_error: "text-sell",
+  rejection: "text-sell",
+  notice: "text-phosphor-faint",
+};
+
+/** Scrollable console log below the input, newest at the top; clipped when the pane is one line. */
+function ConsoleLog() {
+  const log = useTerminalStore((state) => state.consoleLog);
+  const newestFirst = [...log].reverse();
+  return (
+    <div role="log" aria-label="Console log" className="min-h-0 flex-1 overflow-y-auto text-xs">
+      {newestFirst.map((entry, i) => (
+        <div key={`${entry.ts}-${log.length - i}`} className={`whitespace-pre-wrap break-words ${KIND_CLASS[entry.kind]}`}>
+          <span className="text-phosphor-faint">{formatClock(entry.ts)}</span> {entry.text}
+        </div>
+      ))}
+    </div>
   );
 }

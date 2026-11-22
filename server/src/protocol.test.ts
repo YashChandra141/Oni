@@ -209,6 +209,12 @@ const SERVER_MESSAGES: ServerMessage[] = [
     selected: null,
   },
   {
+    type: "ollama_models",
+    models: [{ name: "gemma4", size: 1000, family: "gemma", parameter_size: "4B" }],
+    default: "gemma4",
+    selected: null,
+  },
+  {
     type: "analysis",
     request_id: "r9",
     provider: "openai",
@@ -230,6 +236,7 @@ const SERVER_MESSAGES: ServerMessage[] = [
     items: [{ symbol: "ETH-USD", bias: "neutral", confidence_bps: 1, summary: "x" }],
   },
   { type: "strategy_draft", request_id: "r9", text: "draft, not executed" },
+  { type: "ai_chat", request_id: "r9", text: "hello" },
   { type: "ai_error", request_id: "r9", reason: "timeout", message: "slow" },
   { type: "news", available: false, items: [], updated_at: null },
   {
@@ -315,7 +322,7 @@ describe("valid messages", () => {
   });
 
   test("every ServerMessage variant and PreviewAction parses", () => {
-    expect(new Set(SERVER_MESSAGES.map((m) => m.type)).size).toBe(15); // Req 1.8, 34.1
+    expect(new Set(SERVER_MESSAGES.map((m) => m.type)).size).toBe(17); // Req 1.8, 34.1, 38.6
     for (const msg of SERVER_MESSAGES) expect(ServerMessageSchema.parse(msg)).toEqual(msg);
   });
 

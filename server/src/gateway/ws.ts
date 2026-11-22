@@ -67,6 +67,7 @@ import { type ParsedCommand, parseCommand } from "../commands/parser.ts";
 import type { PreviewStore } from "../commands/previews.ts";
 import { AiError, analyze, mapAnalystError } from "../ai/analyst.ts";
 import { type AiLimiter, toAiErrorReason } from "../ai/limits.ts";
+import { chat } from "../ai/chat.ts";
 import { draftStrategy, scan } from "../ai/scan.ts";
 import { type MarketSnapshot, buildMarketSnapshot } from "../ai/snapshot.ts";
 import type { JsonLlmProvider, LlmProviderId } from "../llm/provider.ts";
@@ -106,15 +107,20 @@ export const NOT_IMPLEMENTED_MESSAGE = "not implemented yet";
 
 /**
  * The default venue for a configuration: the Live_Venue in live mode, `replay` otherwise.
- * Task 7.x widens this to LIVE_VENUES (four venues).
+ * The default stays the first CEX; all LIVE_VENUES are available (see availableVenuesOf).
  */
 export function defaultVenueOf(config: Pick<Config, "dataMode" | "liveVenue">): Venue {
   return config.dataMode === "live" ? config.liveVenue : "replay";
 }
 
-/** The venues a client may name: the live venues in live mode, `replay` in replay mode. */
-export function availableVenuesOf(config: Pick<Config, "dataMode" | "liveVenue">): readonly Venue[] {
-  return config.dataMode === "live" ? [config.liveVenue] : ["replay"];
+/** The venues a client may name: every configured live venue in live mode, `replay` in replay mode. */
+export function availableVenuesOf(
+  config: Pick<Config, "dataMode" | "liveVenue"> & Partial<Pick<Config, "liveVenues">>,
+): readonly Venue[] {
+  if (config.dataMode !== "live") return ["replay"];
+  const all: Venue[] = [...(config.liveVenues ?? [config.liveVenue])];
+  if (!all.includes(config.liveVenue) && config.liveVenues === undefined) all.push(config.liveVenue);
+  return all;
 }
 
 /** Largest accepted inbound message. Bun closes the socket with 1009 above it. */
@@ -238,7 +244,8 @@ export interface CommandBar {
 
 /** Copilot wiring (Task 10.6): providers, limits, and the account state snapshots read. */
 export interface AiDeps {
-  readonly registry: Pick<ProviderRegistry, "info" | "get" | "defaultId" | "refresh">;
+  readonly registry: Pick<ProviderRegistry, "info" | "get" | "defaultId" | "refresh"> &
+    Partial<Pick<ProviderRegistry, "hasModel" | "chooseOllamaModel" | "onModelsChanged">>;
   readonly limiter: Pick<AiLimiter, "acquire" | "release" | "forget">;
   readonly accounts: Pick<AccountState, "positions" | "balance">;
 }
@@ -270,7 +277,7 @@ export type ConnectionClosedListener = (connectionId: string) => void;
 
 export interface GatewayOptions {
   readonly supervisor: GatewaySupervisor;
-  readonly config: Pick<Config, "dataMode" | "liveVenue">;
+  readonly config: Pick<Config, "dataMode" | "liveVenue"> & Partial<Pick<Config, "liveVenues">>;
   /** Defaults to a new registry. */
   readonly registry?: SubscriptionRegistry;
   /** Defaults to a new MarketState. */
@@ -350,7 +357,7 @@ export class Gateway {
   /** orderId → requesting connection. The Router (Task 11.2) fills it; OrderRejected reads it. */
   readonly pendingRequests: PendingRequests;
   readonly #supervisor: GatewaySupervisor;
-  readonly #config: Pick<Config, "dataMode" | "liveVenue">;
+  readonly #config: Pick<Config, "dataMode" | "liveVenue"> & Partial<Pick<Config, "liveVenues">>;
   readonly #log: Logger;
   readonly #randomUUID: () => string;
   readonly #tokens: TokenVerifier | null;
@@ -369,6 +376,9 @@ export class Gateway {
   readonly #tickerClients = new Map<string, Set<string>>();
   /** connection id → selected provider (SetProvider). */
   readonly #selected = new Map<string, LlmProviderId>();
+  /** connection id → selected Ollama model (SetModel, Req 38.9). */
+  readonly #selectedModel = new Map<string, string>();
+  #modelsUnlisten: (() => void) | null = null;
   /** `<connection>|<request_id>` → abort controller of an in-flight AI request. */
   readonly #aiRuns = new Map<string, AbortController>();
   /** connection id → its batcher and slow-client state. */
@@ -433,7 +443,64 @@ export class Gateway {
 
   /** Enables the Copilot (SetProvider, AiRequest, AiCancel). Without it AI requests answer `ai_disabled`. */
   setAi(ai: AiDeps | null): void {
+    this.#modelsUnlisten?.();
+    this.#modelsUnlisten = null;
     this.#ai = ai;
+    // Req 38.10, 38.14: when the Ollama_Model_List changes, drop selections that vanished and tell every client.
+    this.#modelsUnlisten = ai?.registry.onModelsChanged?.(() => this.#modelsChanged()) ?? null;
+  }
+
+  #modelsChanged(): void {
+    const registry = this.#ai?.registry;
+    if (registry === undefined) return;
+    for (const [clientId, ws] of this.#sockets) {
+      const chosen = this.#selectedModel.get(clientId);
+      if (chosen !== undefined && registry.hasModel?.(chosen) !== true) this.#selectedModel.delete(clientId);
+      try {
+        // Availability of ollama changed too, so the provider list goes out first.
+        ws.send(encode(this.#providersMessage(clientId)));
+        ws.send(encode(this.#ollamaModelsMessage(clientId)));
+      } catch {
+        this.#log.error(`[gateway] client ${clientId} ollama_models send failed`);
+      }
+    }
+  }
+
+  #ollamaModelsMessage(clientId: string): ServerMessage {
+    const registry = this.#ai?.registry;
+    const models = registry?.info().find((p) => p.id === "ollama")?.models ?? [];
+    const chosen = this.#selectedModel.get(clientId);
+    const selected = chosen !== undefined && registry?.hasModel?.(chosen) === true ? chosen : null;
+    return {
+      type: "ollama_models",
+      models: [...models],
+      default: registry?.chooseOllamaModel?.() ?? null,
+      selected,
+    };
+  }
+
+  #setModel(ws: GatewaySocket, clientId: string, provider: LlmProviderId, model: string): void {
+    const ai = this.#ai;
+    if (ai === null) {
+      ws.send(encode({ type: "notice", kind: "ai_disabled", message: "AI Copilot is not configured on this server." }));
+      return;
+    }
+    ai.registry
+      .refresh()
+      .catch(() => undefined)
+      .then(() => {
+        if (this.#sockets.get(clientId) !== ws) return;
+        // Against the latest list only; the name is never logged or echoed (Req 38.11).
+        if (provider !== "ollama" || ai.registry.hasModel?.(model) !== true) {
+          ws.send(encode({ type: "notice", kind: "model_unknown", message: "That model is not installed." }));
+          return;
+        }
+        this.#selectedModel.set(clientId, model);
+        ws.send(encode(this.#ollamaModelsMessage(clientId)));
+      })
+      .catch(() => {
+        this.#log.error(`[gateway] client ${clientId} set model failed unexpectedly`);
+      });
   }
 
   /** Sets the news cache. Refreshes are published to every `SubscribeNews` connection. */
@@ -480,6 +547,8 @@ export class Gateway {
     this.#router = null;
     this.#commandBar = null;
     this.#twap = null;
+    this.#modelsUnlisten?.();
+    this.#modelsUnlisten = null;
     this.setNews(null);
   }
 
@@ -521,7 +590,7 @@ export class Gateway {
     this.#out.set(clientId, this.#makeOutbound(ws, clientId));
     this.#sub(ws, accountTopic(GUEST_ACCOUNT_ID)); // Req 46.1
     this.#sub(ws, NOTICES_TOPIC); // Req 17.9
-    const liveVenues: Venue[] = this.#config.dataMode === "live" ? [this.#config.liveVenue] : [];
+    const liveVenues: Venue[] = this.#config.dataMode === "live" ? [...availableVenuesOf(this.#config)] : [];
     ws.send(
       encode({
         type: "hello",
@@ -579,6 +648,7 @@ export class Gateway {
     this.#unindexJti(clientId, ws.data.session?.jti ?? null);
     this.pendingRequests.dropConnection(clientId);
     this.#selected.delete(clientId);
+    this.#selectedModel.delete(clientId);
     for (const [key, controller] of this.#aiRuns) {
       if (key.startsWith(`${clientId}|`)) controller.abort();
     }
@@ -746,6 +816,9 @@ export class Gateway {
       case "set_provider":
         this.#setProvider(ws, clientId, msg.provider);
         return;
+      case "set_model":
+        this.#setModel(ws, clientId, msg.provider, msg.model);
+        return;
       case "ai_request": {
         const venue = this.#resolveVenue(ws, msg.venue);
         if (venue !== null) this.#aiRequest(ws, clientId, msg, venue);
@@ -863,7 +936,7 @@ export class Gateway {
     const startedUs = nowUs();
     this.#llmBusy.add(clientId);
     llm
-      .parse(text, accountId, this.#selected.get(clientId))
+      .parse(text, accountId, this.#selected.get(clientId), this.#selectedModel.get(clientId))
       .then((result) => {
         if (this.#sockets.get(clientId) !== ws) return; // closed while waiting
         if ((ws.data.session ?? GUEST_SESSION).accountId !== accountId) {
@@ -1017,11 +1090,17 @@ export class Gateway {
   // connection and needs Confirm; nothing here reaches the Router (trading-safety rules 2 to 4).
   // -------------------------------------------------------------------------------------------
 
-  #providerInfos(): { id: LlmProviderId; model: string; reason: string | null }[] {
+  #providerInfos(): {
+    id: LlmProviderId;
+    model: string;
+    reason: string | null;
+    models?: { name: string; size: number; family: string | null; parameter_size: string | null }[];
+  }[] {
     return (this.#ai?.registry.info() ?? []).map((p) => ({
       id: p.id,
       model: p.model,
-      reason: p.available ? null : "not available",
+      reason: p.available ? null : p.id === "ollama" && p.reachable === true ? "no models" : "not available",
+      ...(p.models !== undefined ? { models: p.models.map((m) => ({ ...m })) } : {}),
     }));
   }
 
@@ -1064,7 +1143,13 @@ export class Gateway {
   #resolveProvider(ai: AiDeps, clientId: string): JsonLlmProvider | undefined {
     const selected = this.#selected.get(clientId);
     const chosen = selected !== undefined && ai.registry.get(selected) !== undefined ? selected : ai.registry.defaultId();
-    return chosen === null ? undefined : ai.registry.get(chosen);
+    if (chosen === null) return undefined;
+    if (chosen === "ollama" && ai.registry.chooseOllamaModel !== undefined) {
+      // Req 38.12, 38.13: the selected model if installed, else OLLAMA_MODEL, else the first installed.
+      const model = ai.registry.chooseOllamaModel(this.#selectedModel.get(clientId));
+      return model === undefined ? undefined : ai.registry.get("ollama", model);
+    }
+    return ai.registry.get(chosen);
   }
 
   #snapshotFor(
@@ -1150,7 +1235,11 @@ export class Gateway {
       msg.action === "scan"
         ? INSTRUMENTS.filter((i) => i.venues.includes(venue)).map((i) => i.symbol)
         : [msg.symbol];
-    if (msg.action !== "scan" && msg.action !== "create_strategy" && instrumentBySymbol(msg.symbol) === undefined) {
+    if (
+      msg.action !== "scan" &&
+      msg.action !== "create_strategy" &&
+      msg.action !== "chat" &&
+      instrumentBySymbol(msg.symbol) === undefined) {
       this.#aiError(ws, requestId, "validation_error", "Unknown symbol.");
       return;
     }
@@ -1179,6 +1268,16 @@ export class Gateway {
             summary: i.summary,
           })),
         };
+      } else if (msg.action === "chat") {
+        const known = instrumentBySymbol(msg.symbol) !== undefined;
+        const snapshot = known ? this.#snapshotFor(ai, accountId, msg.symbol, venue, msg.timeframe, true) : undefined;
+        const replyText = await chat({
+          provider,
+          signal,
+          userText: msg.text,
+          ...(snapshot === undefined ? {} : { snapshot }),
+        });
+        reply = { type: "ai_chat", request_id: requestId, text: replyText };
       } else if (msg.action === "create_strategy") {
         const known = instrumentBySymbol(msg.symbol) !== undefined;
         const snapshot = known ? this.#snapshotFor(ai, accountId, msg.symbol, venue, msg.timeframe, true) : undefined;

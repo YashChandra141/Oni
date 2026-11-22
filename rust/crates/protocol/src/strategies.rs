@@ -15,8 +15,8 @@ use proptest::sample::select;
 
 use crate::client::{
     AiErrorReason, AnalysisResult, ClientMessage, DataMode, InstrumentInfo, NoticeKind,
-    OrderPreview, PreviewAction, PreviewError, ProviderInfo, ScanItem, ServerMessage, TradeIdea,
-    VenueStatusEntry,
+    OllamaModel, OrderPreview, PreviewAction, PreviewError, ProviderInfo, ScanItem, ServerMessage,
+    TradeIdea, VenueStatusEntry,
 };
 use crate::command::Command;
 use crate::event::{
@@ -293,6 +293,7 @@ pub fn notice_kind() -> impl Strategy<Value = NoticeKind> + Clone {
         NoticeKind::SignedOut,
         NoticeKind::SlowClient,
         NoticeKind::ProviderChanged,
+        NoticeKind::ModelUnknown,
     ])
 }
 
@@ -309,6 +310,7 @@ pub fn copilot_action() -> impl Strategy<Value = CopilotAction> + Clone {
     select(vec![
         CopilotAction::Analyze,
         CopilotAction::Ask,
+        CopilotAction::Chat,
         CopilotAction::CreateStrategy,
         CopilotAction::Scan,
     ])
@@ -343,8 +345,33 @@ pub fn ai_error_reason() -> impl Strategy<Value = AiErrorReason> + Clone {
 }
 
 pub fn provider_info() -> impl Strategy<Value = ProviderInfo> + Clone {
-    (provider_id(), free_text(), option::of(free_text()))
-        .prop_map(|(id, model, reason)| ProviderInfo { id, model, reason })
+    (
+        provider_id(),
+        free_text(),
+        option::of(free_text()),
+        option::of(vec(ollama_model(), 0..3)),
+    )
+        .prop_map(|(id, model, reason, models)| ProviderInfo {
+            id,
+            model,
+            reason,
+            models,
+        })
+}
+
+pub fn ollama_model() -> impl Strategy<Value = OllamaModel> + Clone {
+    (
+        free_text(),
+        0u64..(1u64 << 53),
+        option::of(free_text()),
+        option::of(free_text()),
+    )
+        .prop_map(|(name, size, family, parameter_size)| OllamaModel {
+            name,
+            size,
+            family,
+            parameter_size,
+        })
 }
 
 pub fn venue_status_entry() -> impl Strategy<Value = VenueStatusEntry> + Clone {
@@ -781,6 +808,8 @@ pub fn any_client_message() -> impl Strategy<Value = ClientMessage> {
             twap_id
         }),
         provider_id().prop_map(|provider| ClientMessage::SetProvider { provider }),
+        (provider_id(), free_text())
+            .prop_map(|(provider, model)| ClientMessage::SetModel { provider, model }),
         (
             free_text(),
             copilot_action(),
@@ -938,6 +967,16 @@ pub fn any_server_message() -> impl Strategy<Value = ServerMessage> {
                 selected,
             }),
         (
+            vec(ollama_model(), 0..4),
+            option::of(free_text()),
+            option::of(free_text())
+        )
+            .prop_map(|(models, default, selected)| ServerMessage::OllamaModels {
+                models,
+                default,
+                selected,
+            }),
+        (
             (free_text(), provider_id(), free_text()),
             analysis_result(),
             option::of(order_preview()),
@@ -962,6 +1001,8 @@ pub fn any_server_message() -> impl Strategy<Value = ServerMessage> {
             .prop_map(|(request_id, items)| ServerMessage::ScanResult { request_id, items }),
         (free_text(), long_text())
             .prop_map(|(request_id, text)| ServerMessage::StrategyDraft { request_id, text }),
+        (free_text(), long_text())
+            .prop_map(|(request_id, text)| ServerMessage::AiChat { request_id, text }),
         (free_text(), ai_error_reason(), free_text()).prop_map(|(request_id, reason, message)| {
             ServerMessage::AiError {
                 request_id,

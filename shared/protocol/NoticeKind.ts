@@ -3,4 +3,4 @@
 /**
  * Category of a [`ServerMessage::Notice`].
  */
-export type NoticeKind = "account_reset" | "engine_down" | "engine_up" | "ai_disabled" | "slow_client" | "provider_changed" | "auth_failed" | "session_expired" | "signed_out";
+export type NoticeKind = "account_reset" | "engine_down" | "engine_up" | "ai_disabled" | "slow_client" | "provider_changed" | "auth_failed" | "session_expired" | "signed_out" | "model_unknown";

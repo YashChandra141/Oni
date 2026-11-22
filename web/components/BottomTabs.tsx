@@ -1,6 +1,6 @@
 "use client";
 
-// Bottom tabs: Positions, Orders, Balances, P&L, Strategies (Task 14.7, Req 25.3 to 25.10).
+// Bottom tabs: Positions, Orders, Balances, P&L (Task 14.7, Req 25.3 to 25.10).
 
 import { useState, type ReactNode } from "react";
 import { formatPrice, formatQty, formatUnits } from "../lib/format";
@@ -9,14 +9,13 @@ import OpenOrdersPanel from "./OpenOrdersPanel";
 import PnlPanel from "./PnlPanel";
 import PositionsPanel from "./PositionsPanel";
 
-type BottomTab = "positions" | "orders" | "balances" | "pnl" | "strategies";
+type BottomTab = "positions" | "orders" | "balances" | "pnl";
 
 const TABS: readonly { readonly id: BottomTab; readonly label: string }[] = [
   { id: "positions", label: "Positions" },
   { id: "orders", label: "Orders" },
   { id: "balances", label: "Balances" },
   { id: "pnl", label: "P&L" },
-  { id: "strategies", label: "Strategies" },
 ];
 
 const MONEY_DECIMALS = 10;
@@ -73,51 +72,6 @@ function Fills() {
   );
 }
 
-function Strategies() {
-  const strategies = useTerminalStore((s) => s.ai.strategies);
-  const twaps = useTerminalStore((s) => s.twaps);
-  const cancelTwap = useTerminalStore((s) => s.cancelTwap);
-  const drafts = Object.values(strategies);
-  const last = drafts[drafts.length - 1];
-  const plans = Object.values(twaps);
-  return (
-    <div className="text-xs">
-      <div className="text-phosphor-dim">Last strategy draft</div>
-      {last === undefined ? (
-        <div className="text-phosphor-faint">no strategy draft</div>
-      ) : (
-        <pre className="whitespace-pre-wrap">{last.text}</pre>
-      )}
-      <div className="mt-2 text-phosphor-dim">TWAP</div>
-      {plans.length === 0 ? <div className="text-phosphor-faint">no TWAP orders</div> : null}
-      {plans.map((p) => (
-        <div key={p.twapId} className="flex gap-3">
-          <span className={p.side === "sell" ? "text-sell" : "text-buy"}>{p.side.toUpperCase()}</span>
-          <span>{p.symbol}</span>
-          <span>{p.venue}</span>
-          <span>
-            {p.sent}/{p.slices}
-          </span>
-          <span>{p.status}</span>
-          {p.reason === null ? null : <span className="text-phosphor-dim">{p.reason}</span>}
-          {p.status === "active" ? (
-            <button
-              type="button"
-              aria-label={`Cancel TWAP ${p.twapId}`}
-              className="text-sell"
-              onClick={() => {
-                cancelTwap(p.twapId);
-              }}
-            >
-              ✕
-            </button>
-          ) : null}
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function Orders() {
   const twaps = useTerminalStore((s) => s.twaps);
   const cancelTwap = useTerminalStore((s) => s.cancelTwap);
@@ -164,9 +118,6 @@ export function BottomTabs() {
       break;
     case "pnl":
       body = <PnlPanel />;
-      break;
-    case "strategies":
-      body = <Strategies />;
       break;
   }
   return (

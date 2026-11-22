@@ -5,6 +5,7 @@
 // error message (trading-safety rule 6).
 
 import { z } from "zod";
+import { GuardedFetchError, guardedFetch, type GuardedRequestInit } from "../net/http.ts";
 import {
   LlmBadOutput,
   LlmTimeout,
@@ -13,7 +14,18 @@ import {
   type JsonRequest,
 } from "./provider.ts";
 
-export type OllamaFetch = (input: string, init: RequestInit) => Promise<Response>;
+/** Client-safe message for an HTTP 404 from /api/chat. Carries no model name. */
+export const OLLAMA_MODEL_MISSING = "The selected Ollama model is not installed";
+
+export type OllamaFetch = (input: string, init: GuardedRequestInit) => Promise<Response>;
+
+/** Margin so the provider's own timeout fires before the guarded fetch's. */
+const TIMEOUT_MARGIN_MS = 1000;
+
+/** Logs only the failure kind or HTTP status. No URL, no model. */
+function logFailure(detail: string): void {
+  console.warn(`[llm] ollama call failed: ${detail}`);
+}
 
 export interface OllamaProviderOptions {
   /** OLLAMA_BASE_URL. */
@@ -30,7 +42,7 @@ const Envelope = z.looseObject({
 
 export function createOllamaProvider(options: OllamaProviderOptions): JsonLlmProvider {
   const { model } = options;
-  const doFetch: OllamaFetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
+  const doFetch: OllamaFetch = options.fetch ?? ((input, init) => guardedFetch(input, init));
   const base = new URL(options.baseUrl);
   if (base.protocol !== "https:" && base.protocol !== "http:") throw new Error("Ollama base URL must be http(s)");
   if (base.username !== "" || base.password !== "") throw new Error("Ollama base URL must not carry credentials");
@@ -61,14 +73,27 @@ export function createOllamaProvider(options: OllamaProviderOptions): JsonLlmPro
           body: JSON.stringify(body),
           signal: combined,
           redirect: "error",
+          timeoutMs: req.timeoutMs + TIMEOUT_MARGIN_MS,
         });
-      } catch {
+      } catch (err) {
         // Never forward the error text: it can carry the URL.
-        if (timeout.aborted) throw new LlmTimeout();
+        if (timeout.aborted) {
+          logFailure("timeout");
+          throw new LlmTimeout();
+        }
         if (req.signal?.aborted === true) throw new LlmUnavailable("The request was aborted");
+        if (err instanceof GuardedFetchError) {
+          logFailure(err.kind);
+          if (err.kind === "timeout") throw new LlmTimeout();
+          if (err.kind === "refused") throw new LlmUnavailable("The language model host is not allowlisted");
+        } else {
+          logFailure("network");
+        }
         throw new LlmUnavailable("Could not reach the language model service");
       }
+      if (response.status === 404) throw new LlmUnavailable(OLLAMA_MODEL_MISSING, 404);
       if (!response.ok) {
+        logFailure(`HTTP ${response.status}`);
         throw new LlmUnavailable(`The language model service failed (HTTP ${response.status})`, response.status);
       }
 

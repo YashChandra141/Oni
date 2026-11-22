@@ -14,8 +14,9 @@ import OrderTicket from "../components/OrderTicket";
 import { PreviewDialog } from "../components/PreviewDialog";
 import { RejectionToast } from "../components/RejectionToast";
 import TradesTape from "../components/TradesTape";
-import RightColumn from "../components/RightColumn";
-import { GRID_STYLE, PANEL_AREA } from "../lib/layout";
+import { NewsSection, WatchlistTabs } from "../components/RightColumn";
+import { Split } from "../components/Split";
+import { CENTRE_SPLIT, CONSOLE_SPLIT, LEFT_SPLIT, MAIN_SPLIT, RIGHT_SPLIT } from "../lib/layout";
 import { accountLabel } from "../lib/status";
 import { useTerminalStore } from "../lib/store";
 
@@ -52,59 +53,61 @@ export default function Home() {
 
   return (
     <>
-      <main className="grid h-full min-h-0 overflow-hidden gap-1" style={GRID_STYLE}>
-        <div className="flex min-h-0 min-w-0 flex-col" style={{ gridArea: PANEL_AREA.status }}>
+      <main className="flex h-full min-h-0 flex-col gap-1 overflow-hidden">
+        <div className="flex min-h-0 min-w-0 shrink-0 flex-col">
           <div className="flex min-w-0 flex-col gap-1 px-2 py-1">
             <ExchangeTabs />
             <SymbolHeader />
           </div>
         </div>
 
-        <div className="flex min-h-0 min-w-0 flex-col" style={{ gridArea: PANEL_AREA.watch }}>
-          <Panel title="Watchlist" className="min-h-0 flex-1" body="clip">
-            <RightColumn />
-          </Panel>
-        </div>
+        <div className="min-h-0 min-w-0 flex-1 overflow-hidden">
+          <Split direction="vertical" {...CONSOLE_SPLIT}>
+          <Split direction="horizontal" {...MAIN_SPLIT}>
+            <Split direction="vertical" {...LEFT_SPLIT}>
+              <Panel title="Watchlist" className="h-full" body="clip">
+                <WatchlistTabs />
+              </Panel>
+              <Panel title="News & Events" className="h-full" body="clip">
+                <NewsSection />
+              </Panel>
+              <Panel title="Tape" className="h-full">
+                <TradesTape />
+              </Panel>
+            </Split>
 
-        <div className="flex min-h-0 min-w-0 flex-col" style={{ gridArea: PANEL_AREA.chart }}>
-          <Panel title="Chart" className="min-h-0 flex-1" body="clip">
-            <ChartPanelLoader />
-          </Panel>
-        </div>
+            <Split direction="vertical" {...CENTRE_SPLIT}>
+              <Panel title="Chart" className="h-full" body="clip">
+                <ChartPanelLoader />
+              </Panel>
+              <Panel title="AI Copilot" className="h-full">
+                <CopilotPanel />
+              </Panel>
+              <Panel title="Positions / Orders" className="h-full" body="clip">
+                <div className="flex h-full min-h-0 flex-col">
+                  <div className="mb-1 shrink-0 text-xs text-amber" aria-label="Account">
+                    {account}
+                  </div>
+                  <div className="min-h-0 flex-1 text-xs">
+                    <BottomTabs />
+                  </div>
+                </div>
+              </Panel>
+            </Split>
 
-        <div className="flex min-h-0 min-w-0 flex-col gap-1" style={{ gridArea: PANEL_AREA.side }}>
-          <Panel title="Market" className="min-h-0 flex-1" body="clip">
-            <MarketSideTabs />
-          </Panel>
-          <Panel title="Order ticket">
-            <OrderTicket />
-          </Panel>
-        </div>
-
-        <div className="flex min-h-0 min-w-0 flex-col" style={{ gridArea: PANEL_AREA.tape }}>
-          <Panel title="Tape" className="min-h-0 flex-1">
-            <TradesTape />
-          </Panel>
-        </div>
-
-        <div className="flex min-h-0 min-w-0 flex-col gap-1" style={{ gridArea: PANEL_AREA.account }}>
-          <Panel title="AI Copilot" className="min-h-0 flex-1">
-            <CopilotPanel />
-          </Panel>
-          <Panel title="Positions / Orders" className="min-h-0 flex-1" body="clip">
-            <div className="flex h-full min-h-0 flex-col">
-              <div className="mb-1 shrink-0 text-xs text-amber" aria-label="Account">
-                {account}
-              </div>
-              <div className="min-h-0 flex-1 text-xs">
-                <BottomTabs />
-              </div>
-            </div>
-          </Panel>
-        </div>
-
-        <div className="flex min-h-0 min-w-0 flex-col" style={{ gridArea: PANEL_AREA.command }}>
-          <CommandBar />
+            <Split direction="vertical" {...RIGHT_SPLIT}>
+              <Panel title="Market" className="h-full" body="clip">
+                <MarketSideTabs />
+              </Panel>
+              <Panel title="Order ticket" className="h-full">
+                <OrderTicket />
+              </Panel>
+            </Split>
+          </Split>
+          <div className="flex h-full min-h-0 min-w-0 flex-col">
+            <CommandBar />
+          </div>
+          </Split>
         </div>
       </main>
 

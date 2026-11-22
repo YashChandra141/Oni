@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "oni-terminal": {
+      "command": "bun",
+      "args": ["run", "server/src/mcp/main.ts"],
+      "env": { "TERMINAL_URL": "http://localhost:8080" },
+      "disabled": false,
+      "autoApprove": ["get_quote", "get_candles", "get_positions", "preview_order"]
+    }
+  }
+}

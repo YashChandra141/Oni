@@ -8,6 +8,12 @@
     "shared"
   ],
   "scripts": {
+    "dev": "bun scripts/dev.ts",
+    "icons": "bun scripts/fetch-coin-icons.ts",
+    "dev:server": "bun scripts/dev.ts --server-only",
+    "dev:web": "bun run --cwd web dev",
+    "dev:tui": "cargo run --release --manifest-path rust/Cargo.toml -p tui -- --server ws://localhost:8080/ws",
+    "build:engine": "cargo build --release --manifest-path rust/Cargo.toml -p engine -p tui",
     "check": "bun run check:rust && bun run check:ts",
     "check:rust": "cargo fmt --manifest-path rust/Cargo.toml --all -- --check && cargo clippy --manifest-path rust/Cargo.toml --workspace --all-targets -- -D warnings && cargo test --manifest-path rust/Cargo.toml --workspace && cargo build --manifest-path rust/Cargo.toml -p engine",
     "check:ts": "bun run typecheck && bun test",

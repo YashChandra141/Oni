@@ -143,7 +143,7 @@ describe("LLM config", () => {
 });
 
 describe("ProviderRegistry", () => {
-  const up: ProbeFetch = async () => ({ ok: true });
+  const up: ProbeFetch = async () => ({ ok: true, json: async () => ({ models: [{ name: "gemma4", size: 1, details: {} }] }) });
   const down: ProbeFetch = async () => {
     throw new Error("connect refused");
   };
@@ -194,8 +194,8 @@ describe("ProviderRegistry", () => {
     const urls: string[] = [];
     const fetchFn: ProbeFetch = async (url) => {
       urls.push(url);
-      if (!reachable) return { ok: false };
-      return { ok: true };
+      if (!reachable) return { ok: false, json: async () => ({}) };
+      return { ok: true, json: async () => ({ models: [{ name: "gemma4", size: 1, details: {} }] }) };
     };
     const r = createProviderRegistry({ config: ok({ OLLAMA_BASE_URL: OL_URL }), factories: FACTORIES, fetch: fetchFn, now: () => now });
     await r.refresh();
@@ -226,6 +226,16 @@ describe("ProviderRegistry", () => {
     await r.refresh();
     const json = JSON.stringify(r.info());
     for (const s of [OPENAI, ANTHROPIC, NVIDIA, NV_URL, OL_URL, "http", "internal"]) expect(json).not.toContain(s);
-    for (const p of r.info()) expect(Object.keys(p).sort()).toEqual(["available", "id", "model"]);
+    for (const p of r.info()) {
+      // Only the ollama entry may carry `models` (Req 38.6); no other key is allowed.
+      const keys = Object.keys(p).sort();
+      expect(keys).toEqual(p.id === "ollama" ? ["available", "id", "model", "models", "reachable"] : ["available", "id", "model"]);
+      if (p.id === "ollama") {
+        expect(Array.isArray(p.models)).toBe(true);
+        for (const m of p.models ?? []) {
+          for (const k of Object.keys(m)) expect(["name", "size", "family", "parameter_size"]).toContain(k);
+        }
+      }
+    }
   });
 });

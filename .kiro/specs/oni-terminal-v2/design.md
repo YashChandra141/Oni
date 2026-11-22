@@ -816,6 +816,66 @@ Venue message ──> [engine core] ──(M0: emit_us, set by the stdout writer
 - **`release.yml`** is unchanged.
 - **README** (Req 37) lists every variable with default and secret flag, the allowlist, the guest account, replay mode, Ollama setup (`ollama pull gemma4`, `OLLAMA_BASE_URL`, and the note that a hosted server cannot reach a local Ollama), the NewsAPI and CryptoPanic notes (Req 20.4), and "orders, fills, and rejections live in memory for the current engine run only".
 
+### Ollama local model discovery and selection (Req 38)
+
+The registry lists the models that Ollama reports installed. Each connection picks one. The pick changes only the `model` field of the Ollama request. The LLM still produces previews only (HT rule 4), and the order path is unchanged.
+
+**Protocol crate** (`rust/crates/protocol/src/client.rs`, then `bun run gen:protocol`; `shared/protocol/*.ts` is never hand-edited):
+
+- New struct `OllamaModel { name: String, size: u64, family: Option<String>, parameter_size: Option<String> }`, with `#[ts(type = "number")]` on `size`. The server's Zod schema bounds `size` to `Number.MAX_SAFE_INTEGER`, so a JSON number is exact.
+- `ProviderInfo` gains `#[serde(default, skip_serializing_if = "Option::is_none")] models: Option<Vec<OllamaModel>>`. It is `Some` only for `ollama`. Existing JSON without the field still parses, so the `hello` and `providers` goldens in `properties.rs` stay valid for the other providers.
+- `ClientMessage::SetModel { provider: ProviderId, model: String }`, wire form `{"type":"set_model","provider":"ollama","model":"..."}`. The server accepts only `provider == "ollama"`.
+- `ServerMessage::OllamaModels { models: Vec<OllamaModel>, default: Option<String>, selected: Option<String> }`, wire type `ollama_models`.
+- `NoticeKind::ModelUnknown` (`model_unknown`).
+- The round-trip generators in `strategies.rs` add `ollama_model()`, and `server/src/protocol.ts` adds `OllamaModelSchema`, the new variants, and the `Assert<Same<...>>` lines. Property 50 covers the new messages.
+
+**Tags parser** (`server/src/llm/tags.ts`, pure, no I/O):
+
+```ts
+export const MAX_OLLAMA_MODELS = 100;
+export const MODEL_NAME_RE = /^[A-Za-z0-9._:/@-]{1,128}$/;
+
+export interface OllamaModel {
+  name: string; size: number; family: string | null; parameterSize: string | null;
+}
+// Envelope is strict about shape and size: { models: unknown[] } with at most 100 items.
+// Each item is checked on its own. An item with a bad name, a negative or non-integer size,
+// or a wrong field type is dropped. Never throws.
+export function parseTags(body: unknown): { ok: true; models: OllamaModel[] } | { ok: false };
+```
+
+`parseTags` returns `{ ok: false }` when the body is not an object, `models` is not an array, or `models.length > 100`. Duplicate names keep the first entry. `family` and `parameter_size` longer than 64 characters or holding control characters become null.
+
+**Registry** (`server/src/llm/registry.ts`):
+
+- `refresh()` reads the body with `response.json()` through the existing `ProbeFetch` (the type gains `json(): Promise<unknown>`), passes it to `parseTags`, and sets `#ollamaModels`. A non-2xx status, a timeout, a thrown error, or `ok: false` sets `#ollamaUp = false` and `#ollamaModels = []`. The 2 s timeout and the 30 s re-check stay.
+- `#available("ollama")` becomes `factory present && #ollamaUp && #ollamaModels.length > 0`.
+- `info()` adds `models` for ollama. Its `model` field is `defaultOllamaModel()`.
+- Pure helper `chooseOllamaModel(list: readonly string[], preferred: string | undefined, envModel: string): string | null`: returns `preferred` if it is in `list`, else `envModel` if in `list`, else `list[0]`, else null. Used for the default (`preferred` undefined) and for the fallback.
+- `get("ollama", model?)` builds one provider per model name, cached in a map, only for names in the list. `createOllamaProvider({ baseUrl, model })` already takes a model.
+- `onModelsChanged(listener)`: `refresh()` compares the new list (names and sizes) to the old one and calls listeners only on a change. No log line holds the list or the URL. A failed probe logs at most the host.
+
+**Gateway** (`server/src/gateway/ws.ts`):
+
+- New map `#selectedModel: Map<clientId, string>`, next to `#selected`. It is deleted on close.
+- `set_model` → `#setModel(ws, clientId, provider, model)`. It runs `registry.refresh()` first. If `registry.hasModel(model)` (membership in the latest list), it stores the name and replies with `ollama_models`. Otherwise it sends `Notice model_unknown` and leaves the map unchanged. The name is never used in a path, a URL, or a prompt except as the `model` field after this check.
+- `#resolveProvider` passes `#selectedModel.get(clientId)` to `registry.get("ollama", model)`. If the stored name has left the list, `chooseOllamaModel` applies the fallback rule and the map is updated.
+- On `onModelsChanged`, the gateway iterates its connections, re-runs the fallback for each stored name, and sends each connection its own `ollama_models` message. `hello` carries `providers[].models` for new connections.
+- `Router`, `Risk_Engine`, and `AiDeps.analyst` are untouched. A test scans that `ws.ts` sends no order Command from the model path.
+
+**Web** (`web/lib/store.ts`, `web/lib/ollamaModels.ts`, the Copilot panel and Settings page):
+
+- Store fields `ollamaModels`, `ollamaModel` (selected), and action `setOllamaModel(name)`; `ollama_models` messages and `hello` fill them.
+- `web/lib/ollamaModels.ts` is pure: `formatModelLabel(m)` returns `name · family · parameter size · size` (a null part is skipped), `formatBytes(n)` uses 1024-based units with one decimal (`4.3 GB`), and `reapplyStored(stored, list)` returns the stored name only if it is in the list.
+- The dropdown is a native `<select>` shown in the Copilot panel and on the Settings page when the selected provider is `ollama`. On change, it sends `set_model` and writes `localStorage["oni.ollamaModel"]`. After `hello` and each `ollama_models`, it sends `set_model` with `reapplyStored(...)` if that is non-null and differs from the server's `selected`. Model text is rendered as React text, never as HTML.
+
+**TUI** (`rust/crates/tui`, `shared/keymap.json`):
+
+- Keymap entry `"model.next": { "tui": ["M"] }` in the `global` context. `M` is unused in both clients today (`V`, `G`, `C`, `B`, `S`, `F`, `X`, `E`, `W`, `O`, `R`, `T`, `P`, `Q` are taken), so Property 42 stays true.
+- App state holds `ollama_models`, `ollama_selected`. `M` sends `set_model` with the next name in list order, wrapping at the end, only while the provider is `ollama` and the list is non-empty. The Copilot panel title shows `ollama:<model>`. Names pass through the existing control-character sanitizer used for news titles.
+
+**Errors.** Unreachable Ollama or a bad body: `ollama` unavailable, empty list, the dropdown is hidden and the provider chip shows the existing reason. Unknown `set_model` name: `Notice model_unknown`, selection unchanged. A model that disappears between a probe and a request: the request uses the fallback model, and if the list is empty the request fails with the existing `ai_error` for an unavailable provider.
+
 ## Data Models
 
 | Store | Owner | Contents |
@@ -1185,6 +1245,18 @@ For any set of connections with Connection_Sessions and any sequence of OrderAck
 
 **Validates: Requirements 2.16**
 
+### Property 52: set_model accepts exactly the probed names
+For any Ollama_Model_List and any string `s` (including names outside the safe charset, empty strings, strings over 128 characters, and prefixes or case variants of listed names), `set_model` with `s` changes the connection's Model_Selection to `s` if and only if `s` equals a name in the list. Otherwise the Selection is unchanged and a `model_unknown` Notice is sent.
+**Validates: Requirements 38.9, 38.10, 38.19**
+
+### Property 53: Model fallback selection rule
+For any Ollama_Model_List, any preferred name, and any value of OLLAMA_MODEL, `chooseOllamaModel` returns the preferred name if it is in the list, else OLLAMA_MODEL if it is in the list, else the first listed model, and returns null only when the list is empty. The result is always a member of the list or null.
+**Validates: Requirements 38.12, 38.13**
+
+### Property 54: The tags parser rejects malformed and oversized input
+For any JSON value, `parseTags` never throws. If the value is not an object with a `models` array of at most 100 items, the result is `ok: false`. If the result is `ok`, it holds at most 100 models, every name matches the safe charset and length rule, names are unique, and every `size` is a non-negative safe integer. Registry availability is true only when the result is `ok` with at least one model.
+**Validates: Requirements 38.1, 38.2, 38.3, 38.4, 38.5**
+
 ### Test locations
 
 In this table, "V<n>" means Property <n> above.
@@ -1219,6 +1291,9 @@ In this table, "V<n>" means Property <n> above.
 | V49 | `server/src/metrics/histogram.property.test.ts` | TS |
 | V50 | `rust/crates/protocol/src/properties.rs`, `server/src/protocol.property.test.ts` | Rust, TS |
 | V51 | `server/src/gateway/routing.property.test.ts` | TS |
+| V52 | `server/src/gateway/model.property.test.ts` (fake socket, fake registry) | TS |
+| V53 | `server/src/llm/model.property.test.ts` | TS |
+| V54 | `server/src/llm/tags.property.test.ts` | TS |
 
 ## Testing Strategy
 
@@ -1231,6 +1306,7 @@ In this table, "V<n>" means Property <n> above.
 **No network in tests.** `bun run check` makes no call to an exchange, news, LLM, Solana, or wallet host.
 
 - **Providers (Req 3, 36.4).** A mock `Bun.serve` per provider asserts the path, method, headers (`Authorization`, `x-api-key`, `anthropic-version`), the request body (structured-output fields, `store: false`, `nvext.guided_json`, `format`), and returns recorded success, refusal, truncation, HTTP 401, 429, 500, malformed JSON, and a slow response. The tests check that no key appears in any error or log, and that the NVIDIA `nvext` retry goes to the same host.
+- **Ollama models (Req 38).** A mock `Bun.serve` answers `GET /api/tags` with a recorded body, an empty list, 101 models, a bad name, a 500, malformed JSON, and a slow response. Tests check availability, the 30 s re-check with a fake clock, the change notification, that no log line holds the list or URL, and that the `/api/chat` request carries the selected model. Web tests cover `formatBytes`, `formatModelLabel`, and `reapplyStored`; a TUI test checks that `M` cycles and wraps. The keymap test (V42) covers the new entry.
 - **News (Req 19, 20).** A mock server per provider, NewsAPI's 80-per-day cap with a fake clock, TTL and backoff, production disabling with and without the override, and the `auth_token` redaction in logs.
 - **DEX adapters (Req 10, 11).** Recorded responses (`rust/crates/engine/tests/data/jupiter_price.json`, `raydium_mint_price.json`, `raydium_pool_bonk.json`) feed the parsers. A local mock HTTP server checks one batched request, the `x-api-key` header, the poll interval (2 s keyless, `JUPITER_POLL_MS` with a key), 429 handling with and without `Retry-After`, and that no other path is requested. A fixture with a `transaction` field checks the discard rule.
 - **Allowlist and read-only guard (Req 14.4).** `server/src/net/allowlist.scan.test.ts` and `rust/crates/engine/src/feed/allowlist_scan.rs` read every source file under `server/src`, `web`, `shared`, and `rust/crates/*/src` except test files, fixtures, docs, and the allowlist modules, and fail when one names a venue host or contains `signTransaction`, `sendTransaction`, `VersionedTransaction`, `swapTransaction`, `/swap/v2/order`, `/execute`, or `/transaction/`. A second scan checks that `fetch(` appears only in `net/http.ts`, and that `ai/analyst.ts` imports neither the Router nor the engine sender.

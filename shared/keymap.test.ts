@@ -197,6 +197,9 @@ describe("forClient", () => {
     const webActions = [...web.contexts.global.values()];
     expect(webActions).not.toContain("app.quit");
     expect(webActions).not.toContain("auth.pair");
+    expect(webActions).not.toContain("model.next");
+    expect(resolve(keymap, "global", "M")).toBe("model.next");
+    expect(resolve(web, "global", "M")).toBeNull();
     expect([...keymap.contexts.global.values()]).toContain("app.quit");
     expect(resolve(web, "global", "Alt+8")).toBe("page.8");
     expect(resolve(web, "global", "6")).toBe("timeframe.1d");

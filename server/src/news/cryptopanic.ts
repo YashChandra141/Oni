@@ -3,6 +3,7 @@
 
 import { z } from "zod";
 import type { CryptoPanicPlan } from "../config";
+import { guardedFetch } from "../net/http";
 import { sanitizeItems, type NewsItem, type NewsProvider, type RawNews } from "./provider";
 import { NEWS_SYMBOLS, type NewsSymbol } from "./symbols";
 
@@ -57,7 +58,7 @@ export function buildUrl(plan: CryptoPanicPlan, token: string, symbols: readonly
 }
 
 export function createCryptoPanicProvider(opts: CryptoPanicOptions): NewsProvider {
-  const doFetch: FetchFn = opts.fetchFn ?? ((url, init) => fetch(url, init));
+  const doFetch: FetchFn = opts.fetchFn ?? ((url, init) => guardedFetch(url, init));
   return {
     id: "cryptopanic",
     async fetch(symbols, signal): Promise<NewsItem[]> {

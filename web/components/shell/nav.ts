@@ -10,7 +10,6 @@ export interface NavItem {
 export const TOP_NAV: readonly NavItem[] = [
   { label: "Trade", href: "/", icon: "trade" },
   { label: "Markets", href: "/markets", icon: "markets" },
-  { label: "Strategies", href: "/strategies", icon: "strategies" },
   { label: "AI Copilot", href: "/copilot", icon: "ai-copilot" },
   { label: "Backtest", href: "/backtest", icon: "backtest" },
   { label: "Logs", href: "/logs", icon: "logs" },
@@ -20,7 +19,6 @@ export const SIDEBAR_NAV: readonly NavItem[] = [
   { label: "Dashboard", href: "/dashboard", icon: "dashboard" },
   { label: "Trade", href: "/", icon: "trade" },
   { label: "Markets", href: "/markets", icon: "markets" },
-  { label: "Strategies", href: "/strategies", icon: "strategies" },
   { label: "AI Copilot", href: "/copilot", icon: "ai-copilot" },
   { label: "Backtest", href: "/backtest", icon: "backtest" },
   { label: "Portfolio", href: "/portfolio", icon: "portfolio" },

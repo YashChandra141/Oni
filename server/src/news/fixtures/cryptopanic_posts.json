@@ -1,0 +1,25 @@
+{
+  "count": 3,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "title": "Ethereum fees fall to a yearly low",
+      "published_at": "2026-03-01T08:00:00Z",
+      "url": "https://example.com/news/eth-fees",
+      "source": { "title": "Example Wire", "domain": "example.com" },
+      "instruments": [{ "code": "ETH", "title": "Ethereum" }]
+    },
+    {
+      "title": "Exchange lists a new memecoin",
+      "published_at": "2026-03-01T09:30:00Z",
+      "original_url": "https://example.com/news/meme-listing",
+      "source": { "domain": "example.com" },
+      "instruments": [{ "code": "BONK" }, { "code": "NOTLISTED" }]
+    },
+    {
+      "published_at": "2026-03-01T07:00:00Z",
+      "url": "https://example.com/news/missing-title"
+    }
+  ]
+}

@@ -58,7 +58,7 @@ export interface AppDeps {
     Config,
     "allowedOrigins" | "dataMode" | "liveVenue" | "webUrl" | "sessionSecret" | "isProduction" | "killSwitch"
   > &
-    Partial<Pick<Config, "aiRatePerMin" | "aiDailyCap">> &
+    Partial<Pick<Config, "aiRatePerMin" | "aiDailyCap" | "liveVenues">> &
     SecretSource;
   readonly supervisor: GatewaySupervisor;
   /**
@@ -356,10 +356,16 @@ export function startServer(options: StartServerOptions): RunningServer {
   const orderSender = supervisor.createOrderSender?.() ?? closedOrderSender;
 
   // Req 23.7: no available provider, no plain-English orders.
-  const llm = buildRegistry(config);
+  const llmLogger = options.logger ?? console;
+  const llm = buildRegistry(config, { log: (line) => llmLogger.info(line) });
 
   // Every outbound HTTP request goes through the allowlisted wrapper (trading-safety rule 1).
   configureGuardedFetch(config, options.logger ?? console);
+
+  // Probe Ollama now so the first hello already carries the model list. Never rejects.
+  // Skipped in tests and whenever a supervisor is injected (tests), so no test probes 127.0.0.1:11434
+  // or receives unsolicited providers/ollama_models messages.
+  if (config.nodeEnv !== "test" && options.supervisor === undefined) void llm.refresh();
 
   // News (Task 11.4): provider chosen by config (production gating included); none disables it.
   const news = new NewsCache({

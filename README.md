@@ -1,477 +1,239 @@
 # Oni
 
-A keyboard-and-mouse crypto **paper-trading** terminal with a web UI and a terminal UI, built for the Kiroween 2026 hackathon (Frankenstein category).
+Oni is a crypto **paper-trading** terminal for fast order entry, built for the Kiroween 2026 hackathon (Frankenstein category). No real orders are placed and no real money is used.
 
-- **Rust engine** (sidecar process): market data, order book, candles, indicators, paper matcher, P&L
-- **Bun server**: WebSocket gateway, risk checks, order router, plain-English orders, MCP server
-- **Next.js web UI** and **Ratatui TUI** with the same charts and panels, on Windows and macOS
+- **Next.js web UI** and **Ratatui TUI** with the same panels: chart, order book, trades, order ticket, positions and orders, watchlist, news, and an AI Copilot.
+- **Bun server**: WebSocket gateway, risk checks, the single order router, plain-English orders, AI analyst, MCP server.
+- **Rust engine** (sidecar process): market data, order books, candles, indicators, paper matcher, P&L and paper balance.
+- **No database.** Orders, fills, and rejections live in an in-memory Activity_Log. Every account resets when the engine restarts.
 
-All trading is simulated. No real orders are placed and no real money is used.
+## Run locally (no Docker)
+
+Works in Git Bash, PowerShell, and macOS/Linux shells.
+
+```
+bun install
+bun run gen:protocol
+bun run build:engine
+bun run dev
+```
+
+Open http://localhost:3000. In a second terminal run `bun run dev:tui`. `bun run dev` starts the server (ws://localhost:8080/ws, `/health`) and the web dev server; `bun run dev:server` starts only the server. `server/.env` is optional, and replay mode needs no keys.
 
 ## Contents
 
-- [Repository layout](#repository-layout)
+- [Safety](#safety)
+- [Features](#features)
+- [Local models with Ollama](#local-models-with-ollama)
+- [Accounts and sign-in](#accounts-and-sign-in)
+- [MCP server](#mcp-server)
+- [Keys](#keys)
+- [Setup and commands](#setup-and-commands)
+- [Configuration](#configuration)
 - [Deploy on Render](#deploy-on-render)
-- [Free-plan limits](#free-plan-limits)
-- [Accounts, wallets, pairing, and data venues](#accounts-wallets-pairing-and-data-venues)
-  - [Guest and wallet accounts](#guest-and-wallet-accounts)
-  - [Sign in with a wallet (web UI)](#sign-in-with-a-wallet-web-ui)
-  - [Sign in from the TUI (pairing)](#sign-in-from-the-tui-pairing)
-  - [MCP server for Kiro and other agents](#mcp-server-for-kiro-and-other-agents)
-  - [Live market data and venues](#live-market-data-and-venues)
-  - [Local `.env` for sign-in](#local-env-for-sign-in)
-- [Downloads (terminal UI)](#downloads-terminal-ui)
-- [Build from source](#build-from-source)
-- [Development](#development)
+- [Downloads (TUI)](#downloads-tui)
+- [Recording fixtures](#recording-fixtures)
+- [Repository layout](#repository-layout)
 
-## Repository layout
+## Safety
 
-| Path | Contents |
-|---|---|
-| `rust/` | Cargo workspace: `protocol`, `engine`, `tui` crates |
-| `server/` | Bun + Hono server |
-| `web/` | Next.js web UI |
-| `shared/` | Generated protocol types and the shared keymap |
-| `.kiro/` | Kiro specs, steering docs, and hooks |
+- **Paper only.** The matcher fills paper orders against live public market data or replayed fixtures. No funds move, no wallet transaction is built or signed, no testnet.
+- **Endpoint allowlist.** Market data is read-only and limited to public, unauthenticated Coinbase and Backpack endpoints, `GET api.jup.ag/price/v3`, and `GET api-v3.raydium.io/mint/price` and `/pools/info/mint`. The server also calls its news and LLM hosts, only through the allowlisted HTTP wrapper `server/src/net/http.ts` (Rust twin: `feed/allowlist.rs`). No authenticated, trading, swap, or transaction endpoint is ever called.
+- **One order path.** Every order, from the web UI, TUI, plain-English parser, AI analyst, or MCP server, goes through `server/src/router.ts` and the Risk_Engine before the engine sees it.
+- **Confirm before placing.** Command bar, plain-English, and AI orders produce a preview. The router accepts them only after the same client confirms it.
+- **The LLM never trades.** LLM output is untrusted input. It is validated with Zod and parsed by the normal command parser, so it can only produce a preview.
+- **Risk limits and kill switch.** Limits have no bypass. `KILL_SWITCH=true` rejects every new order on every account. An order the account cannot pay for is rejected with `insufficient_balance`.
+- **Secrets** come only from environment variables. `.env` is gitignored. Never commit a real value.
 
-## Deploy on Render
+## Features
 
-The repository contains a Render Blueprint, `render.yaml`, that defines two services:
+**Symbols and timeframes.** Ten symbols: `BTC-USD`, `ETH-USD`, `SOL-USD`, `BNB-USD`, `XRP-USD`, `DOGE-USD`, `JUP-USD`, `WIF-USD`, `BONK-USD`, `PEPE-USD`. Six timeframes: `1m 5m 15m 1h 4h 1d`.
 
-| Service | Type | What it runs |
+**Venues.**
+
+| Venue | Kind | Data |
 |---|---|---|
-| `oni-server` | Docker web service (free plan) | The Bun server and the Rust engine, built from `Dockerfile` |
-| `oni-web` | Static site | The Next.js static export from `web/` |
-
-1. Push the repository to GitHub (or fork it).
-2. In the Render dashboard choose **New > Blueprint**, select the repository, and apply `render.yaml`.
-3. When Render asks for the values marked `sync: false`, enter them. Never put them in the repository.
-
-| Variable | Where it comes from |
-|---|---|
-| `OPENAI_API_KEY` | You set it in the dashboard. Optional. Without it, plain-English orders (`?` prefix) are disabled. |
-| `SESSION_SECRET` | Render generates it (`generateValue: true`). Do not set it yourself. |
-
-The Blueprint sets everything else (`NODE_ENV=production`, `DATA_MODE=replay`, `LIVE_VENUE=backpack`,
-`KILL_SWITCH=false`, `PORT=10000`, `ENGINE_PATH`).
-
-The services get these URLs if the names are free:
-
-- Web UI: `https://oni-web.onrender.com`
-- Server: `https://oni-server.onrender.com` (WebSocket at `wss://oni-server.onrender.com/ws`)
-
-Render service names are global. If `oni-web` or `oni-server` is taken, Render adds a suffix to the
-URL. Rename the services in `render.yaml` or accept the new URLs, then update every place that holds
-a URL:
-
-| Setting | Service | Value |
-|---|---|---|
-| `ALLOWED_ORIGINS` | `oni-server` | The web UI origin, for example `https://oni-web.onrender.com` |
-| `WEB_URL` | `oni-server` | The same web UI origin. It must be listed in `ALLOWED_ORIGINS` or the server refuses to start. |
-| `NEXT_PUBLIC_WS_URL` | `oni-web` | `wss://<your-server-host>/ws` |
-| `NEXT_PUBLIC_API_URL` | `oni-web` | `https://<your-server-host>` |
-
-`NEXT_PUBLIC_*` values are baked in at build time, so redeploy `oni-web` after changing them. The TUI
-defaults to `wss://oni-server.onrender.com/ws`; with other names, pass `--server` (see below).
-
-There is no database service and no migration step. Orders, fills, and rejections live in memory
-for the current engine run only; they reset when the engine restarts.
-
-## Free-plan limits
-
-The hosted demo runs on Render's free plan:
-
-- The server **sleeps after 15 minutes without traffic**. The first request after that takes about
-  **1 minute** to wake it. Open the web UI early, or wait for the connection to come back.
-- When the server sleeps and restarts, the engine restarts too, so **every paper account resets**
-  (positions and open orders go back to flat).
-- Orders, fills, and rejections live in memory for the current engine run only; they reset when the
-  engine restarts.
-
-## Accounts, wallets, pairing, and data venues
-
-### Guest and wallet accounts
-
-Everyone without a valid session trades on one shared **guest** account (`guest`). It needs no
-wallet and no keys, so the web UI, the TUI, and the MCP server work out of the box.
-
-Signing in with a wallet gives you your own paper account, keyed by your address (`w_<address>`).
-Your orders and positions are separate from every other account.
-
-Every account resets when the engine restarts (including a Render wake-up). Positions and open
-orders go back to flat, and nothing is stored or restored.
-
-### Sign in with a wallet (web UI)
-
-Click the sign-in button in the web UI and pick **Phantom** or **Backpack**. The wallet is asked to
-sign exactly one thing, a Sign In With Solana message with this statement:
-
-> Sign in to Oni paper trading. This signature does not authorize any transaction.
-
-The wallet never signs or sends a transaction, and the server never contacts a Solana RPC endpoint.
-The session token lasts 24 hours. Signing out is best effort: the server keeps the list of signed-out
-tokens in memory only, so after a server restart a token you signed out of is accepted again until
-it expires.
-
-### Sign in from the TUI (pairing)
-
-The TUI cannot talk to a wallet, so it pairs with the web UI:
-
-1. In the TUI press `P`. It shows an 8-character code and a link of the form
-   `<web url>/pair/?code=ABCD2345`. The code expires after 5 minutes.
-2. Open the link in a browser and sign in with your wallet if you are not signed in yet.
-3. Confirm the code on that page. The TUI picks up the session within a few seconds.
-
-The TUI saves the token for that server in `haunted-terminal/session.json` inside the per-user
-config directory:
-
-| OS | File |
-|---|---|
-| Windows | `%APPDATA%\haunted-terminal\session.json` |
-| macOS | `~/Library/Application Support/haunted-terminal/session.json` |
-| Other Unix | `$XDG_CONFIG_HOME/haunted-terminal/session.json`, or `~/.config/haunted-terminal/session.json` |
-
-On Unix the file mode is 0600. The token is used only for the server it was issued by.
-
-- `oni-tui --guest` ignores any saved sign-in and uses the guest account. It does not read or change
-  the file.
-- `oni-tui --logout` revokes the saved token on the server, deletes the file, and exits.
-
-### MCP server for Kiro and other agents
-
-The MCP server exposes `get_quote`, `get_candles`, `get_positions`, `preview_order`, and
-`place_paper_order`. It is a client of a running Oni server, so start the server first. Register it
-in `.kiro/settings/mcp.json` as `oni-terminal`, started with `bun run server/src/mcp/main.ts`:
-
-```json
-{
-  "mcpServers": {
-    "oni-terminal": {
-      "command": "bun",
-      "args": ["run", "server/src/mcp/main.ts"],
-      "env": {
-        "TERMINAL_URL": "http://localhost:8080",
-        "TERMINAL_TOKEN": "${TERMINAL_TOKEN}"
-      }
-    }
-  }
-}
-```
-
-- `TERMINAL_URL` is the HTTP(S) address of the Oni server. It defaults to `http://localhost:8080`.
-- Without `TERMINAL_TOKEN` the MCP server uses the guest account. An unset, empty, or unexpanded
-  `${TERMINAL_TOKEN}` counts as unset.
-- To trade on a wallet account, put a session token in `TERMINAL_TOKEN`. Set it in the environment
-  that launches Kiro, because Kiro expands `${VAR}` only for approved environment variables. Never
-  write the token into `mcp.json` or commit it. It expires after 24 hours.
-- Orders from MCP tools go through the same router and risk checks as every other order.
-
-### Live market data and venues
-
-Replay is the default. The engine plays recorded fixtures and needs no keys. For live public
-market data, set these in `server/.env`:
-
-```sh
-DATA_MODE=live
-LIVE_VENUE=backpack   # default; or coinbase
-```
-
-`backpack` is the default venue. Its USDC pairs (`BTC_USDC`, `ETH_USDC`, `SOL_USDC`) are shown as
-USD. `coinbase` uses BTC-USD, ETH-USD, and SOL-USD. Only public, unauthenticated market-data
-endpoints are used. To capture a fixture from a venue, see
-[Recording fixtures](#recording-fixtures) (`engine record --venue coinbase|backpack`).
-
-### Local `.env` for sign-in
-
-Copy `server/.env.example` to `server/.env` (gitignored). For wallet sign-in:
-
-- `SESSION_SECRET`: at least 32 bytes of random data. It is required in production. Outside
-  production the server generates one per run, so sessions do not survive a restart. On Render it is
-  generated for you.
-- `WEB_URL`: the web UI origin, for example `http://localhost:3000`. It must also be listed in
-  `ALLOWED_ORIGINS`, or the server refuses to start. The pairing link is built from it.
-
-Never commit `.env` or paste a real secret or token into the repository.
-
-## Oni v2 features
-
-### Symbols and exchanges
-
-Ten symbols: `BTC-USD`, `ETH-USD`, `SOL-USD`, `BNB-USD`, `XRP-USD`, `DOGE-USD`, `JUP-USD`,
-`WIF-USD`, `BONK-USD`, `PEPE-USD`.
-
-| Exchange | Kind | Data used |
-|---|---|---|
-| Backpack | CEX | Public WebSocket and REST market data |
 | Coinbase | CEX | Public WebSocket and REST market data |
-| Jupiter | DEX | `GET api.jup.ag/price/v3`, prices only |
-| Raydium | DEX | `GET api-v3.raydium.io/mint/price` and `/pools/info/mint`, prices and pool TVL only |
+| Backpack | CEX | Public WebSocket and REST market data (USDC pairs shown as USD) |
+| Jupiter | DEX | Prices only. Paper orders fill against a Synthetic_Book built around the price |
+| Raydium | DEX | Prices and pool TVL only. Same Synthetic_Book fills |
 
-All four are read-only public price data. Paper orders on Jupiter and Raydium fill against a
-**simulated book** built around the DEX price. No transaction is ever built, signed, or sent, no
-authenticated endpoint is called, and no real order is placed. Binance and Bybit show as disabled
-chips only.
+Binance and Bybit appear as disabled chips only. `DATA_MODE=replay` (recorded fixtures, no keys) is the default. With `DATA_MODE=live`, `LIVE_VENUES` (comma list of `coinbase,backpack,jupiter,raydium`, default all four) picks the feeds. `LIVE_VENUE` with one value still works as an alias.
 
-`LIVE_VENUES` (comma list of `coinbase,backpack,jupiter,raydium`, default all four) picks the live
-feeds when `DATA_MODE=live`. It is ignored in replay mode. `LIVE_VENUE` with one value still works
-as an alias. An optional `JUPITER_API_KEY` raises the Jupiter data rate limit and is sent only to the
-Jupiter Price API.
+**Paper balance.** Each account starts with `STARTING_BALANCE` USD (default 100000) and resets with the engine. There is no margin or borrowing.
 
-### AI providers and the Copilot
+**Command bar.** Keywords are case-insensitive; short symbols like `BTC` resolve to `BTC-USD`.
 
-| Provider | Env vars | Notes |
+```
+BUY|SELL <symbol> <quantity> [LMT <price> | STP <price>]
+BUY|SELL <symbol> <percent>%
+BUY|SELL <symbol> <quantity> TWAP <slices> <seconds>     e.g. BUY BTC-USD 1 TWAP 4 60
+CANCEL ALL
+FLAT
+```
+
+TWAP: you confirm one preview, then the router sends one market child order per slice, each through the risk checks. Remaining children are cancelled on disconnect, account change, engine restart, a rejected child, or cancel.
+
+**Plain-English orders.** Start the command bar text with `?`, for example `? buy a little ETH at 3000`. The text goes to the LLM provider and returns a preview you confirm.
+
+**AI Copilot and analyst.** Analyze, trade suggestions, strategies, and opportunity scans. It only suggests. A trade becomes a preview and you confirm it. Providers: OpenAI, Anthropic, NVIDIA NIM, and Ollama. `LLM_PROVIDER` sets the default; `AI_RATE_PER_MIN` and `AI_DAILY_CAP` limit use (Ollama is not counted against the cap). Headlines and other external text are untrusted data.
+
+**News.** NewsAPI (local development only) and CryptoPanic (hosted). `NEWS_PROVIDER` is `newsapi`, `cryptopanic`, or `none`.
+
+**Web pages:** `/dashboard`, `/trade`, `/markets`, `/portfolio`, `/backtest`, `/copilot`, `/logs`, `/settings`, `/pair`.
+
+## Local models with Ollama
+
+1. Install [Ollama](https://ollama.com) and start it.
+2. Pull a model: `ollama pull gemma4` (or any other model).
+3. Optionally set `OLLAMA_BASE_URL` (default `http://127.0.0.1:11434`; `localhost` can resolve to IPv6 on Windows and fail) and `OLLAMA_MODEL` (the default model, `gemma4`) in `server/.env`.
+
+Oni lists the installed models from Ollama's `/api/tags` and re-checks every 30 seconds. Each entry shows family, parameter size, and size on disk. Pick a model in the web Copilot panel or on the Settings page (remembered per browser), or cycle with `M` in the TUI. Ollama shows as unavailable when no model is installed. A hosted server cannot reach your local Ollama.
+
+## Accounts and sign-in
+
+- **Guest.** Everyone without a valid session shares one `guest` account. No wallet or keys needed.
+- **Wallet (web).** Sign in with **Phantom** or **Backpack** through Wallet Standard and Sign In With Solana. The wallet signs one thing, the sign-in message ("Sign in to Oni paper trading. This signature does not authorize any transaction."). It never signs or sends a transaction, and the server never contacts a Solana RPC. Your account is `w_<address>`. The session token lasts 24 hours.
+- **TUI pairing.** Press `P` in the TUI. It shows an 8-character code and a link `<web url>/pair/?code=...` (valid 5 minutes). Open it, sign in, and confirm the code. The token is saved to `haunted-terminal/session.json` in the per-user config directory (mode 0600 on Unix).
+- `oni-tui --guest` ignores the saved sign-in. `oni-tui --logout` revokes the token, deletes the file, and exits.
+
+## MCP server
+
+Registered in `.kiro/settings/mcp.json` as `oni-terminal`, started with `bun run server/src/mcp/main.ts`. It is a client of a running Oni server, so start the server first.
+
+Tools: `get_quote`, `get_candles`, `get_positions`, `preview_order`, `place_paper_order`. Orders go through the same router and risk checks as every other order.
+
+- `TERMINAL_URL` is the server address (default `http://localhost:8080`).
+- Without `TERMINAL_TOKEN` the MCP server uses the guest account. To use a wallet account, set a session token in `TERMINAL_TOKEN` in the environment that launches Kiro. Never write it into `mcp.json`.
+
+## Keys
+
+The shared bindings are in `shared/keymap.json`. The mouse works on every panel.
+
+| Key | Web | TUI |
 |---|---|---|
-| OpenAI | `OPENAI_API_KEY`, `OPENAI_MODEL` | |
-| Claude (Anthropic) | `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` | |
-| NVIDIA NIM | `NVIDIA_API_KEY`, `NVIDIA_MODEL`, `NVIDIA_BASE_URL` | |
-| Ollama (local) | `OLLAMA_BASE_URL`, `OLLAMA_MODEL` | Run `ollama pull gemma4`. Default URL `http://localhost:11434`. A hosted server cannot reach your local Ollama. |
+| Timeframes | `1`–`6` (1m, 5m, 15m, 1h, 4h, 1d) | `<` / `>` previous / next |
+| Pages | `Alt+1` … `Alt+8` | `[1]`–`[8]` |
+| `V` | Next venue | Next venue |
+| `G` | Next AI provider | Next AI provider |
+| `M` | | Next model (Ollama) |
+| `C` | Focus Copilot | Focus Copilot |
+| `l` | | Chart type |
+| `t` | | Ticket order type |
+| `P` | | Pair with the web UI |
+| `F1` | Help | Help |
 
-`LLM_PROVIDER` (`ollama`, `openai`, `anthropic`, `nvidia`) sets the default. When unset, the first
-available provider in that order is used. An unknown value stops the server at start. Keys come
-only from environment variables.
+## Setup and commands
 
-The **AI Copilot** (web page and TUI panel) offers Analyze, Place trade, Create strategy, and Scan
-opportunities. It only suggests: a trade becomes an order preview, and **you confirm every order**.
-No AI component places an order. Headlines and other external text are treated as untrusted data.
-
-Limits: `AI_RATE_PER_MIN` (default 6 per connection, else `ai_rate_limit`) and `AI_DAILY_CAP`
-(default 500 provider calls per UTC day across OpenAI, Anthropic, and NVIDIA, else
-`ai_daily_cap`). Ollama is not counted against the daily cap.
-
-### News
-
-- **NewsAPI**: local development only (its terms do not allow production use). Needs `NEWS_API_KEY`.
-- **CryptoPanic**: for the hosted deploy. Needs `CRYPTOPANIC_API_KEY` and `CRYPTOPANIC_PLAN`
-  (`developer` by default; the Developer plan delays news by about 24 hours). Without a key the news
-  panel can be unavailable.
-
-`NEWS_PROVIDER` is `newsapi`, `cryptopanic`, or `none`. Default: `newsapi` outside production with
-`NEWS_API_KEY` set, `cryptopanic` in production with `CRYPTOPANIC_API_KEY` set, otherwise `none`.
-`NEWS_TTL_SECONDS` sets the server cache time. Never log or commit the keys.
-
-### Paper balance
-
-Each account starts with `STARTING_BALANCE` USD (default 100000, integer from 1,000 to 100,000,000)
-and resets with the engine. An order that would leave the free balance below zero is rejected with
-`insufficient_balance`. There is no margin, liquidation, or borrowing cost.
-
-### TWAP orders
-
-```
-BUY|SELL <symbol> <quantity> TWAP <slices> <seconds>
-BUY ETH 2 TWAP 10 60
-```
-
-`slices` is 2 to 20 and `seconds` is 5 to 3600. You confirm one preview, then the server sends one
-market child order per slice at equal intervals, the first at once. Every child passes the risk
-checks. Remaining children are cancelled on disconnect, account change, engine restart, a rejected
-child, the kill switch, or cancel. At most 3 active TWAP orders per account.
-
-### Latency targets
-
-p95 targets in the benchmark: engine emit to socket write 25 ms, command text to preview 50 ms,
-confirm to order ack 100 ms, engine line to loopback client 50 ms.
+Requirements: [Bun](https://bun.sh) 1.4.4, Rust 1.94 with `clippy` and `rustfmt`. On Windows the release builds use the MSVC toolchain.
 
 ```sh
-bun run bench:latency   # starts server and engine in replay mode, prints p50 and p95
+bun install                                              # server, web, shared dependencies
+bun run gen:protocol                                     # regenerate shared/protocol/*.ts from the Rust protocol crate
+cargo build --manifest-path rust/Cargo.toml --release    # builds engine and tui
+bun run check                                            # cargo fmt, clippy, cargo test, tsc, bun test
+bun run --cwd web build                                  # static export of the web UI
+bun run bench:latency                                    # server + engine in replay mode, prints p50 and p95
 ```
 
-### Web pages and exchange tabs
+`bun run check` needs no database, API key, or network. Do not hand-edit `shared/protocol/`.
 
-Pages: `/dashboard`, `/trade`, `/markets`, `/portfolio`, `/strategies`, `/backtest`, `/copilot`,
-`/logs`, `/settings`, and `/pair` (TUI pairing). Exchange chips filter by venue: All, CEX, DEX,
-Backpack, Coinbase, Jupiter, Raydium. The bottom tabs are Positions, Orders, Balances, P&L, and
-Strategies.
+Run locally (replay mode, no keys), from the repository root:
 
-### TUI keys
+```sh
+cp server/.env.example server/.env              # optional; empty values select defaults
+cd server && bun run start                      # server on http://localhost:8080 (spawns the engine)
+bun run --cwd web dev                           # web UI on http://localhost:3000
+./rust/target/release/tui --server ws://localhost:8080/ws   # TUI
+```
 
-| Key | Action |
-|---|---|
-| `1` to `8` | Focus Chart, Book, Trades, Positions, Orders, Watchlist, News, AI Copilot |
-| `<` / `>` | Previous / next timeframe |
-| `v` | Choose venue |
-| `m` | Choose AI provider |
-| `a` | Open the AI Copilot |
-| `P` | Pair with the web UI |
-| `F1` | Help |
+- `ENGINE_PATH` defaults to `rust/target/release/engine` (`.exe` on Windows). For a debug build set it to `rust/target/debug/engine`.
+- `REPLAY_SPEED` (1 to 50) speeds up replay.
+- The web UI reads `NEXT_PUBLIC_WS_URL` (`ws://localhost:8080/ws`) and `NEXT_PUBLIC_API_URL` (`http://localhost:8080`). `ALLOWED_ORIGINS` must include the web origin.
+- `GET /health` reports the engine state.
 
-The mouse works on every panel. The shared bindings are in `shared/keymap.json`.
-
-### Regenerate the demo fixture
+Regenerate the demo fixture:
 
 ```sh
 cargo run --manifest-path rust/Cargo.toml -p engine -- synth --out fixtures/demo.jsonl
 ```
 
-This writes the deterministic ten-symbol replay fixture.
+## Configuration
 
-### Activity log and `.env`
+Names only; copy `server/.env.example` to `server/.env` (gitignored) and fill in values locally. Empty means default.
 
-Orders, fills, and rejections live in memory for the current engine run only. `.env` files are
-gitignored. Copy `server/.env.example` (names only) and fill in your own values locally.
+| Variable | Secret | Purpose |
+|---|---|---|
+| `PORT` | no | HTTP and WebSocket port (default 8080) |
+| `ENGINE_PATH` | no | Path to the engine binary |
+| `DATA_MODE` | no | `replay` (default) or `live` |
+| `LIVE_VENUES` | no | Live feeds, default all four. `LIVE_VENUE` is a single-venue alias |
+| `ALLOWED_ORIGINS` | no | Browser origins allowed to open `/ws` and the auth routes |
+| `WEB_URL` | no | Web UI origin for pairing links. Must be in `ALLOWED_ORIGINS` |
+| `KILL_SWITCH` | no | `true` rejects every new order |
+| `SESSION_SECRET` | yes | HMAC key for session tokens, at least 32 bytes in production |
+| `NODE_ENV` | no | `production` enables strict checks |
+| `STARTING_BALANCE` | no | Starting paper balance in USD |
+| `BALANCE_SLIPPAGE_BPS` | no | Slippage allowance for balance checks |
+| `JUPITER_API_KEY` | yes | Optional. Raises the Jupiter price rate limit. Sent only to the Jupiter Price API |
+| `DEX_*` | no | DEX poll and staleness tuning |
+| `LLM_PROVIDER` | no | Default AI provider |
+| `OPENAI_API_KEY` | yes | Enables OpenAI |
+| `ANTHROPIC_API_KEY` | yes | Enables Anthropic |
+| `NVIDIA_API_KEY` | yes | Enables NVIDIA NIM |
+| `NVIDIA_BASE_URL` | yes | NVIDIA NIM base URL (a URL can carry credentials) |
+| `OLLAMA_BASE_URL` | yes | Ollama base URL (default `http://127.0.0.1:11434`) |
+| `OLLAMA_MODEL` | no | Default Ollama model (`gemma4`) |
+| `AI_RATE_PER_MIN` | no | AI requests per connection per minute |
+| `AI_DAILY_CAP` | no | AI provider calls per UTC day |
+| `NEWS_PROVIDER` | no | `newsapi`, `cryptopanic`, or `none` |
+| `NEWS_API_KEY` | yes | NewsAPI key (development only) |
+| `CRYPTOPANIC_API_KEY` | yes | CryptoPanic token |
+| `CRYPTOPANIC_PLAN` | no | CryptoPanic plan |
+| `NEWS_TTL_SECONDS` | no | News cache time |
+| `NEWS_ALLOW_NEWSAPI_IN_PRODUCTION` | no | Allow NewsAPI in production (terms may forbid it) |
+| `TERMINAL_TOKEN` | yes | MCP process only: session token for a wallet account |
 
-## Downloads (terminal UI)
+There is no `DATABASE_URL`. Model overrides (`OPENAI_MODEL`, `ANTHROPIC_MODEL`, `NVIDIA_MODEL`) are listed in `server/.env.example`.
 
-Each tagged release (`v*`) on the GitHub Releases page has these files:
+## Deploy on Render
 
-| File | Platform |
-|---|---|
-| `oni-tui-windows-x64.zip` | Windows x64 |
-| `oni-tui-macos-universal.tar.gz` | macOS, Apple Silicon and Intel |
-| `SHA256SUMS.txt` | SHA-256 checksums for both archives |
+`render.yaml` defines two services:
 
-Each archive unpacks to an `oni/` folder with `oni-tui` (the terminal client), `oni-engine` (the
-engine, needed only to run your own server), `fixtures/`, `LICENSE`, and `README.md`. The binaries are
-not code-signed.
+| Service | Type | Runs |
+|---|---|---|
+| `oni-server` | Docker web service (free plan) | Bun server and Rust engine, built from `Dockerfile` |
+| `oni-web` | Static site | Next.js static export from `web/` |
 
-### Verify the download
+1. Push the repository to GitHub.
+2. In Render choose **New > Blueprint**, select the repository, and apply `render.yaml`.
+3. Enter the values marked `sync: false` in the dashboard (API keys, for example). `SESSION_SECRET` is generated by Render.
 
-Compare the hash of the file with the line for that file in `SHA256SUMS.txt`.
+If a service name is taken, Render adds a suffix to the URL. Then update `ALLOWED_ORIGINS` and `WEB_URL` on `oni-server`, and `NEXT_PUBLIC_WS_URL` (`wss://<server-host>/ws`) and `NEXT_PUBLIC_API_URL` (`https://<server-host>`) on `oni-web`, and redeploy `oni-web`. The TUI defaults to `wss://oni-server.onrender.com/ws`; use `--server` for other hosts.
 
-Windows (PowerShell):
+Free-plan limits: the server sleeps after 15 minutes without traffic and takes about a minute to wake. A restart resets the engine, so every paper account resets. There is no database service.
 
-```powershell
-Get-FileHash .\oni-tui-windows-x64.zip -Algorithm SHA256
-```
+## Downloads (TUI)
 
-macOS:
+Each tagged release (`v*`) has `oni-tui-windows-x64.zip`, `oni-tui-macos-universal.tar.gz`, and `SHA256SUMS.txt`. Each archive unpacks to `oni/` with `oni-tui`, `oni-engine`, `fixtures/`, `LICENSE`, and `README.md`. The binaries are not code-signed.
 
-```sh
-shasum -a 256 oni-tui-macos-universal.tar.gz
-```
+Verify: `Get-FileHash .\oni-tui-windows-x64.zip -Algorithm SHA256` (Windows) or `shasum -a 256 oni-tui-macos-universal.tar.gz` (macOS), and compare with `SHA256SUMS.txt`.
 
-Do not run the archive if the hashes differ.
-
-### Run the TUI
-
-Windows (PowerShell):
-
-```powershell
-Expand-Archive .\oni-tui-windows-x64.zip -DestinationPath .
-.\oni\oni-tui.exe
-```
-
-macOS:
-
-```sh
-tar -xzf oni-tui-macos-universal.tar.gz
-./oni/oni-tui
-```
-
-With no arguments the TUI connects to the hosted server, `wss://oni-server.onrender.com/ws`. The
-hosted server may need about a minute to wake (see [Free-plan limits](#free-plan-limits)).
+Run: `.\oni\oni-tui.exe` (Windows) or `./oni/oni-tui` (macOS).
 
 | Flag | Meaning |
 |---|---|
-| `--server <URL>` | WebSocket URL of the Oni server (`ws://` or `wss://`). Default: the hosted server. |
-| `--guest` | Use the shared guest account and ignore any saved sign-in. |
-| `--logout` | Sign out: revoke the saved token on the server, delete it, and exit. |
-| `--version` | Print the version. |
+| `--server <URL>` | WebSocket URL of the Oni server (`ws://` or `wss://`). Default: the hosted server |
+| `--guest` | Use the guest account and ignore any saved sign-in |
+| `--logout` | Revoke the saved token, delete it, and exit |
+| `--version` | Print the version |
 
-To use a server on your own machine (see [Build from source](#build-from-source)):
+- **macOS Gatekeeper** blocks unsigned downloads. Run `xattr -d com.apple.quarantine ./oni/oni-tui ./oni/oni-engine`, or right-click the file and choose **Open**.
+- **Windows SmartScreen** may warn. Click **More info**, then **Run anyway**, or tick **Unblock** in the zip's Properties before extracting.
 
-```sh
-./oni/oni-tui --server ws://localhost:8080/ws
-```
+## Recording fixtures
 
-### macOS Gatekeeper
-
-The macOS binaries are unsigned, so Gatekeeper blocks them after a browser download with a message
-that the developer cannot be verified. Either remove the quarantine flag:
-
-```sh
-xattr -d com.apple.quarantine ./oni/oni-tui ./oni/oni-engine
-```
-
-or in Finder right-click (Control-click) the file, choose **Open**, and confirm **Open** in the
-dialog. You only need to do this once per file. Files downloaded with `curl` carry no quarantine
-flag and run without this step.
-
-### Windows SmartScreen
-
-The Windows binaries are unsigned, so SmartScreen may show "Windows protected your PC". Click
-**More info**, then **Run anyway**. If you run `oni-tui.exe` from a terminal, SmartScreen may not
-prompt at all. If the zip is marked as downloaded from the internet, you can also right-click it,
-open **Properties**, and tick **Unblock** before extracting.
-
-## Build from source
-
-Prerequisites:
-
-- Rust 1.94 with `clippy` and `rustfmt` (edition 2024). On Windows the release builds use the MSVC
-  toolchain.
-- [Bun](https://bun.sh) 1.4.4.
-
-```sh
-bun install                 # JavaScript dependencies for server, web, and shared
-cargo build --release --manifest-path rust/Cargo.toml   # builds tui and engine
-bun run check               # fmt, clippy, Rust tests, typecheck, bun tests
-```
-
-The release binaries are `rust/target/release/tui` and `rust/target/release/engine` (`.exe` on
-Windows). The release workflow renames them to `oni-tui` and `oni-engine`.
-
-Run everything locally, in three terminals from the repository root:
-
-```sh
-# 1. Server on http://localhost:8080 (replay mode, no keys needed)
-cd server && bun run start
-
-# 2. Web UI on http://localhost:3000
-bun run --cwd web dev
-
-# 3. Terminal UI
-./rust/target/release/tui --server ws://localhost:8080/ws
-```
-
-The web UI reads the server addresses from `NEXT_PUBLIC_WS_URL` and `NEXT_PUBLIC_API_URL`. Set them
-to `ws://localhost:8080/ws` and `http://localhost:8080` for local use if they are not already. For
-the browser to connect, `ALLOWED_ORIGINS` on the server must include the web origin, for example
-`http://localhost:3000`. See `server/.env.example`, and
-[Run the server locally](#run-the-server-locally) for engine and replay options.
-
-## Development
-
-Requirements: [Bun](https://bun.sh) 1.4.4 and Rust 1.94 with `clippy` and `rustfmt`.
-
-```sh
-bun install
-bun run check   # Rust fmt + clippy + tests, TypeScript typecheck + tests
-```
-
-### Run the server locally
-
-The server spawns the Rust engine as a child process, so build the engine first. Replay mode is
-the default and needs no API keys: the engine plays the recorded `fixtures/demo.jsonl`.
-
-```sh
-# 1. Build the engine (from the repository root).
-cargo build --manifest-path rust/Cargo.toml -p engine --release
-
-# 2. Optional: copy the example config. Empty values select the defaults.
-cp server/.env.example server/.env
-
-# 3. Start the server (from server/). It listens on PORT (default 8080).
-cd server
-bun run start
-```
-
-- `ENGINE_PATH` defaults to `rust/target/release/engine` (`engine.exe` on Windows), resolved
-  from the repository root. For a debug build, set `ENGINE_PATH=rust/target/debug/engine`
-  (`.exe` on Windows) in `server/.env`.
-- `REPLAY_SPEED` (1 to 50, default 1) speeds up the replay. `REPLAY_SPEED=50` plays the 2-hour
-  demo fixture in about 2.5 minutes.
-- Check it: `GET http://localhost:8080/health` reports the engine state. A WebSocket client on
-  `ws://localhost:8080/ws` that sends `{"type":"subscribe","symbol":"BTC-USD","timeframe":"1m"}`
-  gets a candle snapshot, then live candles and BTC-USD trades.
-- The integration tests in `server/src/integration/` use the debug engine binary
-  (`cargo build --manifest-path rust/Cargo.toml -p engine`) and are skipped when it is missing.
-
-### Recording fixtures
-
-`engine record` captures the public feed of one venue into a fixture file. It reads public
-market data only (no keys), and writes normalized `{"recv", "msg"}` lines that replay mode plays
-back.
+`engine record` captures one venue's public feed into a fixture that replay mode plays back.
 
 ```sh
 cargo run --manifest-path rust/Cargo.toml -p engine --release -- record \
@@ -480,28 +242,25 @@ cargo run --manifest-path rust/Cargo.toml -p engine --release -- record \
 
 | Flag | Meaning |
 |---|---|
-| `--venue coinbase\|backpack` | Feed to record (default `backpack`). |
-| `--symbols` | Comma-separated internal symbols (default `BTC-USD,ETH-USD,SOL-USD`). |
-| `--out <path>` | Required. Put captures in `fixtures/`; missing directories are created. |
-| `--duration <s>` | Stop after this many seconds (default 300, at most 86400). |
-| `--max-messages <n>` | Stop after this many lines. |
-| `--force` | Replace an existing output file or a leftover `.partial` file. |
+| `--venue coinbase\|backpack` | Feed to record (default `backpack`) |
+| `--symbols` | Comma-separated internal symbols |
+| `--out <path>` | Required output file |
+| `--duration <s>` | Stop after this many seconds (default 300, at most 86400) |
+| `--max-messages <n>` | Stop after this many lines |
+| `--force` | Replace an existing output or leftover `.partial` file |
 
-Lines are written to `<out>.partial` and renamed to `<out>` when the run ends, so a fixture under
-its final name is always complete. The command refuses to overwrite without `--force`, logs to
-stderr, and reads the finished file back to check it. Ctrl-C is not handled (the engine's tokio
-build has no `signal` feature); use `--duration` or `--max-messages`. After a kill, only the
-`.partial` file exists and its last line may be cut short.
+Lines go to `<out>.partial` and are renamed when the run ends. Ctrl-C is not handled; use `--duration` or `--max-messages`.
 
-The parsers were written from the venue docs and the hand-written samples in
-`rust/crates/engine/tests/data/`. Replace those samples with real captures, and use them to
-confirm the open `TODO(Task 7.7)` items:
+## Repository layout
 
-- `feed/coinbase_parse.rs`: the trade `side` mapping (maker side vs taker side). Flip it if the
-  capture shows the opposite.
-- `feed/backpack_parse.rs`: the short WebSocket field names (`p q m T E` for trades,
-  `a b U u T E` for depth), and the kline `interval` names.
-- `feed/backpack.rs`: the kline request limit (`MAX_KLINES`).
+| Path | Contents |
+|---|---|
+| `rust/` | Cargo workspace: `protocol`, `engine`, `tui` |
+| `server/` | Bun + Hono server |
+| `web/` | Next.js web UI |
+| `shared/` | Generated protocol types and `keymap.json` |
+| `fixtures/` | Replay fixtures |
+| `.kiro/` | Specs, steering, hooks, MCP settings |
 
 ## License
 

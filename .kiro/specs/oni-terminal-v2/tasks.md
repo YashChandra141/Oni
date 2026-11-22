@@ -142,7 +142,7 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
     - **Property 36: Ticker24h matches the window**
     - **Validates: Requirements 18.3, 18.4, 18.7**
 
-- [-] 4. Checkpoint - protocol and registry compile and pass
+- [x] 4. Checkpoint - protocol and registry compile and pass
   - Ask the user to approve and run, in order: `bun run gen:protocol` (repo root), `cargo build -p engine` (rust/), then `bun run check` (repo root). Also regenerate the ten-symbol demo fixture (task 3.6): `cargo run --manifest-path rust/Cargo.toml -p engine -- synth --out fixtures/demo.jsonl`. Fix failures, then ask the user if questions arise.
 
 - [x] 5. Paper balance and `insufficient_balance`
@@ -193,7 +193,7 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
     - Reads `shared/balance-vectors.json` in `bun test`
     - **Validates: Requirements 16.5, 16.7, 16.10**
 
-- [ ] 6. Multi-venue engine adapters and the read-only guard
+- [x] 6. Multi-venue engine adapters and the read-only guard
   - [x] 6.1 Per-(venue, symbol) state in the core
     - Create `engine/src/pair.rs` (`PairState`: book, last price and time, candles, health, subscriptions); key the core by `(Venue, symbol)`
     - Add `MarketMsg` variants `PriceSample`, `Status`, `Clock`; every market variant carries a venue
@@ -294,7 +294,7 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
     - **Property 23: Market guards reject in the stated order**
     - **Validates: Requirements 14.6, 14.7, 14.8, 15.9**
 
-  - [ ] 6.22 Write the allowlist guard test (required, read-only safety)
+  - [x] 6.22 Write the allowlist guard test (required, read-only safety)
     - **Property 24: The allowlist permits exactly its rules**
     - fast-check for `guardedFetch` and proptest for the engine wrapper over generated URLs: lookalike hosts, upgraded schemes, embedded credentials, paths outside a rule, non-`GET` methods, any `transaction-v1.raydium.io` or `/transaction` path, and Jupiter swap, order, or execute paths must all be refused
     - Add a source-scan test that fails if code outside the wrappers calls `fetch(` or builds a `reqwest` request, and if any source file mentions `signTransaction`, `signAndSendTransaction`, or a Solana RPC URL
@@ -308,7 +308,7 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
     - **Property 51: Account-scoped events reach only their account**
     - **Validates: Requirements 2.16**
 
-- [ ] 7. Checkpoint - engine, venues, and balance
+- [x] 7. Checkpoint - engine, venues, and balance
   - Ask the user to approve and run `cargo build -p engine`, then `bun run check` (repo root). Fix failures, then ask the user if questions arise.
 
 - [x] 8. TWAP in the Router
@@ -341,7 +341,7 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
     - **Property 34: TWAP stops when it must**
     - **Validates: Requirements 17.3, 17.4, 17.5, 17.6, 17.7, 17.8, 17.10**
 
-- [ ] 9. LLM provider abstraction and four providers
+- [x] 9. LLM provider abstraction and four providers
   - [x] 9.1 Generic provider interface, schema, config, and registry
     - In `server/src/llm/`: `provider.ts` (`LlmProvider.completeJson`), `schema.ts`, `registry.ts`, `limits.ts` skeleton; config for `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `NVIDIA_API_KEY`, `NVIDIA_BASE_URL`, `OLLAMA_BASE_URL`, model names, and provider timeouts (15 s parser, 30 s analyst)
     - Reject base URLs with embedded credentials, log only their host; secrets come only from env
@@ -369,7 +369,7 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
     - Refactor `llm/parser.ts` to use the selected provider, Zod-validate the intent, build command text, and parse with the Command_Parser to produce a preview only
     - _Requirements: 6.1, 6.2, 6.3_
 
-  - [ ] 9.7 Mock-server tests for all four providers
+  - [x] 9.7 Mock-server tests for all four providers
     - Bun test with a local mock HTTP server per provider and recorded response fixtures: success, malformed JSON, schema violation, timeout, HTTP 4xx and 5xx; assert no secret or request text in logs or client errors
     - _Requirements: 3.3, 3.4, 3.5, 3.6, 3.13, 6.3_
 
@@ -439,7 +439,7 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
     - **Property 12: Scan results are ranked**
     - **Validates: Requirements 7.5**
 
-- [ ] 11. News
+- [x] 11. News
   - [x] 11.1 News provider interface, symbol matching, and config
     - Create `server/src/news/provider.ts`, `symbols.ts`; config for `NEWS_PROVIDER` (`newsapi`, `cryptopanic`, `none`), `NEWS_API_KEY`, `CRYPTOPANIC_API_KEY` from env only; strict `NewsItem` Zod schema; default selection rule and `NEWS_TTL_SECONDS` (300 to 3,600)
     - _Requirements: 19.1, 19.2, 19.3, 19.6, 19.7, 19.11_
@@ -456,7 +456,7 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
     - Create `news/cache.ts` (server-memory cache, refresh interval, NewsAPI cap of 80 requests per UTC day, backoff capped at 30 minutes, keep serving old items on failure, at most 30 sanitized items sorted by time descending with unique URLs); handle `SubscribeNews`/`UnsubscribeNews`; send `News` with `available` flag; feed up to 10 items into the Market_Snapshot
     - _Requirements: 19.8, 19.9, 19.10, 19.11, 19.12, 19.13_
 
-  - [ ] 11.5 Mock-server tests for both news providers
+  - [x] 11.5 Mock-server tests for both news providers
     - Bun tests with mock HTTP servers and recorded fixtures: success, malformed payload, HTTP errors, rate limit; assert keys never appear in logs
     - Also test the NewsAPI production disable and override, the 80-per-day cap with a fake clock, and TTL and backoff
     - _Requirements: 19.4, 19.5, 19.7, 19.9, 19.12, 20.1, 20.2_
@@ -465,7 +465,7 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
     - **Property 37: News output is sanitized**
     - **Validates: Requirements 19.11, 19.15**
 
-- [ ] 12. Checkpoint - server features complete
+- [x] 12. Checkpoint - server features complete
   - Ask the user to approve and run `bun run check` (repo root). Fix failures, then ask the user if questions arise.
 
 - [x] 13. Latency batching, coalescing, and bench script
@@ -603,7 +603,7 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
     - **Property 48: A batched store update equals sequential updates**
     - **Validates: Requirements 35.1, 35.10**
 
-- [ ] 15. Checkpoint - web UI builds
+- [x] 15. Checkpoint - web UI builds
   - Ask the user to approve and run `bun run --cwd web build` and `bun run check` (repo root). Fix failures, then ask the user if questions arise.
 
 - [x] 16. TUI panels
@@ -677,8 +677,37 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
     - Create `server/scripts/smoke.ts`: connect a WebSocket client to the running image with no database or key, place a paper order on `replay`, receive a Fill, read it from `/journal`; add the `docker-smoke` CI job that runs it
     - _Requirements: 36.3, 1.8_
 
-- [ ] 18. Final checkpoint - full verification
+- [x] 18. Final checkpoint - full verification
   - Ask the user to approve and run, in order: `bun run gen:protocol`, `bun run check`, `bun run --cwd web build`, `cargo build -p engine` (all from the repo root, `cargo` in `rust/`), and optionally `bun run bench:latency`. Fix failures, then ask the user if questions arise.
+
+- [x] 19. Ollama local model discovery and selection
+  - [x] 19.1 Protocol additions
+    - In `rust/crates/protocol/src/client.rs` add `OllamaModel`, the optional `models` field on `ProviderInfo`, `ClientMessage::SetModel`, `ServerMessage::OllamaModels`, and `NoticeKind::ModelUnknown`; add the generators in `strategies.rs` and update the goldens in `properties.rs`
+    - Add the matching Zod schemas and `Assert<Same<...>>` lines in `server/src/protocol.ts`; ask the user to approve and run `bun run gen:protocol` (never hand-edit `shared/protocol/`)
+    - _Requirements: 38.6, 38.7, 38.8, 38.10_
+  - [x] 19.2 Tags parser and registry changes
+    - Create `server/src/llm/tags.ts` with `parseTags`, `MAX_OLLAMA_MODELS`, and `MODEL_NAME_RE`; extend `ProbeFetch` with `json()`
+    - In `server/src/llm/registry.ts` store the Ollama_Model_List, make `ollama` available only with at least one model, add `models` to `info()`, add `chooseOllamaModel`, `hasModel`, `get("ollama", model)` with a per-model cache, and `onModelsChanged`; log at most the host
+    - _Requirements: 38.1, 38.2, 38.3, 38.4, 38.5, 38.6, 38.12, 38.13, 38.19, 38.20, 38.22_
+  - [x] 19.3 Gateway per-connection model state and `set_model`
+    - In `server/src/gateway/ws.ts` add `#selectedModel`, handle `set_model` against the latest list only, send `Notice model_unknown` for unknown names, send `ollama_models` on selection and on list change, apply the fallback rule, pass the selection into `#resolveProvider` for plain-English and AI_Analyst requests, and clear the entry on close; add `models` to `hello`
+    - Leave the Router, Risk_Engine, and order path untouched
+    - _Requirements: 38.7, 38.9, 38.10, 38.11, 38.12, 38.13, 38.14, 38.19, 38.21_
+  - [x] 19.4 Web dropdown with localStorage
+    - Create `web/lib/ollamaModels.ts` (`formatBytes`, `formatModelLabel`, `reapplyStored`); add store fields and `setOllamaModel` in `web/lib/store.ts`; add the `<select>` to the Copilot panel and Settings page; write `localStorage["oni.ollamaModel"]` on change and reapply on `hello` and `ollama_models` only when the name is in the list
+    - _Requirements: 38.15, 38.16, 38.17_
+  - [x] 19.5 TUI model cycle key and keymap entry
+    - Add `"model.next": { "tui": ["M"] }` to the `global` context of `shared/keymap.json`; in `rust/crates/tui` keep `ollama_models` and the selected name in app state, cycle with `M` (wrap at the end, only while the provider is `ollama`), send `set_model`, and show `ollama:<model>` in the Copilot panel title through the existing sanitizer
+    - _Requirements: 38.14, 38.18_
+  - [x] 19.6 Required tests: mock `/api/tags` server, gateway, and properties
+    - **Property 52: set_model accepts exactly the probed names** in `server/src/gateway/model.property.test.ts`
+    - **Property 53: Model fallback selection rule** in `server/src/llm/model.property.test.ts`
+    - **Property 54: The tags parser rejects malformed and oversized input** in `server/src/llm/tags.property.test.ts`
+    - Registry tests against a mock `Bun.serve` `/api/tags` (valid list, empty list, 101 models, bad name, 500, malformed JSON, timeout, 30 s re-check with a fake clock, change notification, no list or URL in logs); gateway tests for `set_model` accept and reject, `ollama_models` on change, fallback when the model disappears, the `/api/chat` body carrying the selected model, and cleanup on close; web tests for `formatBytes`, `formatModelLabel`, `reapplyStored`; TUI test for `M` cycling; keymap test still passes
+    - **Validates: Requirements 38.1, 38.2, 38.3, 38.4, 38.5, 38.9, 38.10, 38.11, 38.12, 38.13, 38.14, 38.15, 38.17, 38.18, 38.20, 38.22**
+  - [x] 19.7 Checkpoint - bun run check and web build pass
+    - Ask the user to approve and run, in order: `bun run gen:protocol`, `bun run check`, `bun run --cwd web build`. Fix failures, then ask the user if questions arise.
+    - _Requirements: 38.1 to 38.22_
 
 ## Task Dependency Graph
 
@@ -749,7 +778,13 @@ This plan extends the finished Haunted Terminal (`.kiro/specs/haunted-terminal/`
     { "id": 61, "tasks": ["16.2", "16.3", "16.4", "16.5", "16.6", "16.10"] },
     { "id": 62, "tasks": ["16.9", "16.7", "16.8", "16.11"] },
     { "id": 63, "tasks": ["17.1", "17.2", "17.3", "17.4", "17.5"] },
-    { "id": 64, "tasks": ["18"] }
+    { "id": 64, "tasks": ["18"] },
+    { "id": 65, "tasks": ["19.1"] },
+    { "id": 66, "tasks": ["19.2"] },
+    { "id": 67, "tasks": ["19.3"] },
+    { "id": 68, "tasks": ["19.4", "19.5"] },
+    { "id": 69, "tasks": ["19.6"] },
+    { "id": 70, "tasks": ["19.7"] }
   ]
 }
 ```

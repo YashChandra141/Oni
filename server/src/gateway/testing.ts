@@ -9,7 +9,7 @@ import type {
   SubscriptionProvider,
 } from "../engine/supervisor.ts";
 import { isControlCommand } from "../engine/supervisor.ts";
-import type { Event, ServerMessage } from "../protocol.ts";
+import type { Event, ServerMessage, WireEvent } from "../protocol.ts";
 import type { BatcherTimer } from "./batcher.ts";
 import type { ClientData, GatewaySocket, GatewaySupervisor, Publisher } from "./ws.ts";
 
@@ -139,6 +139,15 @@ export const immediateTimer: BatcherTimer = {
   clearTimeout: () => {},
   defer: (fn) => fn(),
 };
+
+/**
+ * Types an Event that a test injected through FakeSupervisor as the WireEvent a client receives.
+ * The fake supervisor passes the object through unstamped, so the batch carries no `emit_us`
+ * key; the object is returned unchanged and only its type is widened.
+ */
+export function wire(event: Event): WireEvent {
+  return event as WireEvent;
+}
 
 /** The Events a socket received, unwrapping `event_batch` and `event` messages, in order. */
 export function eventsOf(ws: FakeSocket): Event[] {

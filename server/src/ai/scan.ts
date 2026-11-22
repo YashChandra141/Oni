@@ -3,6 +3,7 @@
  * imports no Router and builds no order Command (trading-safety rules 2 and 4).
  */
 import { instrumentBySymbol } from "../instruments.ts";
+import { timeoutForProvider } from "../llm/limits.ts";
 import type { JsonLlmProvider } from "../llm/provider.ts";
 import { AiError, mapAnalystError } from "./analyst.ts";
 import type { MarketSnapshot } from "./snapshot.ts";
@@ -57,7 +58,7 @@ async function scanOne(provider: JsonLlmProvider, snapshot: MarketSnapshot, sign
       schemaName: "scan",
       schema: SCAN_JSON_SCHEMA,
       maxOutputTokens: SCAN_MAX_OUTPUT_TOKENS,
-      timeoutMs: SCAN_CALL_TIMEOUT_MS,
+      timeoutMs: timeoutForProvider(provider.id, SCAN_CALL_TIMEOUT_MS),
       ...(signal === undefined ? {} : { signal }),
     });
     const parsed = ScanEntrySchema.safeParse(raw);
@@ -137,7 +138,7 @@ export async function draftStrategy(input: DraftStrategyInput): Promise<string> 
       schemaName: "strategy",
       schema: STRATEGY_JSON_SCHEMA,
       maxOutputTokens: STRATEGY_MAX_OUTPUT_TOKENS,
-      timeoutMs: STRATEGY_TIMEOUT_MS,
+      timeoutMs: timeoutForProvider(provider.id, STRATEGY_TIMEOUT_MS),
       ...(signal === undefined ? {} : { signal }),
     });
   } catch (error) {

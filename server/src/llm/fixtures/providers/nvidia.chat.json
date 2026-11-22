@@ -1,0 +1,28 @@
+{
+  "success": {
+    "id": "chatcmpl-fixture",
+    "object": "chat.completion",
+    "choices": [
+      {
+        "index": 0,
+        "finish_reason": "stop",
+        "message": {
+          "role": "assistant",
+          "content": "{\"action\":\"place\",\"side\":\"buy\",\"symbol\":\"BTC-USD\",\"amount\":{\"absolute\":\"0.1\"},\"order_type\":\"limit\",\"price\":{\"absolute\":\"64000\"}}"
+        }
+      }
+    ]
+  },
+  "schemaViolation": {
+    "choices": [{ "finish_reason": "stop", "message": { "role": "assistant", "content": "{\"action\":\"explode\",\"extra\":1}" } }]
+  },
+  "textNotJson": {
+    "choices": [{ "finish_reason": "stop", "message": { "role": "assistant", "content": "Sure! Here is your order: buy btc" } }]
+  },
+  "emptyText": { "choices": [{ "finish_reason": "stop", "message": { "role": "assistant", "content": "" } }] },
+  "wrongEnvelope": { "choices": "nope" },
+  "refusal": {
+    "choices": [{ "finish_reason": "stop", "message": { "role": "assistant", "content": null, "refusal": "I cannot help with that." } }]
+  },
+  "truncated": { "choices": [{ "finish_reason": "length", "message": { "role": "assistant", "content": "{\"action\":" } }] }
+}

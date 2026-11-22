@@ -1,0 +1,23 @@
+{
+  "success": {
+    "id": "msg_fixture",
+    "type": "message",
+    "role": "assistant",
+    "stop_reason": "end_turn",
+    "content": [
+      {
+        "type": "text",
+        "text": "{\"action\":\"place\",\"side\":\"buy\",\"symbol\":\"BTC-USD\",\"amount\":{\"absolute\":\"0.1\"},\"order_type\":\"limit\",\"price\":{\"absolute\":\"64000\"}}"
+      }
+    ]
+  },
+  "schemaViolation": {
+    "stop_reason": "end_turn",
+    "content": [{ "type": "text", "text": "{\"action\":\"explode\",\"extra\":1}" }]
+  },
+  "textNotJson": { "stop_reason": "end_turn", "content": [{ "type": "text", "text": "Sure! Here is your order: buy btc" }] },
+  "emptyText": { "stop_reason": "end_turn", "content": [] },
+  "wrongEnvelope": { "stop_reason": "end_turn", "content": "nope" },
+  "refusal": { "stop_reason": "refusal", "content": [] },
+  "truncated": { "stop_reason": "max_tokens", "content": [{ "type": "text", "text": "{\"action\":" }] }
+}

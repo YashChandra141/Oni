@@ -2,7 +2,7 @@
 // (no engine is spawned). Req 17.1, 17.2, 17.5, 17.6.
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { loadConfig } from "./config.ts";
-import { FakeSupervisor } from "./gateway/testing.ts";
+import { FakeSupervisor, wire } from "./gateway/testing.ts";
 import { type RunningServer, startServer } from "./main.ts";
 import type { ServerMessage } from "./protocol.ts";
 
@@ -168,7 +168,7 @@ describe("startServer", () => {
       } as const;
       supervisor.emitEvent(trade);
       // Events reach a client inside an event_batch, after the 10 ms flush window (Req 34).
-      expect(await next()).toEqual({ type: "event_batch", events: [trade] });
+      expect(await next()).toEqual({ type: "event_batch", events: [wire(trade)] });
 
       ws.send("garbage");
       const err = await next();

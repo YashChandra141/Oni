@@ -277,7 +277,7 @@ describe("SESSION_SECRET (Req 16.7, 16.8)", () => {
 });
 
 describe("LIVE_VENUES and the LIVE_VENUE alias (Req 16.1)", () => {
-  const ALL = ["coinbase", "backpack", "jupiter", "raydium"];
+  const ALL = [...(["coinbase", "backpack", "jupiter", "raydium"] as const)];
 
   test("defaults to all four venues when unset or empty", () => {
     expect([...ok({}).config.liveVenues]).toEqual(ALL);

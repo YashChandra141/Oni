@@ -11,6 +11,7 @@
 
 import { z } from "zod";
 import { redactSecrets } from "../config.ts";
+import { GuardedFetchError, guardedFetch, type GuardedRequestInit } from "../net/http.ts";
 import {
   LlmBadOutput,
   LlmRefused,
@@ -24,7 +25,7 @@ import type { ProviderFactory } from "./registry.ts";
 export const ANTHROPIC_BASE_URL = "https://api.anthropic.com";
 export const ANTHROPIC_VERSION = "2026-10-21";
 
-export type AnthropicFetch = (input: string, init: RequestInit) => Promise<Response>;
+export type AnthropicFetch = (input: string, init: GuardedRequestInit) => Promise<Response>;
 
 export interface AnthropicProviderOptions {
   readonly apiKey: string;
@@ -42,7 +43,7 @@ const Envelope = z.looseObject({
 
 export function createAnthropicProvider(options: AnthropicProviderOptions): JsonLlmProvider {
   const { apiKey, model } = options;
-  const doFetch: AnthropicFetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
+  const doFetch: AnthropicFetch = options.fetch ?? ((input, init) => guardedFetch(input, init));
   const base = new URL(options.baseUrl ?? ANTHROPIC_BASE_URL);
   if (base.protocol !== "https:") throw new Error("Anthropic base URL must use https");
   const endpoint = new URL("/v1/messages", base).toString();
@@ -72,9 +73,14 @@ export function createAnthropicProvider(options: AnthropicProviderOptions): Json
             output_config: { format: { type: "json_schema", schema: req.schema } },
           }),
           signal: combined,
+          timeoutMs: req.timeoutMs + 1000,
         });
       } catch (error) {
         if (timeout.aborted) throw new LlmTimeout();
+        if (error instanceof GuardedFetchError) {
+          if (error.kind === "timeout") throw new LlmTimeout();
+          if (error.kind === "refused") throw new LlmUnavailable("The language model host is not allowlisted");
+        }
         if (error instanceof Error && error.name === "AbortError") throw new LlmUnavailable("The request was aborted");
         const detail = error instanceof Error ? scrub(error.message).slice(0, 200) : "";
         throw new LlmUnavailable(

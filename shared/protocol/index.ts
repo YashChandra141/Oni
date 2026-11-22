@@ -23,6 +23,7 @@ export type { Level } from "./Level";
 export type { Money } from "./Money";
 export type { NewsItem } from "./NewsItem";
 export type { NoticeKind } from "./NoticeKind";
+export type { OllamaModel } from "./OllamaModel";
 export type { OrderId } from "./OrderId";
 export type { OrderKind } from "./OrderKind";
 export type { OrderPreview } from "./OrderPreview";

@@ -650,7 +650,19 @@ fn draw_news_panel(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect) 
 /// The AI Copilot panel: result text above, input line at the bottom (Task 16.4).
 fn draw_copilot_panel(frame: &mut Frame, app: &App, hits: &mut HitMap, area: Rect) {
     hits.register(area, HitTarget::Panel(PanelId::Copilot));
-    let mut block = crate::brand::block().title(" AI COPILOT ");
+    let title = match (&app.provider, &app.ollama_model) {
+        (Some(protocol::ProviderId::Ollama), Some(model)) => {
+            format!(
+                " AI COPILOT ollama:{} ",
+                crate::copilot::clean(model)
+                    .chars()
+                    .take(32)
+                    .collect::<String>()
+            )
+        }
+        _ => " AI COPILOT ".to_owned(),
+    };
+    let mut block = crate::brand::block().title(title);
     if app.copilot.focused {
         block = block.border_style(Style::new().fg(crate::brand::ACCENT_BRIGHT));
     }

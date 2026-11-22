@@ -22,6 +22,7 @@
       "symbol.prev": ["Shift+Tab"],
       "venue.next": ["V"],
       "provider.next": ["G"],
+      "model.next": { "tui": ["M"] },
       "copilot.focus": ["C"],
       "help": ["F1"],
       "order.buy": ["B"],

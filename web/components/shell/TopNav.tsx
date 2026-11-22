@@ -26,7 +26,7 @@ const LEVEL_CLASS: Record<LatencyLevel, string> = {
   unknown: "text-phosphor-dim",
 };
 
-/** Top bar: brand, page links, and the status cluster (live dot, exchanges, latency, bell, gear, avatar). */
+/** Top bar: brand, page links, and the status cluster (live dot, exchanges, latency, bell, avatar). */
 export function TopNav() {
   const pathname = usePathname();
   const connected = useTerminalStore((state) => state.connection.kind === "connected");
@@ -105,9 +105,6 @@ export function TopNav() {
         >
           <NavIcon name="bell" size={16} />
         </button>
-        <Link href="/settings" aria-label="Settings" className="text-phosphor-dim hover:text-phosphor">
-          <NavIcon name="gear" size={16} />
-        </Link>
         <WalletMenu />
       </div>
     </header>

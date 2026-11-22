@@ -1,0 +1,36 @@
+{
+  "success": {
+    "status": "completed",
+    "output": [
+      { "type": "reasoning", "summary": [] },
+      {
+        "type": "message",
+        "content": [
+          {
+            "type": "output_text",
+            "text": "{\"action\":\"place\",\"side\":\"buy\",\"symbol\":\"BTC-USD\",\"amount\":{\"absolute\":\"0.1\"},\"order_type\":\"limit\",\"price\":{\"absolute\":\"64000\"}}"
+          }
+        ]
+      }
+    ]
+  },
+  "schemaViolation": {
+    "status": "completed",
+    "output": [{ "type": "message", "content": [{ "type": "output_text", "text": "{\"action\":\"explode\",\"extra\":1}" }] }]
+  },
+  "textNotJson": {
+    "status": "completed",
+    "output": [{ "type": "message", "content": [{ "type": "output_text", "text": "Sure! Here is your order: buy btc" }] }]
+  },
+  "emptyText": { "status": "completed", "output": [{ "type": "message", "content": [] }] },
+  "wrongEnvelope": { "status": "completed", "output": "nope" },
+  "refusal": {
+    "status": "completed",
+    "output": [{ "type": "message", "content": [{ "type": "refusal", "refusal": "I cannot help with that." }] }]
+  },
+  "truncated": {
+    "status": "incomplete",
+    "incomplete_details": { "reason": "max_output_tokens" },
+    "output": [{ "type": "message", "content": [{ "type": "output_text", "text": "{\"action\":" }] }]
+  }
+}

@@ -244,6 +244,10 @@ pub struct App {
     pub providers: Vec<protocol::client::ProviderInfo>,
     /// The provider chosen for this connection, if any.
     pub provider: Option<ProviderId>,
+    /// The installed Ollama models, from `hello` and `ollama_models` (Req 38).
+    pub ollama_models: Vec<protocol::client::OllamaModel>,
+    /// The Ollama model in use (selected, else the server default).
+    pub ollama_model: Option<String>,
     /// The open picker popup and its highlighted row.
     pub picker: Option<Picker>,
     /// Set when a `hello` moved the Active_Venue; `main` drains it to resubscribe.
@@ -314,6 +318,28 @@ impl App {
         };
         self.picker = Some(Picker { cursor, ..picker });
         true
+    }
+
+    /// Moves to the next installed Ollama model, wrapping at the end (Req 38.14). Does nothing
+    /// unless the active provider is ollama and the list is non-empty. Returns `SetModel`.
+    pub fn cycle_ollama_model(&mut self) -> Option<protocol::client::ClientMessage> {
+        if self.provider != Some(ProviderId::Ollama) || self.ollama_models.is_empty() {
+            return None;
+        }
+        let next = match self
+            .ollama_model
+            .as_ref()
+            .and_then(|cur| self.ollama_models.iter().position(|m| &m.name == cur))
+        {
+            Some(i) => (i + 1) % self.ollama_models.len(),
+            None => 0,
+        };
+        let name = self.ollama_models.get(next)?.name.clone();
+        self.ollama_model = Some(name.clone());
+        Some(protocol::client::ClientMessage::SetModel {
+            provider: ProviderId::Ollama,
+            model: name,
+        })
     }
 
     /// Chooses row `index` of the open picker and closes it. A venue choice returns
@@ -419,6 +445,8 @@ impl App {
             venues: Vec::new(),
             providers: Vec::new(),
             provider: None,
+            ollama_models: Vec::new(),
+            ollama_model: None,
             picker: None,
             venue_switched_from: None,
             news: crate::copilot::NewsState::default(),
@@ -726,6 +754,13 @@ fn apply_message(app: &mut App, message: ServerMessage) -> bool {
             if app.provider.is_none() {
                 app.provider = providers.iter().find(|p| p.reason.is_none()).map(|p| p.id);
             }
+            if let Some(models) = providers
+                .iter()
+                .find(|p| p.id == ProviderId::Ollama)
+                .and_then(|p| p.models.clone())
+            {
+                app.ollama_models = models;
+            }
             app.providers = providers;
             app.venue_status = venue_status;
             app.watchlist = watchlist_symbols(&instruments);
@@ -773,6 +808,7 @@ fn apply_message(app: &mut App, message: ServerMessage) -> bool {
         message @ (ServerMessage::Analysis { .. }
         | ServerMessage::ScanResult { .. }
         | ServerMessage::StrategyDraft { .. }
+        | ServerMessage::AiChat { .. }
         | ServerMessage::AiError { .. }
         | ServerMessage::News { .. }
         | ServerMessage::Twap { .. }) => {
@@ -818,6 +854,15 @@ fn apply_message(app: &mut App, message: ServerMessage) -> bool {
             None => false,
         },
         ServerMessage::Notice { .. } => false,
+        ServerMessage::OllamaModels {
+            models,
+            default,
+            selected,
+        } => {
+            app.ollama_models = models;
+            app.ollama_model = selected.or(default);
+            true
+        }
     }
 }
 
@@ -1875,5 +1920,49 @@ mod order_reducer_tests {
         assert!(app.tick(31_000));
         assert!(app.account.preview.is_none());
         assert_eq!(app.now_ms, 31_000);
+    }
+}
+
+#[cfg(test)]
+mod ollama_model_tests {
+    use super::*;
+    use protocol::client::{ClientMessage, OllamaModel};
+
+    fn model(name: &str) -> OllamaModel {
+        OllamaModel {
+            name: name.to_owned(),
+            size: 1,
+            family: None,
+            parameter_size: None,
+        }
+    }
+
+    fn set_model(name: &str) -> Option<ClientMessage> {
+        Some(ClientMessage::SetModel {
+            provider: ProviderId::Ollama,
+            model: name.to_owned(),
+        })
+    }
+
+    #[test]
+    fn cycling_wraps_around_the_installed_models() {
+        let mut app = App::new("ws://x/ws");
+        app.provider = Some(ProviderId::Ollama);
+        app.ollama_models = vec![model("a"), model("b")];
+        app.ollama_model = Some("a".to_owned());
+        assert_eq!(app.cycle_ollama_model(), set_model("b"));
+        assert_eq!(app.cycle_ollama_model(), set_model("a"));
+        assert_eq!(app.ollama_model.as_deref(), Some("a"));
+    }
+
+    #[test]
+    fn cycling_does_nothing_without_ollama_or_models() {
+        let mut app = App::new("ws://x/ws");
+        app.ollama_models = vec![model("a")];
+        app.provider = Some(ProviderId::Openai);
+        assert_eq!(app.cycle_ollama_model(), None);
+        app.provider = Some(ProviderId::Ollama);
+        app.ollama_models.clear();
+        assert_eq!(app.cycle_ollama_model(), None);
     }
 }

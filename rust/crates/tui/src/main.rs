@@ -296,6 +296,18 @@ async fn run_async(server: &str, keymap: &Keymap, guest: bool) -> io::Result<()>
                     app.book_cursor = None;
                     limiter.mark_dirty();
                 }
+                // `model.next` (`M`) cycles the Ollama model (Task 19.5, Req 38.14).
+                Some(Ok(Event::Key(key)))
+                    if !app.pairing.is_open()
+                        && app.picker.is_none()
+                        && key.kind == KeyEventKind::Press
+                        && global_action(keymap, &key) == Some(Action::ModelNext) =>
+                {
+                    if let Some(message) = app.cycle_ollama_model() {
+                        let _ = net_tx.try_send(message);
+                        limiter.mark_dirty();
+                    }
+                }
                 // `venue.next` and `provider.next` open the pickers (Task 16.3).
                 Some(Ok(Event::Key(key)))
                     if !app.pairing.is_open()

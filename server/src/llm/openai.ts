@@ -16,6 +16,7 @@
 
 import { z } from "zod";
 import { redactSecrets } from "../config.ts";
+import { GuardedFetchError, type GuardedRequestInit } from "../net/http.ts";
 import { INTENT_JSON_SCHEMA, INTENT_SCHEMA_NAME } from "./intentSchema.ts";
 import {
   LlmBadOutput,
@@ -49,7 +50,7 @@ export const SYSTEM_PROMPT = [
 ].join("\n");
 
 /** The part of `fetch` this provider uses. Tests pass a fake. */
-export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
+export type FetchLike = (input: string, init: GuardedRequestInit) => Promise<Response>;
 
 export interface OpenAiProviderOptions {
   readonly apiKey: string;
@@ -127,6 +128,7 @@ export function createOpenAiProvider(options: OpenAiProviderOptions): LlmProvide
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
           body: JSON.stringify(buildRequestBody(model, text, context)),
           signal: combined,
+          timeoutMs: timeoutMs + 1000,
         });
       } catch (error) {
         throw transportError(error, timeout, scrub);
@@ -186,6 +188,7 @@ export function createOpenAiJsonProvider(options: OpenAiJsonProviderOptions): Js
             text: { format: { type: "json_schema", name: req.schemaName, strict: true, schema: req.schema } },
           }),
           signal: combined,
+          timeoutMs: req.timeoutMs + 1000,
         });
       } catch (error) {
         throw transportError(error, timeout, scrub);
@@ -206,6 +209,10 @@ export function createOpenAiJsonProvider(options: OpenAiJsonProviderOptions): Js
 
 function transportError(error: unknown, timeout: AbortSignal, scrub: (s: string) => string): Error {
   if (timeout.aborted) return new LlmTimeout();
+  if (error instanceof GuardedFetchError) {
+    if (error.kind === "timeout") return new LlmTimeout();
+    if (error.kind === "refused") return new LlmUnavailable("The language model host is not allowlisted");
+  }
   const name = error instanceof Error ? error.name : "Error";
   if (name === "AbortError") return new LlmUnavailable("The request was aborted");
   const detail = error instanceof Error ? scrub(error.message).slice(0, 200) : "";

@@ -1,0 +1,24 @@
+{
+  "success": {
+    "model": "fixture-model",
+    "done": true,
+    "done_reason": "stop",
+    "message": {
+      "role": "assistant",
+      "content": "{\"action\":\"place\",\"side\":\"buy\",\"symbol\":\"BTC-USD\",\"amount\":{\"absolute\":\"0.1\"},\"order_type\":\"limit\",\"price\":{\"absolute\":\"64000\"}}"
+    }
+  },
+  "schemaViolation": {
+    "done": true,
+    "done_reason": "stop",
+    "message": { "role": "assistant", "content": "{\"action\":\"explode\",\"extra\":1}" }
+  },
+  "textNotJson": {
+    "done": true,
+    "done_reason": "stop",
+    "message": { "role": "assistant", "content": "Sure! Here is your order: buy btc" }
+  },
+  "emptyText": { "done": true, "done_reason": "stop", "message": { "role": "assistant", "content": "" } },
+  "wrongEnvelope": { "message": "nope" },
+  "truncated": { "done": true, "done_reason": "length", "message": { "role": "assistant", "content": "{\"action\":" } }
+}

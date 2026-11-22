@@ -54,6 +54,7 @@ export const ACTIONS = [
   "dialog.cancel",
   "venue.next",
   "provider.next",
+  "model.next",
   "copilot.focus",
   "help",
   "timeframe.prev",
@@ -70,7 +71,7 @@ export const ACTIONS = [
 export type Action = (typeof ACTIONS)[number];
 
 /** Actions only the TUI handles. The web UI signs in with buttons (Req 47) and cannot quit. */
-export const TUI_ONLY_ACTIONS: readonly Action[] = ["app.quit", "auth.pair"];
+export const TUI_ONLY_ACTIONS: readonly Action[] = ["app.quit", "auth.pair", "model.next"];
 
 export type Client = "web" | "tui";
 const CLIENTS: readonly Client[] = ["web", "tui"];

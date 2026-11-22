@@ -160,6 +160,9 @@ pub fn apply_message(app: &mut App, message: &ServerMessage) -> Option<bool> {
                     .collect(),
             )
         })),
+        ServerMessage::AiChat { request_id, text } => Some(finish(app, request_id, || {
+            CopilotOutput::Strategy(clean_multiline(text))
+        })),
         ServerMessage::StrategyDraft { request_id, text } => Some(finish(app, request_id, || {
             CopilotOutput::Strategy(clean_multiline(text))
         })),

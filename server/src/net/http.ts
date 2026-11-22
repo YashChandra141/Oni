@@ -96,7 +96,12 @@ export function safeUrl(rawUrl: string): string {
   }
 }
 
-export type GuardedFetch = (url: string, init?: RequestInit) => Promise<Response>;
+/** RequestInit plus an optional per-request timeout (clamped to MAX_TIMEOUT_MS). */
+export type GuardedRequestInit = RequestInit & { timeoutMs?: number };
+
+export const MAX_TIMEOUT_MS = 180_000;
+
+export type GuardedFetch = (url: string, init?: GuardedRequestInit) => Promise<Response>;
 
 export interface GuardedFetchOptions {
   readonly rules: readonly AllowRule[];
@@ -107,7 +112,12 @@ export interface GuardedFetchOptions {
 
 export function createGuardedFetch(options: GuardedFetchOptions): GuardedFetch {
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  return async (url, init = {}) => {
+  return async (url, rawInit = {}) => {
+    const { timeoutMs: perRequest, ...init } = rawInit;
+    const effectiveTimeout =
+      perRequest !== undefined && Number.isFinite(perRequest) && perRequest > 0
+        ? Math.min(perRequest, MAX_TIMEOUT_MS)
+        : timeoutMs;
     const method = (init.method ?? "GET").toUpperCase();
     if (!isAllowed(options.rules, url, method)) {
       let host = "invalid-url";
@@ -119,7 +129,7 @@ export function createGuardedFetch(options: GuardedFetchOptions): GuardedFetch {
       options.logger?.warn(`[net] refused request to ${host}`);
       throw new GuardedFetchError("refused", `request refused: host ${host} or path is not allowlisted`);
     }
-    const timeout = AbortSignal.timeout(timeoutMs);
+    const timeout = AbortSignal.timeout(effectiveTimeout);
     const signal = init.signal ? AbortSignal.any([init.signal, timeout]) : timeout;
     try {
       return await (options.fetchImpl ?? fetch)(url, { ...init, method, redirect: "error", signal });

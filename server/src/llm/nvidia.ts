@@ -7,6 +7,7 @@
 // The key and base URL never appear in an error message (trading-safety rule 6).
 
 import { z } from "zod";
+import { GuardedFetchError, type GuardedRequestInit } from "../net/http.ts";
 import {
   LlmBadOutput,
   LlmRefused,
@@ -18,7 +19,7 @@ import {
 
 export const NVIDIA_DEFAULT_BASE_URL = "https://integrate.api.nvidia.com/v1";
 
-export type FetchLike = (input: string, init: RequestInit) => Promise<Response>;
+export type FetchLike = (input: string, init: GuardedRequestInit) => Promise<Response>;
 
 export interface NvidiaProviderOptions {
   readonly apiKey: string;
@@ -71,9 +72,14 @@ export function createNvidiaProvider(options: NvidiaProviderOptions): JsonLlmPro
         body: JSON.stringify(body),
         signal: combined,
         redirect: "error",
+        timeoutMs: req.timeoutMs + 1000,
       });
-    } catch {
+    } catch (err) {
       // Never forward the error text: it can carry the URL.
+      if (err instanceof GuardedFetchError) {
+        if (err.kind === "timeout") throw new LlmTimeout();
+        if (err.kind === "refused") throw new LlmUnavailable("The language model host is not allowlisted");
+      }
       throw new LlmUnavailable("Could not reach the language model service");
     }
     if (!response.ok) return { ok: false, status: response.status };

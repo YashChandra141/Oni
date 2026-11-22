@@ -91,7 +91,13 @@ fn assert_indicator_bits(original: &Event) -> Result<(), TestCaseError> {
 
 /// The range rules of Req 2.5, 4.2, and 6.4, written independently of the codec.
 fn satisfies_range_rules(command: &Command) -> bool {
-    let known = |s: &str| ["BTC-USD", "ETH-USD", "SOL-USD"].contains(&s);
+    let known = |s: &str| {
+        [
+            "BTC-USD", "ETH-USD", "SOL-USD", "BNB-USD", "XRP-USD", "DOGE-USD", "JUP-USD",
+            "WIF-USD", "BONK-USD", "PEPE-USD",
+        ]
+        .contains(&s)
+    };
     let fixture_ok = |name: &str| {
         name.strip_suffix(".jsonl").is_some_and(|stem| {
             !stem.is_empty()
@@ -166,9 +172,11 @@ fn server_message_has_account_id(message: &ServerMessage) -> bool {
         ServerMessage::Hello { .. }
         | ServerMessage::EventBatch { .. }
         | ServerMessage::Providers { .. }
+        | ServerMessage::OllamaModels { .. }
         | ServerMessage::Analysis { .. }
         | ServerMessage::ScanResult { .. }
         | ServerMessage::StrategyDraft { .. }
+        | ServerMessage::AiChat { .. }
         | ServerMessage::AiError { .. }
         | ServerMessage::News { .. }
         | ServerMessage::Twap { .. }
@@ -652,6 +660,7 @@ fn notice_kind_wire_name(kind: NoticeKind) -> &'static str {
         NoticeKind::SignedOut => "signed_out",
         NoticeKind::SlowClient => "slow_client",
         NoticeKind::ProviderChanged => "provider_changed",
+        NoticeKind::ModelUnknown => "model_unknown",
     }
 }
 
@@ -680,6 +689,7 @@ fn p1_every_notice_kind_and_venue_round_trips() {
         NoticeKind::SignedOut,
         NoticeKind::SlowClient,
         NoticeKind::ProviderChanged,
+        NoticeKind::ModelUnknown,
     ];
     for kind in kinds {
         let message = ServerMessage::Notice {

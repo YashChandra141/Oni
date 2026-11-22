@@ -4,7 +4,7 @@ import { isOrderCommand } from "../engine/supervisor.ts";
 import { INSTRUMENTS } from "../instruments.ts";
 import { type Event, type ServerMessage, ServerMessageSchema } from "../protocol.ts";
 import type { ActionResult, OrderOrigin, RouterRejectReason } from "../router.ts";
-import { FakePublisher, FakeSocket, FakeSupervisor, eventsOf, immediateTimer, memoryLogger } from "./testing.ts";
+import { FakePublisher, FakeSocket, FakeSupervisor, eventsOf, immediateTimer, memoryLogger, wire } from "./testing.ts";
 import { type GatewayRouter, DEFAULT_STARTING_BALANCE, Gateway, MAX_INBOUND_BYTES, NOTICES_TOPIC, PROTOCOL_VERSION, accountTopic, candlesTopic, marketTopic } from "./ws.ts";
 
 const ACCOUNT_TOPIC = accountTopic("guest");
@@ -14,6 +14,7 @@ function setup(
     running?: boolean;
     dataMode?: "replay" | "live";
     liveVenue?: "coinbase" | "backpack";
+    liveVenues?: readonly ("coinbase" | "backpack" | "jupiter" | "raydium")[];
   } = {},
 ) {
   const supervisor = new FakeSupervisor();
@@ -23,7 +24,11 @@ function setup(
   let n = 0;
   const gateway = new Gateway({
     supervisor,
-    config: { dataMode: options.dataMode ?? "replay", liveVenue: options.liveVenue ?? "backpack" },
+    config: {
+      dataMode: options.dataMode ?? "replay",
+      liveVenue: options.liveVenue ?? "backpack",
+      ...(options.liveVenues !== undefined ? { liveVenues: options.liveVenues } : {}),
+    },
     logger,
     randomUUID: () => `client-${++n}`,
     batcherTimer: immediateTimer,
@@ -109,6 +114,16 @@ describe("hello venues (Req 1.11, 15.1)", () => {
         default_venue: liveVenue,
       });
     }
+  });
+
+  test("live mode lists every configured venue and accepts a subscribe on backpack", () => {
+    const all = ["coinbase", "backpack", "jupiter", "raydium"] as const;
+    const { connect, send } = setup({ dataMode: "live", liveVenue: "coinbase", liveVenues: all });
+    const ws = connect();
+    expect(helloOf(ws)).toMatchObject({ live_venues: [...all], default_venue: "coinbase" });
+    send(ws, { ...SUB, venue: "backpack" });
+    expect(errorOf(ws.last())).toBeNull();
+    expect(ws.topics.has(candlesTopic("backpack", "BTC-USD", "1m"))).toBe(true);
   });
 
   test("replay mode lists no live venue and defaults to replay even when LIVE_VENUE is set", () => {
@@ -211,7 +226,7 @@ describe("subscriptions", () => {
     expect(a.topics.has(marketTopic("replay", "BTC-USD"))).toBe(true);
 
     supervisor.emitEvent(SNAPSHOT); // the engine's history answer, delivered to the topic's members
-    expect(a.last()).toEqual({ type: "event_batch", events: [SNAPSHOT] });
+    expect(a.last()).toEqual({ type: "event_batch", events: [wire(SNAPSHOT)] });
 
     // A later subscriber gets the cached snapshot as a single event, not a second broadcast.
     const b = connect();
@@ -421,7 +436,7 @@ describe("engine events → topics (Req 17.6, 17.7)", () => {
       else if (kind === "market") send(member, { ...SUB, symbol });
       expect(member.topics.has(topic)).toBe(true);
       supervisor.emitEvent(event);
-      expect(member.messages().slice(2)).toEqual([{ type: "event_batch", events: [event] }]);
+      expect(member.messages().slice(2)).toEqual([{ type: "event_batch", events: [wire(event)] }]);
       if (kind !== "account") expect(outsider.messages().map((m) => m.type)).toEqual(["hello", "session"]);
     });
   }
@@ -448,7 +463,7 @@ describe("engine events → topics (Req 17.6, 17.7)", () => {
       reason: "unknown order",
     };
     supervisor.emitEvent(event);
-    expect(ws.last()).toEqual({ type: "event_batch", events: [event] });
+    expect(ws.last()).toEqual({ type: "event_batch", events: [wire(event)] });
   });
 
   test("notices go to every client on the notices topic", () => {

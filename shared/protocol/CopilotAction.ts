@@ -3,4 +3,4 @@
 /**
  * An AI Copilot action.
  */
-export type CopilotAction = "analyze" | "ask" | "create_strategy" | "scan";
+export type CopilotAction = "analyze" | "ask" | "chat" | "create_strategy" | "scan";

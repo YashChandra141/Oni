@@ -329,7 +329,7 @@ const clientMessageArb = fc.oneof(
   fc.record({
     type: fc.constant("ai_request" as const),
     request_id: textArb,
-    action: fc.constantFrom(...(["analyze", "ask", "create_strategy", "scan"] as const)),
+    action: fc.constantFrom(...(["analyze", "ask", "chat", "create_strategy", "scan"] as const)),
     text: fc.string({ maxLength: 100 }),
     symbol: textArb,
     timeframe: timeframeArb,
