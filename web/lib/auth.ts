@@ -20,7 +20,10 @@ import { callFeature, hasSignIn, hasSignMessage } from "./walletStandard";
 import type { Wallet, WalletAccount } from "./walletStandard";
 
 /** localStorage key of the stored session. The suffix is the format version. */
-export const SESSION_STORAGE_KEY = "haunted-terminal:session:v1";
+export const SESSION_STORAGE_KEY = "oni:session:v1";
+
+/** The key used before the rename to Oni. A session found here is moved to SESSION_STORAGE_KEY. */
+export const LEGACY_SESSION_STORAGE_KEY = "haunted-terminal:session:v1";
 
 export interface AuthSession {
   readonly token: string;
@@ -136,6 +139,11 @@ export function clearSession(storage: StorageLike): void {
   } catch {
     // Storage unavailable; nothing to remove.
   }
+  try {
+    storage.removeItem(LEGACY_SESSION_STORAGE_KEY);
+  } catch {
+    // Storage unavailable; nothing to remove.
+  }
 }
 
 export function saveSession(storage: StorageLike, session: AuthSession): void {
@@ -157,6 +165,25 @@ export function loadSession(storage: StorageLike, nowMs: number): AuthSession | 
   let raw: string | null;
   try {
     raw = storage.getItem(SESSION_STORAGE_KEY);
+    if (raw === null) {
+      const legacy = storage.getItem(LEGACY_SESSION_STORAGE_KEY);
+      if (legacy !== null) {
+        // Validated below like any stored value; moved to the new key only if valid.
+        let legacyParsed: unknown = null;
+        try {
+          legacyParsed = JSON.parse(legacy);
+        } catch {
+          // Corrupt: dropped by clearSession below.
+        }
+        if (isSession(legacyParsed) && legacyParsed.exp * 1000 > nowMs) {
+          storage.setItem(SESSION_STORAGE_KEY, legacy);
+          storage.removeItem(LEGACY_SESSION_STORAGE_KEY);
+          raw = legacy;
+        } else {
+          storage.removeItem(LEGACY_SESSION_STORAGE_KEY);
+        }
+      }
+    }
   } catch {
     return null;
   }

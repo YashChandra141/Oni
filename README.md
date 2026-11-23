@@ -352,7 +352,7 @@ Oni lists the installed models from Ollama and re-checks every 30 seconds. Choos
 
 - **Guest.** Everyone without a valid session shares one `guest` account. No wallet or keys needed.
 - **Wallet (web).** Sign in with Phantom or Backpack through Wallet Standard and Sign In With Solana. The wallet signs one thing, the sign-in message ("Sign in to Oni paper trading. This signature does not authorize any transaction."). It never signs or sends a transaction, and the server never contacts a Solana RPC. Your account is `w_<address>`. The session token lasts 24 hours.
-- **TUI pairing.** Press `P` in the TUI. It shows an 8-character code and a link `<web url>/pair/?code=...` that is valid for 5 minutes. Open the link, sign in, and confirm the code. The token is saved to `haunted-terminal/session.json` in the per-user config directory (mode 0600 on Unix).
+- **TUI pairing.** Press `P` in the TUI. It shows an 8-character code and a link `<web url>/pair/?code=...` that is valid for 5 minutes. Open the link, sign in, and confirm the code. The token is saved to `oni/session.json` in the per-user config directory (mode 0600 on Unix). A token from the old `haunted-terminal/session.json` is moved automatically.
 - `tui --guest` ignores the saved sign-in. `tui --logout` revokes the token, deletes the file, and exits. In a release download the binary is named `oni-tui`.
 
 ## MCP server

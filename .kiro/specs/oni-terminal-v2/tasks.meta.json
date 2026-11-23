@@ -1932,6 +1932,21 @@
         "executionId": "799cef30-ee1e-40fa-a80a-1ccca6e1ab05",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795266553910
+      },
+      {
+        "executionId": "1a57b2f0-8466-4517-afde-c7f1535d1259",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795445962486
+      },
+      {
+        "executionId": "1a57b2f0-8466-4517-afde-c7f1535d1259",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795445974353
+      },
+      {
+        "executionId": "1a57b2f0-8466-4517-afde-c7f1535d1259",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795446176127
       }
     ],
     "17.2 CI workflow": [
@@ -1959,21 +1974,6 @@
       }
     ],
     "17.4 README and env example": [
-      {
-        "executionId": "f99b2547-47f9-441c-933e-a1279012b3bf",
-        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
-        "timestamp": 1795325801049
-      },
-      {
-        "executionId": "747d6761-f239-47aa-9a7a-9e486b19ecf4",
-        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
-        "timestamp": 1795326426524
-      },
-      {
-        "executionId": "747d6761-f239-47aa-9a7a-9e486b19ecf4",
-        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
-        "timestamp": 1795326432914
-      },
       {
         "executionId": "747d6761-f239-47aa-9a7a-9e486b19ecf4",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
@@ -2008,6 +2008,21 @@
         "executionId": "aed3d5ee-15f3-4b65-ab85-9f071e4e4969",
         "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
         "timestamp": 1795358735171
+      },
+      {
+        "executionId": "2a0de866-2ab1-4fbd-b8c9-e933778740f8",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795445571695
+      },
+      {
+        "executionId": "2a0de866-2ab1-4fbd-b8c9-e933778740f8",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795445583247
+      },
+      {
+        "executionId": "2a0de866-2ab1-4fbd-b8c9-e933778740f8",
+        "chatSessionId": "sess_cce5496b-b213-47a7-bbf0-c0a671ec74bd",
+        "timestamp": 1795445871637
       }
     ],
     "18. Final checkpoint - full verification": [

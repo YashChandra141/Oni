@@ -11,7 +11,7 @@ The user must approve every shell or terminal command (cargo, bun, git, rustup, 
 | Web | Next.js 16 App Router as a static export (`output: 'export'`), TypeScript, Tailwind, zustand, TradingView Lightweight Charts |
 | Auth | Sign In With Solana (SIWS) messages; Ed25519 verification with WebCrypto (`crypto.subtle`, Ed25519) in Bun, falling back to exact-pinned `@noble/curves` only if Bun's WebCrypto lacks Ed25519; base58 with `@scure/base`; stateless HMAC-SHA256 Session_Tokens signed with `SESSION_SECRET` (24 h, jti, in-memory logout denylist) |
 | Wallets (web) | `@wallet-standard/app` (`getWallets()`) with `@wallet-standard/features` and `@solana/wallet-standard-features`, not `@solana/wallet-adapter-react`: no transactions are ever sent, so no `@solana/web3.js` connection is needed. Phantom and Backpack only |
-| TUI auth | Device-code pairing over `POST /auth/pair` and `/auth/pair/poll`; `reqwest` (rustls, ring); token file in `dirs::config_dir()/haunted-terminal/session.json`, mode 0600 on Unix |
+| TUI auth | Device-code pairing over `POST /auth/pair` and `/auth/pair/poll`; `reqwest` (rustls, ring); token file in `dirs::config_dir()/oni/session.json`, mode 0600 on Unix (an old `haunted-terminal/session.json` token is moved automatically) |
 | Agents | `@modelcontextprotocol/sdk` (MCP). One `LlmProvider` interface with four implementations (OpenAI, Anthropic, NVIDIA NIM, Ollama) behind plain `fetch`; used by the plain-English order parser and the AI analyst |
 | News | One `NewsProvider` interface: NewsAPI (local development only) and CryptoPanic (hosted), cached in server memory |
 | Deploy | Render Blueprint (`render.yaml`), Dockerfile `rust:1.94-bookworm` → `oven/bun:1.4.4-debian`. No database service |

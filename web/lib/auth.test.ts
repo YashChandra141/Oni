@@ -4,6 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { SIGN_IN_STATEMENT, formatSiws, parseSiws } from "../../shared/siws";
 import type { SiwsFields } from "../../shared/siws";
 import {
+  LEGACY_SESSION_STORAGE_KEY,
   SESSION_STORAGE_KEY,
   SignInCancelled,
   SignInError,
@@ -86,6 +87,28 @@ describe("stored session", () => {
       expect(loadSession(storage, NOW_MS)).toBeNull();
       expect(storage.data.size).toBe(0);
     }
+  });
+
+  test("a session under the old key moves to the new key", () => {
+    const storage = new MemoryStorage();
+    storage.setItem(LEGACY_SESSION_STORAGE_KEY, JSON.stringify(stored(NOW_S + 10)));
+    expect(loadSession(storage, NOW_MS)).toEqual(stored(NOW_S + 10));
+    expect(storage.data.has(SESSION_STORAGE_KEY)).toBe(true);
+    expect(storage.data.has(LEGACY_SESSION_STORAGE_KEY)).toBe(false);
+  });
+
+  test("an expired or corrupt old-key session is dropped, and clear removes both keys", () => {
+    for (const raw of [JSON.stringify(stored(NOW_S - 1)), "not json"]) {
+      const storage = new MemoryStorage();
+      storage.setItem(LEGACY_SESSION_STORAGE_KEY, raw);
+      expect(loadSession(storage, NOW_MS)).toBeNull();
+      expect(storage.data.size).toBe(0);
+    }
+    const storage = new MemoryStorage();
+    storage.setItem(LEGACY_SESSION_STORAGE_KEY, "x");
+    storage.setItem(SESSION_STORAGE_KEY, "y");
+    clearSession(storage);
+    expect(storage.data.size).toBe(0);
   });
 
   test("token source reads and clears", () => {

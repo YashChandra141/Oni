@@ -1,6 +1,7 @@
 //! Token_Store: the TUI's saved Session_Token (Req 33.4, 48.11, 48.12, 48.13, 48.14).
 //!
-//! The token lives in `<config dir>/haunted-terminal/session.json` as
+//! The token lives in `<config dir>/oni/session.json` (moved there from the old
+//! `<config dir>/haunted-terminal/session.json` on first load) as
 //! `{ server, token, address, account_id, exp }`. It is used only for the server it was issued
 //! by: [`TokenStore::load`] returns it only when the stored `server` equals the `--server` URL
 //! exactly. An expired token is deleted on load. Writes are atomic (a temporary file, then a
@@ -22,7 +23,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 /// Directory under the config dir.
-pub const APP_DIR: &str = "haunted-terminal";
+pub const APP_DIR: &str = "oni";
+/// The directory name before the rename to Oni. A token found there is moved to `APP_DIR`.
+pub const LEGACY_APP_DIR: &str = "haunted-terminal";
 /// The token file name.
 pub const FILE_NAME: &str = "session.json";
 
@@ -105,17 +108,52 @@ pub fn now_secs() -> u64 {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TokenStore {
     dir: PathBuf,
+    /// Directory of the pre-rename token file, moved to `dir` on load.
+    legacy_dir: Option<PathBuf>,
 }
 
 impl TokenStore {
     /// A store whose file is `dir/session.json`.
     pub fn in_dir(dir: impl Into<PathBuf>) -> Self {
-        Self { dir: dir.into() }
+        Self {
+            dir: dir.into(),
+            legacy_dir: None,
+        }
     }
 
-    /// The store at `config_dir()/haunted-terminal`, or `None` without a config directory.
+    /// Also look for a token left by the old app name in `legacy_dir`, and move it here.
+    pub fn with_legacy_dir(mut self, legacy_dir: impl Into<PathBuf>) -> Self {
+        self.legacy_dir = Some(legacy_dir.into());
+        self
+    }
+
+    /// The store at `config_dir()/oni`, or `None` without a config directory. A token saved at
+    /// `config_dir()/haunted-terminal` is moved over on load.
     pub fn default_location() -> Option<Self> {
-        config_dir().map(|dir| Self::in_dir(dir.join(APP_DIR)))
+        config_dir()
+            .map(|dir| Self::in_dir(dir.join(APP_DIR)).with_legacy_dir(dir.join(LEGACY_APP_DIR)))
+    }
+
+    fn legacy_path(&self) -> Option<PathBuf> {
+        self.legacy_dir.as_ref().map(|d| d.join(FILE_NAME))
+    }
+
+    /// Moves a valid old-location token to the new path, then deletes the old file. An expired
+    /// old token is deleted. A token for another server is left where it is.
+    fn migrate_legacy(&self, server: &str, now: u64) -> Option<StoredSession> {
+        let legacy = self.legacy_path()?;
+        let bytes = fs::read(&legacy).ok()?;
+        let stored: StoredSession = serde_json::from_slice(&bytes).ok()?;
+        if stored.server != server {
+            return None;
+        }
+        if stored.exp <= now {
+            let _ = fs::remove_file(&legacy);
+            return None;
+        }
+        self.save(&stored).ok()?;
+        let _ = fs::remove_file(&legacy);
+        Some(stored)
     }
 
     pub fn path(&self) -> PathBuf {
@@ -135,7 +173,9 @@ impl TokenStore {
     /// The saved session for `server`, if it was issued by exactly that server and has not
     /// expired at `now` (epoch seconds). An expired session for `server` is deleted.
     pub fn load(&self, server: &str, now: u64) -> Option<StoredSession> {
-        let stored = self.read()?;
+        let Some(stored) = self.read() else {
+            return self.migrate_legacy(server, now);
+        };
         if stored.server != server {
             return None;
         }
@@ -158,12 +198,17 @@ impl TokenStore {
         written
     }
 
-    /// Deletes the file. A missing file is not an error.
+    /// Deletes the file, and the old-location file if any. A missing file is not an error.
     pub fn delete(&self) -> io::Result<()> {
-        match fs::remove_file(self.path()) {
+        let current = match fs::remove_file(self.path()) {
             Err(e) if e.kind() != io::ErrorKind::NotFound => Err(e),
             _ => Ok(()),
-        }
+        };
+        let legacy = match self.legacy_path().map(fs::remove_file) {
+            Some(Err(e)) if e.kind() != io::ErrorKind::NotFound => Err(e),
+            _ => Ok(()),
+        };
+        current.and(legacy)
     }
 }
 
@@ -404,6 +449,38 @@ mod tests {
         // Expired: no token, and the file goes away.
         assert_eq!(session_token(false, Some(&store), SERVER, 2_000), None);
         assert!(!store.path().exists());
+    }
+
+    #[test]
+    fn a_token_at_the_old_location_is_moved_and_delete_removes_both() {
+        let tmp = TempDir::new();
+        let old = TokenStore::in_dir(tmp.0.join(LEGACY_APP_DIR));
+        let new =
+            TokenStore::in_dir(tmp.0.join(APP_DIR)).with_legacy_dir(tmp.0.join(LEGACY_APP_DIR));
+        let saved = session(SERVER, 2_000);
+        old.save(&saved).unwrap();
+        // Another server: nothing moves.
+        assert_eq!(new.load("wss://other.com/ws", 1_000), None);
+        assert!(old.path().exists());
+        assert!(!new.path().exists());
+        // Same server: moved.
+        assert_eq!(new.load(SERVER, 1_000), Some(saved.clone()));
+        assert!(new.path().exists());
+        assert!(!old.path().exists());
+        // An expired old token is dropped, not moved.
+        let tmp2 = TempDir::new();
+        let old2 = TokenStore::in_dir(tmp2.0.join(LEGACY_APP_DIR));
+        let new2 =
+            TokenStore::in_dir(tmp2.0.join(APP_DIR)).with_legacy_dir(tmp2.0.join(LEGACY_APP_DIR));
+        old2.save(&saved).unwrap();
+        assert_eq!(new2.load(SERVER, 2_000), None);
+        assert!(!old2.path().exists());
+        assert!(!new2.path().exists());
+        // Delete removes both paths.
+        old.save(&saved).unwrap();
+        new.delete().unwrap();
+        assert!(!old.path().exists());
+        assert!(!new.path().exists());
     }
 
     #[test]

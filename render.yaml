@@ -30,6 +30,7 @@ services:
         value: "10000"
       - key: ENGINE_PATH
         value: /app/bin/engine
+      # replay is safe for judges (no keys, deterministic). Set to "live" for public market data.
       - key: DATA_MODE
         value: replay
       # LIVE_VENUES is ignored in replay mode (design section 7).
@@ -37,6 +38,8 @@ services:
         value: backpack,coinbase,jupiter,raydium
       - key: STARTING_BALANCE
         value: "100000"
+      - key: BALANCE_SLIPPAGE_BPS
+        value: "100"
       - key: KILL_SWITCH
         value: "false"
       - key: ALLOWED_ORIGINS
@@ -46,39 +49,42 @@ services:
       - key: SESSION_SECRET
         generateValue: true
       # LLM providers. Keys are set in the Render dashboard, never in this file.
-      # LLM_PROVIDER is left unset: the server picks the first available provider.
+      # LLM_PROVIDER is left unset (server picks the first available provider); set it in the
+      # dashboard to force one of ollama | openai | anthropic | nvidia.
+      - key: LLM_PROVIDER
+        sync: false
       - key: OPENAI_API_KEY
         sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
       - key: NVIDIA_API_KEY
         sync: false
+      # A URL can carry credentials, so it is a dashboard value. Empty uses the server default.
       - key: NVIDIA_BASE_URL
-        value: https://integrate.api.nvidia.com/v1
-      # Not reachable from Render unless Ollama is self-hosted at a public URL.
-      - key: OLLAMA_BASE_URL
-        value: http://localhost:11434
-      # Model overrides (optional): set OPENAI_MODEL, ANTHROPIC_MODEL, NVIDIA_MODEL, OLLAMA_MODEL
-      # in the dashboard. Server defaults apply when unset.
+        sync: false
+      # OLLAMA_BASE_URL and OLLAMA_MODEL are intentionally not set: Render cannot reach a local
+      # Ollama. Add OLLAMA_BASE_URL (sync: false) only if you self-host Ollama at a public URL.
+      # Model overrides (optional, set in the dashboard). Server defaults apply when unset.
       - key: OPENAI_MODEL
         sync: false
       - key: ANTHROPIC_MODEL
         sync: false
       - key: NVIDIA_MODEL
         sync: false
-      - key: OLLAMA_MODEL
-        sync: false
       - key: AI_RATE_PER_MIN
         value: "6"
       - key: AI_DAILY_CAP
         value: "500"
-      # News. NewsAPI is development-only (its plan forbids production use); hosted uses CryptoPanic.
+      # News. NewsAPI is development-only (its plan forbids production use), so NEWS_API_KEY is
+      # not set here. Hosted uses CryptoPanic.
       - key: NEWS_PROVIDER
         value: cryptopanic
       - key: CRYPTOPANIC_API_KEY
         sync: false
-      - key: NEWS_API_KEY
-        sync: false
+      - key: CRYPTOPANIC_PLAN
+        value: developer
+      - key: NEWS_TTL_SECONDS
+        value: "300"
       # Optional: raises the Jupiter Price API data rate limit. Authorizes no trading.
       - key: JUPITER_API_KEY
         sync: false

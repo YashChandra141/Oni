@@ -31,7 +31,7 @@ pub const MAX_RESPONSE_BYTES: usize = 2 * 1024 * 1024;
 /// Time allowed for connect, TLS, request, and response together.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
 /// Sent as `User-Agent`.
-pub const USER_AGENT: &str = "haunted-terminal-engine/0.1";
+pub const USER_AGENT: &str = "oni-engine/0.1";
 
 /// Why a request failed.
 #[derive(Debug, Clone, PartialEq, Eq)]
